@@ -3,10 +3,15 @@
 #include <memory>
 #include <string>
 #include <functional>
+#include <QObject>
 
 namespace cam_matrix {
 
-class GuiManager {
+class MainWindow;
+
+class GuiManager : public QObject {
+    Q_OBJECT
+
 public:
     GuiManager();
     ~GuiManager();
@@ -18,11 +23,8 @@ public:
     // Initialize the GUI
     bool initialize();
     
-    // Run the main GUI loop
-    void run();
-    
-    // Check if GUI is running
-    bool isRunning() const;
+    // Get the main window
+    MainWindow* getMainWindow() const;
 
 private:
     class Impl;

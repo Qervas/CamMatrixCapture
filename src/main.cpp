@@ -1,19 +1,16 @@
-#include "gui/gui_manager.hpp"
+#include "gui/main_window.hpp"
+#include <QApplication>
 #include <iostream>
 #include <stdexcept>
 
-int main() {
+int main(int argc, char *argv[]) {
     try {
-        cam_matrix::GuiManager gui;
+        QApplication app(argc, argv);
         
-        if (!gui.initialize()) {
-            std::cerr << "Failed to initialize GUI" << std::endl;
-            return 1;
-        }
+        cam_matrix::MainWindow mainWindow;
+        mainWindow.show();
         
-        gui.run();
-        
-        return 0;
+        return app.exec();
     } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << std::endl;
         return 1;
