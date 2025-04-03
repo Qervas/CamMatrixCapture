@@ -1,13 +1,14 @@
 #pragma once
 
 #include "ui/pages/page.hpp"
+#include "core/camera_manager.hpp"
+#include "ui/widgets/video_display_widget.hpp"
 #include <QListWidget>
 #include <QPushButton>
 #include <memory>
 
 namespace cam_matrix::ui {
 
-// Forward declarations
 class CameraControlWidget;
 
 class CameraPage : public Page {
@@ -22,19 +23,29 @@ public:
     void cleanup() override;
 
 private slots:
-    void onRefreshCameras();  // We'll implement this instead of onRefresh()
+    void onRefreshCameras();
     void onCameraSelected(int index);
     void onCameraStatusChanged(const QString& status);
+    void onConnectCamera();
+    void onDisconnectCamera();
+    void onNewFrame(const QImage& frame);
 
 private:
     void setupUi() override;
     void createConnections() override;
     void loadSettings();
     void saveSettings();
+    void updateCameraList();
 
     QListWidget* cameraList_;
-    CameraControlWidget* cameraControl_;  // Raw pointer, not unique_ptr
+    CameraControlWidget* cameraControl_;
     QPushButton* refreshButton_;
+    QPushButton* connectButton_;
+    QPushButton* disconnectButton_;
+    VideoDisplayWidget* videoDisplay_;
+
+    std::shared_ptr<core::CameraManager> cameraManager_;
+    int selectedCameraIndex_;
 };
 
 } // namespace cam_matrix::ui
