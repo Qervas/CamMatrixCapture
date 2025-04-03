@@ -1,76 +1,122 @@
 #include "main_window.hpp"
+#include "ui/pages/page.hpp"
+#include "ui/pages/camera/camera_page.hpp"
+#include "ui/pages/settings/settings_page.hpp"
+#include "ui/pages/capture/capture_page.hpp"
+#include "ui/pages/calibration/calibration_page.hpp"
+#include "ui/pages/dataset/dataset_page.hpp"
+
+#include <QTabWidget>
+#include <QStatusBar>
+#include <QToolBar>
+#include <QMenuBar>
 #include <QMessageBox>
 
 namespace cam_matrix {
 
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent)
-    , centralWidget(nullptr)
-    , mainLayout(nullptr)
-    , captureButton(nullptr)
-    , settingsButton(nullptr)
-    , statusLabel(nullptr)
-    , statusBar(nullptr)
+    , tabWidget_(nullptr)
+    , statusBar_(nullptr)
+    , mainToolBar_(nullptr)
 {
     setupUi();
-    createConnections();
+    createMenus();
+    createToolBar();
+    createStatusBar();
+    registerPages();
     
-    // Set window properties
-    setWindowTitle("Camera Matrix Capture");
-    resize(800, 600);
+    setWindowTitle(tr("Camera Matrix Capture"));
+    resize(1024, 768);
 }
-
-MainWindow::~MainWindow() = default;
 
 void MainWindow::setupUi()
 {
-    // Create central widget and main layout
-    centralWidget = new QWidget(this);
-    setCentralWidget(centralWidget);
-    
-    mainLayout = new QVBoxLayout(centralWidget);
-    mainLayout->setSpacing(10);
-    mainLayout->setContentsMargins(10, 10, 10, 10);
-    
-    // Create buttons
-    captureButton = new QPushButton("Capture", this);
-    captureButton->setMinimumHeight(40);
-    
-    settingsButton = new QPushButton("Settings", this);
-    settingsButton->setMinimumHeight(40);
-    
-    // Create status label
-    statusLabel = new QLabel("Ready", this);
-    statusLabel->setAlignment(Qt::AlignCenter);
-    
-    // Add widgets to layout
-    mainLayout->addWidget(captureButton);
-    mainLayout->addWidget(settingsButton);
-    mainLayout->addWidget(statusLabel);
-    mainLayout->addStretch();
-    
-    // Create status bar
-    statusBar = new QStatusBar(this);
-    setStatusBar(statusBar);
-    statusBar->showMessage("Application started");
+    tabWidget_ = new QTabWidget(this);
+    setCentralWidget(tabWidget_);
 }
 
-void MainWindow::createConnections()
+void MainWindow::createMenus()
 {
-    connect(captureButton, &QPushButton::clicked, this, &MainWindow::onCaptureButtonClicked);
-    connect(settingsButton, &QPushButton::clicked, this, &MainWindow::onSettingsButtonClicked);
+    fileMenu_ = menuBar()->addMenu(tr("&File"));
+    fileMenu_->addAction(tr("&New Project"), QKeySequence::New, this, []() { /* TODO */ });
+    fileMenu_->addAction(tr("&Save Settings"), QKeySequence::Save, this, []() { /* TODO */ });
+    fileMenu_->addSeparator();
+    fileMenu_->addAction(tr("E&xit"), QKeySequence::Quit, this, &QMainWindow::close);
+
+    editMenu_ = menuBar()->addMenu(tr("&Edit"));
+    editMenu_->addAction(tr("&Preferences"), this, []() { /* TODO */ });
+
+    helpMenu_ = menuBar()->addMenu(tr("&Help"));
+    helpMenu_->addAction(tr("&About"), this, &MainWindow::onAbout);
 }
 
-void MainWindow::onCaptureButtonClicked()
+void MainWindow::createToolBar()
 {
-    statusBar->showMessage("Capture button clicked");
-    // TODO: Implement capture functionality
+    mainToolBar_ = addToolBar(tr("Main Toolbar"));
+    mainToolBar_->setMovable(false);
+    // Toolbar actions will be added by individual pages
 }
 
-void MainWindow::onSettingsButtonClicked()
+void MainWindow::createStatusBar()
 {
-    statusBar->showMessage("Settings button clicked");
-    // TODO: Implement settings dialog
+    statusBar_ = new QStatusBar(this);
+    setStatusBar(statusBar_);
+    statusBar_->showMessage(tr("Ready"));
+}
+
+void MainWindow::registerPages()
+{
+    // Create and register all pages
+    auto registerPage = [this](QSharedPointer<ui::Page> page) {
+        if (!page) return;
+        
+        connectPageSignals(page.get());
+        QString title = page->title();
+        tabWidget_->addTab(page.get(), title);
+        pages_[title] = page;
+    };
+
+    registerPage(QSharedPointer<ui::Page>(new ui::CameraPage()));
+    registerPage(QSharedPointer<ui::Page>(new ui::SettingsPage()));
+    registerPage(QSharedPointer<ui::Page>(new ui::CapturePage()));
+    registerPage(QSharedPointer<ui::Page>(new ui::CalibrationPage()));
+    registerPage(QSharedPointer<ui::Page>(new ui::DatasetPage()));
+
+    // Initialize all pages
+    QHashIterator<QString, QSharedPointer<ui::Page>> it(pages_);
+    while (it.hasNext()) {
+        it.next();
+        it.value()->initialize();
+    }
+}
+
+void MainWindow::connectPageSignals(ui::Page* page)
+{
+    if (!page) return;
+    
+    connect(page, &ui::Page::statusChanged,
+            this, &MainWindow::onPageStatusChanged);
+    connect(page, &ui::Page::error,
+            this, &MainWindow::onPageError);
+}
+
+void MainWindow::onPageStatusChanged(const QString& message)
+{
+    statusBar_->showMessage(message);
+}
+
+void MainWindow::onPageError(const QString& message)
+{
+    QMessageBox::critical(this, tr("Error"), message);
+}
+
+void MainWindow::onAbout()
+{
+    QMessageBox::about(this, tr("About Camera Matrix Capture"),
+                      tr("Camera Matrix Capture v1.0.0\n"
+                         "A professional tool for synchronized "
+                         "multi-camera capture and calibration."));
 }
 
 } // namespace cam_matrix 

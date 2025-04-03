@@ -15,7 +15,7 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 
 # Find Qt packages - use MSVC version
 set(CMAKE_PREFIX_PATH "C:/Qt/6.9.0/msvc2022_64")
-find_package(Qt6 REQUIRED COMPONENTS 
+find_package(Qt6 REQUIRED COMPONENTS
     Core
     Gui
     Widgets
@@ -32,21 +32,22 @@ if(MSVC)
     add_compile_options(/GR)
 endif()
 
-# Source files
-set(SOURCES
-    src/main.cpp
-    src/gui/gui_manager.cpp
-    src/gui/main_window.cpp
+# Automatically find all source and header files in src directory
+file(GLOB_RECURSE SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp"
 )
 
-# Header files
-set(HEADERS
-    src/gui/gui_manager.hpp
-    src/gui/main_window.hpp
+file(GLOB_RECURSE HEADERS
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/*.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/*.h"
 )
+
+# Optional: Print found files to verify
+message(STATUS "Found source files: ${SOURCES}")
+message(STATUS "Found header files: ${HEADERS}")
 
 # Create executable
-add_executable(${PROJECT_NAME} 
+add_executable(${PROJECT_NAME}
     ${SOURCES}
     ${HEADERS}
 )
@@ -68,7 +69,7 @@ if(WIN32)
     # Get the Qt binary directory
     get_target_property(QT_QMAKE_EXECUTABLE Qt6::qmake IMPORTED_LOCATION)
     get_filename_component(QT_BINARY_DIR "${QT_QMAKE_EXECUTABLE}" DIRECTORY)
-    
+
     # Use windeployqt in post-build step
     add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
         COMMAND "${QT_BINARY_DIR}/windeployqt.exe"
@@ -109,4 +110,4 @@ message(STATUS "C++ Standard: ${CMAKE_CXX_STANDARD}")
 message(STATUS "Build Type: ${CMAKE_BUILD_TYPE}")
 message(STATUS "Output Directory: ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
 message(STATUS "Qt Version: ${Qt6_VERSION}")
-message(STATUS "Compiler: ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}") 
+message(STATUS "Compiler: ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}")
