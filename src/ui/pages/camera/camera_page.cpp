@@ -1,6 +1,8 @@
 #include "camera_page.hpp"
 #include "ui/widgets/camera_control_widget.hpp"
 #include "ui/widgets/video_display_widget.hpp"
+#include "ui/dialogs/camera_test_dialog.hpp"
+
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QSplitter>
@@ -61,6 +63,9 @@ void CameraPage::setupUi()
     cameraControl_->setEnabled(false);
     leftLayout->addWidget(cameraControl_);
 
+    testSaperaButton_ = new QPushButton(tr("Test Sapera Camera"), leftWidget);
+    buttonLayout->addWidget(testSaperaButton_);
+
     // Right panel: Video display
     videoDisplay_ = new VideoDisplayWidget(splitter);
 
@@ -86,6 +91,9 @@ void CameraPage::createConnections() {
 
     connect(cameraControl_, &CameraControlWidget::statusChanged,
             this, &CameraPage::onCameraStatusChanged);
+
+    connect(testSaperaButton_, &QPushButton::clicked,
+            this, &CameraPage::onTestSaperaCamera);
 
     // Connect camera manager signals
     connect(cameraManager_.get(), &core::CameraManager::camerasChanged,
@@ -193,6 +201,11 @@ void CameraPage::onDisconnectCamera() {
             emit error(tr("Failed to disconnect from camera"));
         }
     }
+}
+
+void CameraPage::onTestSaperaCamera() {
+    CameraTestDialog dialog(this);
+    dialog.exec();
 }
 
 void CameraPage::updateCameraList() {

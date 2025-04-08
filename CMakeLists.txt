@@ -32,6 +32,50 @@ if(MSVC)
     add_compile_options(/GR)
 endif()
 
+# Check for Sapera SDK - use environment variable to find it
+if(DEFINED ENV{SAPERADIR})
+    set(SAPERA_DIR $ENV{SAPERADIR})
+    message(STATUS "Found Sapera SDK at: ${SAPERA_DIR}")
+
+    set(SAPERA_INCLUDE_DIRS
+        "${SAPERA_DIR}/Classes/Basic"
+        "${SAPERA_DIR}/Classes"
+        "${SAPERA_DIR}/Include"
+        "${SAPERA_DIR}/Classes/Gui"
+    )
+
+    if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+        # 64-bit build
+        set(SAPERA_LIB_DIRS
+            "${SAPERA_DIR}/Lib"
+            "${SAPERA_DIR}/Lib/Win64"
+            "${SAPERA_DIR}/Lib/Win64/VS2019"
+        )
+    else()
+        # 32-bit build
+        set(SAPERA_LIB_DIRS
+            "${SAPERA_DIR}/Lib"
+            "${SAPERA_DIR}/Lib/Win32"
+            "${SAPERA_DIR}/Lib/Win32/VS2019"
+        )
+    endif()
+
+    # Define SAPERA_FOUND for conditional compilation
+    add_compile_definitions(SAPERA_FOUND)
+
+    # Add Sapera libraries to link
+    set(SAPERA_LIBS corapi SapClassBasic)
+else()
+    message(STATUS "Sapera SDK not found - using mock cameras only")
+
+    # Define flag to conditionally compile code without Sapera
+    add_compile_definitions(SAPERA_NOT_FOUND)
+
+    # Let's filter out Sapera-related source files if SDK is not available
+    list(FILTER SOURCES EXCLUDE REGEX ".*sapera.*\\.cpp$")
+    list(FILTER HEADERS EXCLUDE REGEX ".*sapera.*\\.hpp$")
+endif()
+
 # Automatically find all source and header files in src directory
 file(GLOB_RECURSE SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp"
@@ -41,10 +85,6 @@ file(GLOB_RECURSE HEADERS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.h"
 )
-
-# Optional: Print found files to verify
-message(STATUS "Found source files: ${SOURCES}")
-message(STATUS "Found header files: ${HEADERS}")
 
 # Create executable
 add_executable(${PROJECT_NAME}
@@ -57,12 +97,23 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
-# Link Qt libraries
+# Add Sapera includes if found
+if(DEFINED ENV{SAPERADIR})
+    target_include_directories(${PROJECT_NAME} PRIVATE ${SAPERA_INCLUDE_DIRS})
+    target_link_directories(${PROJECT_NAME} PRIVATE ${SAPERA_LIB_DIRS})
+endif()
+
+# Link libraries
 target_link_libraries(${PROJECT_NAME} PRIVATE
     Qt6::Core
     Qt6::Gui
     Qt6::Widgets
 )
+
+# Add Sapera libraries if found
+if(DEFINED ENV{SAPERADIR})
+    target_link_libraries(${PROJECT_NAME} PRIVATE ${SAPERA_LIBS})
+endif()
 
 # Automatically deploy Qt DLLs on Windows
 if(WIN32)

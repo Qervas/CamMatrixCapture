@@ -29,6 +29,8 @@ private slots:
     void onConnectCamera();
     void onDisconnectCamera();
     void onNewFrame(const QImage& frame);
+    void onTestSaperaCamera();
+
 
 private:
     void setupUi() override;
@@ -46,6 +48,8 @@ private:
 
     std::shared_ptr<core::CameraManager> cameraManager_;
     int selectedCameraIndex_;
+    QPushButton* testSaperaButton_;
+
 };
 
 } // namespace cam_matrix::ui
