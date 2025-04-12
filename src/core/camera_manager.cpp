@@ -1,4 +1,4 @@
-#include "core/camera_manager.hpp"  // Updated include path
+#include "core/camera_manager.hpp"
 #include <iostream>
 
 namespace cam_matrix::core {
@@ -27,11 +27,7 @@ bool CameraManager::scanForCameras() {
 }
 
 std::vector<std::shared_ptr<Camera>> CameraManager::getCameras() const {
-    std::vector<std::shared_ptr<Camera>> result;
-    for (const auto& camera : cameras_) {
-        result.push_back(camera);
-    }
-    return result;
+    return cameras_; // Now directly returns since we store Camera pointers
 }
 
 std::shared_ptr<Camera> CameraManager::getCameraByIndex(size_t index) const {
@@ -43,14 +39,14 @@ std::shared_ptr<Camera> CameraManager::getCameraByIndex(size_t index) const {
 
 std::shared_ptr<MockCamera> CameraManager::getMockCameraByIndex(size_t index) const {
     if (index < cameras_.size()) {
-        return cameras_[index];
+        return std::dynamic_pointer_cast<MockCamera>(cameras_[index]);
     }
     return nullptr;
 }
 
 bool CameraManager::connectCamera(size_t index) {
     if (index < cameras_.size()) {
-        bool result = cameras_[index]->connectCamera(); // Changed from connect()
+        bool result = cameras_[index]->connectCamera();
         if (result) {
             emit cameraConnected(index);
         }
@@ -59,7 +55,6 @@ bool CameraManager::connectCamera(size_t index) {
     return false;
 }
 
-// In disconnectCamera method:
 bool CameraManager::disconnectCamera(size_t index) {
     if (index < cameras_.size()) {
         bool result = cameras_[index]->disconnectCamera();

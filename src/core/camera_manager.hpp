@@ -13,10 +13,10 @@ class CameraManager : public QObject {
 
 public:
     CameraManager();
-    ~CameraManager();
+    virtual ~CameraManager();
 
     // Scan for available cameras
-    bool scanForCameras();
+    virtual bool scanForCameras();
 
     // Camera access
     std::vector<std::shared_ptr<Camera>> getCameras() const;
@@ -33,8 +33,8 @@ signals:
     void cameraConnected(size_t index);
     void cameraDisconnected(size_t index);
 
-private:
-    std::vector<std::shared_ptr<MockCamera>> cameras_;
+protected:
+    std::vector<std::shared_ptr<Camera>> cameras_;
 };
 
 } // namespace cam_matrix::core

@@ -2,10 +2,19 @@
 
 #include "ui/pages/page.hpp"
 #include "core/camera_manager.hpp"
+#include "core/simulated_camera_manager.hpp"
+#include "core/sapera_manager.hpp"
 #include "ui/widgets/video_display_widget.hpp"
+#include "ui/dialogs/camera_mode_selector_dialog.hpp"
 #include <QListWidget>
 #include <QPushButton>
 #include <memory>
+
+namespace cam_matrix::core {
+    class CameraManager;
+    class SimulatedCameraManager;
+    class SaperaManager;
+}
 
 namespace cam_matrix::ui {
 
@@ -30,14 +39,21 @@ private slots:
     void onDisconnectCamera();
     void onNewFrame(const QImage& frame);
     void onTestSaperaCamera();
-
+    void switchCameraMode();
 
 private:
+    enum CameraMode {
+        Mode_Mock,
+        Mode_Simulated,
+        Mode_Sapera
+    };
+
     void setupUi() override;
     void createConnections() override;
     void loadSettings();
     void saveSettings();
     void updateCameraList();
+    void setupCameraMode(CameraMode mode, bool forceRefresh = false);
 
     QListWidget* cameraList_;
     CameraControlWidget* cameraControl_;
@@ -50,6 +66,10 @@ private:
     int selectedCameraIndex_;
     QPushButton* testSaperaButton_;
 
+    // Mode-specific members
+    CameraMode currentMode_ = Mode_Mock;
+    std::shared_ptr<core::SimulatedCameraManager> simulatedManager_;
+    QPushButton* switchModeButton_;
 };
 
 } // namespace cam_matrix::ui

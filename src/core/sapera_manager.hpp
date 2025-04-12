@@ -2,6 +2,7 @@
 #include "core/camera.hpp"
 #include "core/sapera_camera.hpp"
 #include "core/sapera_defs.hpp"
+#include "core/camera_manager.hpp"
 
 #include <vector>
 #include <memory>
@@ -10,7 +11,7 @@
 
 namespace cam_matrix::core {
 
-class SaperaManager : public QObject {
+class SaperaManager : public CameraManager{
     Q_OBJECT
 
 public:

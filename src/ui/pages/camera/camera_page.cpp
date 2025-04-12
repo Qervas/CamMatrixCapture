@@ -66,6 +66,9 @@ void CameraPage::setupUi()
     testSaperaButton_ = new QPushButton(tr("Test Sapera Camera"), leftWidget);
     buttonLayout->addWidget(testSaperaButton_);
 
+    switchModeButton_ = new QPushButton(tr("Switch Camera Mode"), leftWidget);
+    buttonLayout->addWidget(switchModeButton_);
+
     // Right panel: Video display
     videoDisplay_ = new VideoDisplayWidget(splitter);
 
@@ -95,13 +98,16 @@ void CameraPage::createConnections() {
     connect(testSaperaButton_, &QPushButton::clicked,
             this, &CameraPage::onTestSaperaCamera);
 
-    // Connect camera manager signals
     connect(cameraManager_.get(), &core::CameraManager::camerasChanged,
             this, &CameraPage::updateCameraList);
+
+    connect(switchModeButton_, &QPushButton::clicked,
+            this, &CameraPage::switchCameraMode);
 }
 
 void CameraPage::initialize() {
     Page::initialize();
+    setupCameraMode(Mode_Mock);
     loadSettings();
 }
 
@@ -127,16 +133,39 @@ void CameraPage::onRefreshCameras() {
 }
 
 void CameraPage::onCameraSelected(int index) {
-    // Disconnect from previous camera if needed
+    // Disconnect from previous camera
     if (selectedCameraIndex_ >= 0) {
-        auto mockCamera = cameraManager_->getMockCameraByIndex(selectedCameraIndex_);
-        if (mockCamera && mockCamera->isConnected()) {
-            mockCamera->disconnectCamera();
+        auto camera = cameraManager_->getCameraByIndex(selectedCameraIndex_);
+        if (camera && camera->isConnected()) {
+            camera->disconnectCamera();
         }
 
-        // Disconnect old signal connections
-        if (mockCamera) {
-            mockCamera->disconnect(this); // This is OK - using QObject::disconnect
+        // Disconnect signal connections for the old camera
+        switch (currentMode_) {
+            case Mode_Mock: {
+                auto mockCamera = cameraManager_->getMockCameraByIndex(selectedCameraIndex_);
+                if (mockCamera) {
+                    mockCamera->disconnect(this);
+                }
+                break;
+            }
+            case Mode_Simulated: {
+                auto simCamera = simulatedManager_->getSimulatedCameraByIndex(selectedCameraIndex_);
+                if (simCamera) {
+                    simCamera->disconnect(this);
+                }
+                break;
+            }
+            case Mode_Sapera: {
+                auto saperaManager = std::dynamic_pointer_cast<core::SaperaManager>(cameraManager_);
+                if (saperaManager) {
+                    auto saperaCamera = saperaManager->getSaperaCameraByIndex(selectedCameraIndex_);
+                    if (saperaCamera) {
+                        saperaCamera->disconnect(this);
+                    }
+                }
+                break;
+            }
         }
     }
 
@@ -150,17 +179,55 @@ void CameraPage::onCameraSelected(int index) {
             cameraControl_->setEnabled(true);
             cameraControl_->setCameraIndex(index);
 
-            // Connect to frame signals from this camera
-            auto mockCamera = cameraManager_->getMockCameraByIndex(index);
-            if (mockCamera) {
-                connect(mockCamera.get(), &core::MockCamera::newFrameAvailable,
-                        this, &CameraPage::onNewFrame);
+            // Connect to frame signals from this camera based on mode
+            switch (currentMode_) {
+                case Mode_Mock: {
+                    auto mockCamera = cameraManager_->getMockCameraByIndex(index);
+                    if (mockCamera) {
+                        connect(mockCamera.get(), &core::MockCamera::newFrameAvailable,
+                                this, &CameraPage::onNewFrame);
 
-                // If already connected, display frames
-                if (mockCamera->isConnected()) {
-                    onNewFrame(mockCamera->getFrame());
-                } else {
-                    videoDisplay_->clearFrame();
+                        // If already connected, display frames
+                        if (mockCamera->isConnected()) {
+                            onNewFrame(mockCamera->getFrame());
+                        } else {
+                            videoDisplay_->clearFrame();
+                        }
+                    }
+                    break;
+                }
+                case Mode_Simulated: {
+                    auto simCamera = simulatedManager_->getSimulatedCameraByIndex(index);
+                    if (simCamera) {
+                        connect(simCamera.get(), &core::SimulatedCamera::newFrameAvailable,
+                                this, &CameraPage::onNewFrame);
+
+                        // If already connected, display frames
+                        if (simCamera->isConnected()) {
+                            onNewFrame(simCamera->getLastFrame());
+                        } else {
+                            videoDisplay_->clearFrame();
+                        }
+                    }
+                    break;
+                }
+                case Mode_Sapera: {
+                    auto saperaManager = std::dynamic_pointer_cast<core::SaperaManager>(cameraManager_);
+                    if (saperaManager) {
+                        auto saperaCamera = saperaManager->getSaperaCameraByIndex(index);
+                        if (saperaCamera) {
+                            connect(saperaCamera.get(), &core::SaperaCamera::newFrameAvailable,
+                                    this, &CameraPage::onNewFrame);
+
+                            // If already connected, display frames
+                            if (saperaCamera->isConnected()) {
+                                onNewFrame(saperaCamera->getFrame());
+                            } else {
+                                videoDisplay_->clearFrame();
+                            }
+                        }
+                    }
+                    break;
                 }
             }
 
@@ -232,6 +299,105 @@ void CameraPage::onCameraStatusChanged(const QString& status) {
 
 void CameraPage::onNewFrame(const QImage& frame) {
     videoDisplay_->updateFrame(frame);
+}
+
+void CameraPage::switchCameraMode() {
+    // Disconnect any connected cameras first
+    if (selectedCameraIndex_ >= 0) {
+        onDisconnectCamera();
+    }
+
+    // Show camera mode selector dialog
+    CameraModeSelector dialog(this);
+    if (dialog.exec() == QDialog::Accepted) {
+        // Convert from dialog's mode to our mode
+        CameraMode newMode;
+        switch (dialog.selectedMode()) {
+            case CameraModeSelector::Mode_Mock:
+                newMode = Mode_Mock;
+                break;
+            case CameraModeSelector::Mode_Simulated:
+                newMode = Mode_Simulated;
+                break;
+            case CameraModeSelector::Mode_Sapera:
+                newMode = Mode_Sapera;
+                break;
+            default:
+                newMode = Mode_Mock;
+        }
+
+        // Setup the selected camera mode
+        setupCameraMode(newMode, true);
+
+        // Configure simulator if in simulation mode
+        if (newMode == Mode_Simulated && simulatedManager_) {
+            simulatedManager_->setSimulatorParams(
+                dialog.getCameraCount(),
+                dialog.getFrameRate(),
+                dialog.getSynchronizedMode(),
+                dialog.getJitterMs()
+            );
+
+            // Start the simulator
+            if (simulatedManager_->getSimulator()) {
+                simulatedManager_->getSimulator()->startSimulation();
+            }
+        }
+    }
+}
+
+void CameraPage::setupCameraMode(CameraMode mode, bool forceRefresh) {
+    if (mode == currentMode_ && !forceRefresh) {
+        return;
+    }
+
+    // Clean up current manager
+    if (cameraManager_) {
+        cameraManager_->disconnectAllCameras();
+
+        // Disconnect signals
+        disconnect(cameraManager_.get(), nullptr, this, nullptr);
+    }
+
+    currentMode_ = mode;
+
+    // Create appropriate manager
+    switch (mode) {
+        case Mode_Mock:
+            emit statusChanged(tr("Switching to mock camera mode"));
+            cameraManager_ = std::make_shared<core::CameraManager>();
+            break;
+
+        case Mode_Simulated:
+            emit statusChanged(tr("Switching to simulated camera matrix mode"));
+            {
+                simulatedManager_ = std::make_shared<core::SimulatedCameraManager>();
+                cameraManager_ = std::static_pointer_cast<core::CameraManager>(simulatedManager_);
+            }
+            break;
+
+        case Mode_Sapera:
+            emit statusChanged(tr("Switching to Sapera camera mode"));
+            {
+                auto sapManager = std::make_shared<core::SaperaManager>();
+                cameraManager_ = std::static_pointer_cast<core::CameraManager>(sapManager);
+            }
+            break;
+    }
+
+    // Connect manager signals
+    connect(cameraManager_.get(), &core::CameraManager::camerasChanged,
+            this, &CameraPage::updateCameraList);
+
+    // Scan for cameras with the new manager
+    cameraManager_->scanForCameras();
+
+    // Update UI
+    selectedCameraIndex_ = -1;
+    cameraControl_->setEnabled(false);
+    connectButton_->setEnabled(false);
+    disconnectButton_->setEnabled(false);
+    videoDisplay_->clearFrame();
 }
 
 } // namespace cam_matrix::ui
