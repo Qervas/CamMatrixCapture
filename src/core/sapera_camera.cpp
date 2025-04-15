@@ -299,3 +299,4 @@ bool SaperaCamera::isFeatureAvailable(const char* featureName) const {
 
 } // namespace cam_matrix::core
 
+

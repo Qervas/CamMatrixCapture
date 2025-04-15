@@ -17,15 +17,24 @@ void CameraManager::scanForCameras()
     cameras_.clear();
 
 #if HAS_SAPERA
-    // Scan for Sapera cameras
-    std::vector<std::string> cameraNames;
-    if (SapManager::GetResourceList(SapManager::ResourceAcqDevice, &cameraNames)) {
-        for (const auto& name : cameraNames) {
-            cameras_.push_back(std::make_unique<SaperaCamera>(name));
+    // Check if Sapera SDK is available
+    if (SaperaUtils::isSaperaAvailable()) {
+        // Get the Sapera version
+        std::string version = SaperaUtils::getSaperaVersion();
+        emit statusChanged("Sapera SDK version: " + version);
+        
+        // Scan for Sapera cameras
+        std::vector<std::string> cameraNames;
+        if (SaperaUtils::getAvailableCameras(cameraNames)) {
+            for (const auto& name : cameraNames) {
+                cameras_.push_back(std::make_unique<SaperaCamera>(name));
+            }
+            emit statusChanged("Found " + std::to_string(cameras_.size()) + " Sapera cameras");
+        } else {
+            emit statusChanged("No Sapera cameras found");
         }
-        emit statusChanged("Found " + std::to_string(cameras_.size()) + " Sapera cameras");
     } else {
-        emit statusChanged("No Sapera cameras found");
+        emit statusChanged("Sapera SDK not initialized properly");
     }
 #else
     emit statusChanged("Sapera SDK not available");

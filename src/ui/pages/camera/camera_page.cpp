@@ -1,7 +1,9 @@
 #include "camera_page.hpp"
 #include "ui/widgets/camera_control_widget.hpp"
 #include "ui/widgets/video_display_widget.hpp"
+#include "ui/widgets/sapera_status_widget.hpp"
 #include "ui/dialogs/camera_test_dialog.hpp"
+#include "ui/dialogs/direct_camera_dialog.hpp"
 #include "core/sapera_defs.hpp"
 #include "core/camera_manager.hpp"
 
@@ -12,6 +14,7 @@
 #include <QLabel>
 #include <QListWidget>
 #include <QMessageBox>
+#include <QGroupBox>
 
 namespace cam_matrix::ui {
 
@@ -22,7 +25,10 @@ CameraPage::CameraPage(QWidget* parent)
     , refreshButton_(nullptr)
     , connectButton_(nullptr)
     , disconnectButton_(nullptr)
+    , testSaperaButton_(nullptr)
+    , directCameraButton_(nullptr)
     , videoDisplay_(nullptr)
+    , saperaStatus_(nullptr)
     , selectedCameraIndex_(-1)
 {
     // Create the camera manager
@@ -43,14 +49,22 @@ void CameraPage::setupUi()
     auto* leftWidget = new QWidget(splitter);
     auto* leftLayout = new QVBoxLayout(leftWidget);
 
-    cameraList_ = new QListWidget(leftWidget);
-    leftLayout->addWidget(cameraList_);
+    // Sapera Status Widget
+    saperaStatus_ = new SaperaStatusWidget(leftWidget);
+    leftLayout->addWidget(saperaStatus_);
+    
+    // Camera list in a group box
+    auto* cameraListGroup = new QGroupBox(tr("Available Cameras"), leftWidget);
+    auto* cameraListLayout = new QVBoxLayout(cameraListGroup);
+    
+    cameraList_ = new QListWidget(cameraListGroup);
+    cameraListLayout->addWidget(cameraList_);
 
     // Camera control buttons
     auto* buttonLayout = new QHBoxLayout;
-    refreshButton_ = new QPushButton(tr("Refresh"), leftWidget);
-    connectButton_ = new QPushButton(tr("Connect"), leftWidget);
-    disconnectButton_ = new QPushButton(tr("Disconnect"), leftWidget);
+    refreshButton_ = new QPushButton(tr("Refresh"), cameraListGroup);
+    connectButton_ = new QPushButton(tr("Connect"), cameraListGroup);
+    disconnectButton_ = new QPushButton(tr("Disconnect"), cameraListGroup);
 
     // Disable buttons until a camera is selected
     connectButton_->setEnabled(false);
@@ -59,21 +73,28 @@ void CameraPage::setupUi()
     buttonLayout->addWidget(refreshButton_);
     buttonLayout->addWidget(connectButton_);
     buttonLayout->addWidget(disconnectButton_);
-    leftLayout->addLayout(buttonLayout);
+    cameraListLayout->addLayout(buttonLayout);
+    
+    leftLayout->addWidget(cameraListGroup);
 
     // Camera controls
     cameraControl_ = new CameraControlWidget(leftWidget);
     cameraControl_->setEnabled(false);
     leftLayout->addWidget(cameraControl_);
 
+    // Buttons for advanced features
+    auto* advancedButtonLayout = new QHBoxLayout;
     testSaperaButton_ = new QPushButton(tr("Test Sapera Camera"), leftWidget);
-    buttonLayout->addWidget(testSaperaButton_);
+    directCameraButton_ = new QPushButton(tr("Direct Camera Access"), leftWidget);
+    advancedButtonLayout->addWidget(testSaperaButton_);
+    advancedButtonLayout->addWidget(directCameraButton_);
+    leftLayout->addLayout(advancedButtonLayout);
 
     // Right panel: Video display
     videoDisplay_ = new VideoDisplayWidget(splitter);
 
     // Set initial splitter sizes
-    splitter->setSizes({200, 600});
+    splitter->setSizes({300, 700});
 
     // Update the camera list
     updateCameraList();
@@ -97,14 +118,23 @@ void CameraPage::createConnections() {
 
     connect(testSaperaButton_, &QPushButton::clicked,
             this, &CameraPage::onTestSaperaCamera);
+            
+    connect(directCameraButton_, &QPushButton::clicked,
+            this, &CameraPage::onDirectCameraAccess);
 
     connect(cameraManager_.get(), &core::CameraManager::statusChanged,
             this, &CameraPage::onManagerStatusChanged);
+            
+    connect(saperaStatus_, &SaperaStatusWidget::statusChanged,
+            this, &CameraPage::onCameraStatusChanged);
 }
 
 void CameraPage::initialize() {
     Page::initialize();
     loadSettings();
+    
+    // Refresh the Sapera status to show current status at startup
+    saperaStatus_->refresh();
 }
 
 void CameraPage::cleanup() {
@@ -125,6 +155,7 @@ void CameraPage::onRefreshCameras() {
     emit statusChanged(tr("Refreshing cameras..."));
     videoDisplay_->clearFrame();
     cameraManager_->scanForCameras();
+    updateCameraList();
     emit statusChanged(tr("Cameras refreshed"));
 }
 
@@ -208,6 +239,11 @@ void CameraPage::onDisconnectCamera() {
 
 void CameraPage::onTestSaperaCamera() {
     CameraTestDialog dialog(this);
+    dialog.exec();
+}
+
+void CameraPage::onDirectCameraAccess() {
+    DirectCameraDialog dialog(this);
     dialog.exec();
 }
 

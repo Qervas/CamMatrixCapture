@@ -11,6 +11,7 @@
 namespace cam_matrix::ui {
     class CameraControlWidget;
     class VideoDisplayWidget;
+    class SaperaStatusWidget;
 }
 
 namespace cam_matrix::ui {
@@ -39,6 +40,7 @@ private slots:
     void onManagerStatusChanged(const std::string& status);
     void onNewFrame(const QImage& frame);
     void onTestSaperaCamera();
+    void onDirectCameraAccess();
 
 private:
     void loadSettings();
@@ -51,8 +53,10 @@ private:
     QPushButton* connectButton_;
     QPushButton* disconnectButton_;
     QPushButton* testSaperaButton_;
+    QPushButton* directCameraButton_;
     CameraControlWidget* cameraControl_;
     VideoDisplayWidget* videoDisplay_;
+    SaperaStatusWidget* saperaStatus_;
     int selectedCameraIndex_;
 };
 
