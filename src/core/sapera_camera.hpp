@@ -5,12 +5,39 @@
 #include <string>
 #include <memory>
 #include <QImage>
-#include <QTimer>
 #include <QObject>
 #include <mutex>
 #include <QPainter>
+#include <QThread>
+#include <atomic>
+#include <chrono>
+#include <functional>
 
 namespace cam_matrix::core {
+
+// Define a worker class for frame generation
+class FrameGeneratorWorker : public QObject {
+    Q_OBJECT
+public:
+    explicit FrameGeneratorWorker(QObject* parent = nullptr);
+    ~FrameGeneratorWorker();
+    
+    void setCamera(const std::string& name, double* exposureTime);
+    void stop();
+
+public slots:
+    void generateFrames();
+
+signals:
+    void frameGenerated(const QImage& frame);
+    void finished();
+
+private:
+    std::string cameraName_;
+    double* exposureTimePtr_{nullptr};
+    std::atomic<bool> running_{false};
+    QImage generatePattern(int patternId, qint64 timestamp);
+};
 
 #if HAS_SAPERA
 // Only compile the real implementation if Sapera is available
@@ -40,11 +67,11 @@ public:
 
 signals:
     void newFrameAvailable(const QImage& frame);
-    void statusChanged(const std::string& message);
-    void error(const std::string& message);
+    void statusChanged(const std::string& message) const;
+    void error(const std::string& message) const;
 
 private slots:
-    void generateMockFrame();
+    void handleNewFrame(const QImage& frame);
 
 private:
     std::string name_;
@@ -61,13 +88,16 @@ private:
     mutable std::mutex frameMutex_;
     QImage currentFrame_;
 
-    // For simulation mode
-    std::unique_ptr<QTimer> frameTimer_;
+    // Frame generator thread
+    QThread frameGeneratorThread_;
+    FrameGeneratorWorker* frameGenerator_{nullptr};
 
     // Helper functions
     bool createSaperaObjects();
     void destroySaperaObjects();
     void updateFrameFromBuffer();
+    void startFrameThread();
+    void stopFrameThread();
 
     // Static callback functions for the Sapera SDK
     static void XferCallback(SapXferCallbackInfo *pInfo);
@@ -101,11 +131,11 @@ public:
 
 signals:
     void newFrameAvailable(const QImage& frame);
-    void statusChanged(const std::string& message);
-    void error(const std::string& message);
+    void statusChanged(const std::string& message) const;
+    void error(const std::string& message) const;
 
 private slots:
-    void generateDummyFrame();
+    void handleNewFrame(const QImage& frame);
 
 private:
     std::string name_;
@@ -116,8 +146,13 @@ private:
     mutable std::mutex frameMutex_;
     QImage currentFrame_;
 
-    // For simulation mode
-    std::unique_ptr<QTimer> frameTimer_;
+    // Frame generator thread
+    QThread frameGeneratorThread_;
+    FrameGeneratorWorker* frameGenerator_{nullptr};
+    
+    // Thread management
+    void startFrameThread();
+    void stopFrameThread();
 };
 
 #else
@@ -144,11 +179,11 @@ public:
 
 signals:
     void newFrameAvailable(const QImage& frame);
-    void statusChanged(const std::string& message);
-    void error(const std::string& message);
+    void statusChanged(const std::string& message) const;
+    void error(const std::string& message) const;
 
 private slots:
-    void generateDummyFrame();
+    void handleNewFrame(const QImage& frame);
 
 private:
     std::string name_;
@@ -159,8 +194,13 @@ private:
     mutable std::mutex frameMutex_;
     QImage currentFrame_;
 
-    // For simulation mode
-    std::unique_ptr<QTimer> frameTimer_;
+    // Frame generator thread
+    QThread frameGeneratorThread_;
+    FrameGeneratorWorker* frameGenerator_{nullptr};
+    
+    // Thread management
+    void startFrameThread();
+    void stopFrameThread();
 };
 #endif
 

@@ -101,51 +101,81 @@ void SaperaStatusWidget::setupUi()
 
 void SaperaStatusWidget::refresh()
 {
-    updateStatus();
-    emit statusChanged(tr("Camera SDK status refreshed"));
+    bool saperaAvailable = core::SaperaUtils::isSaperaAvailable();
+    
+    // Update Sapera SDK status
+    if (saperaAvailable) {
+        saperaStatusLabel_->setText("Available");
+        saperaStatusLabel_->setStyleSheet("color: green;");
+        
+        // Update Sapera version
+        std::string versionStr = core::SaperaUtils::getSaperaVersion();
+        saperaVersionLabel_->setText(QString::fromStdString(versionStr));
+    } else {
+        saperaStatusLabel_->setText("Not Available");
+        saperaStatusLabel_->setStyleSheet("color: red;");
+        saperaVersionLabel_->setText("N/A");
+    }
+    
+    // Update GigE Vision status
+    bool gigeAvailable = core::SaperaUtils::isGigeVisionAvailable();
+    if (gigeAvailable) {
+        gigeStatusLabel_->setText("Available");
+        gigeStatusLabel_->setStyleSheet("color: green;");
+        
+        // Update GigE Vision version
+        std::string gigeVersionStr = core::SaperaUtils::getGigeVisionVersion();
+        gigeVersionLabel_->setText(QString::fromStdString(gigeVersionStr));
+    } else {
+        gigeStatusLabel_->setText("Not Available");
+        gigeStatusLabel_->setStyleSheet("color: red;");
+        gigeVersionLabel_->setText("N/A");
+    }
+    
+    // Get camera count
+    std::vector<std::string> cameraNames;
+    if (core::SaperaUtils::getAvailableCameras(cameraNames)) {
+        cameraCountLabel_->setText(QString::number(cameraNames.size()));
+    } else {
+        cameraCountLabel_->setText("0");
+    }
+    
+    // Enable/disable test button
+    testConnectionButton_->setEnabled(saperaAvailable || gigeAvailable);
 }
 
 void SaperaStatusWidget::updateStatus()
 {
-    // Check if Sapera SDK is available
-    isSaperaConnected_ = core::SaperaUtils::isSaperaAvailable();
+    // Update all status indicators
+    refresh();
     
-    if (isSaperaConnected_) {
-        saperaStatusLabel_->setText(tr("Available"));
-        saperaStatusLabel_->setStyleSheet("color: green;");
-        
-        // Get version
-        std::string versionStr = core::SaperaUtils::getSaperaVersion();
-        saperaVersionLabel_->setText(QString::fromStdString(versionStr));
+    // Show SDK details
+    QString sdkDetails;
+    
+    if (core::SaperaUtils::isSaperaAvailable()) {
+        sdkDetails += "Sapera SDK: " + QString::fromStdString(core::SaperaUtils::getSaperaVersion()) + "\n";
+    } else if (core::SaperaUtils::isGigeVisionAvailable()) {
+        sdkDetails += "GigE Vision: " + QString::fromStdString(core::SaperaUtils::getGigeVisionVersion()) + "\n";
     } else {
-        saperaStatusLabel_->setText(tr("Not Available"));
-        saperaStatusLabel_->setStyleSheet("color: red;");
-        saperaVersionLabel_->setText(tr("N/A"));
+        sdkDetails += "No SDK available, using mock implementation\n";
     }
     
-    // Check if GigE Vision Interface is available
-    isGigeConnected_ = core::SaperaUtils::isGigeVisionAvailable();
-    
-    if (isGigeConnected_) {
-        gigeStatusLabel_->setText(tr("Available"));
-        gigeStatusLabel_->setStyleSheet("color: green;");
-        
-        // Get version
-        std::string versionStr = core::SaperaUtils::getGigeVisionVersion();
-        gigeVersionLabel_->setText(QString::fromStdString(versionStr));
+    // Get available cameras
+    std::vector<std::string> cameraNames;
+    if (core::SaperaUtils::getAvailableCameras(cameraNames)) {
+        sdkDetails += "\nAvailable cameras (" + QString::number(cameraNames.size()) + "):\n";
+        for (const auto& name : cameraNames) {
+            sdkDetails += "- " + QString::fromStdString(name) + "\n";
+        }
     } else {
-        gigeStatusLabel_->setText(tr("Not Available"));
-        gigeStatusLabel_->setStyleSheet("color: red;");
-        gigeVersionLabel_->setText(tr("N/A"));
+        sdkDetails += "\nNo cameras found.\n";
     }
     
-    // Get camera count
-    std::vector<std::string> cameras;
-    core::SaperaUtils::getAvailableCameras(cameras);
-    cameraCountLabel_->setText(QString::number(cameras.size()));
+    // Display details
+    QMessageBox::information(this, "Camera SDK Details", sdkDetails);
     
-    // Enable/disable test button
-    testConnectionButton_->setEnabled(isSaperaConnected_ || isGigeConnected_);
+    // Emit status change
+    emit statusChanged("Camera SDK details viewed");
 }
 
 } // namespace cam_matrix::ui 
