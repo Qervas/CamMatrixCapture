@@ -111,6 +111,14 @@ private:
     void updateFrameFromBuffer();
     void createCameraThread();
     
+    // Frame generator thread and worker - available in both compilation modes
+    QThread frameGeneratorThread_;
+    FrameGeneratorWorker* frameGenerator_{nullptr};
+    
+    // Thread management methods - available in both compilation modes
+    void startFrameThread();
+    void stopFrameThread();
+    
 #ifdef HAS_SAPERA
     // Sapera-specific implementation
     bool createSaperaObjects();
@@ -127,14 +135,6 @@ private:
     std::unique_ptr<SapBufferWithTrash> buffer_;
     std::unique_ptr<SapAcqDeviceToBuf> transfer_;
     std::unique_ptr<SapView> view_;
-#else
-    // For non-Sapera implementations
-    QThread frameGeneratorThread_;
-    FrameGeneratorWorker* frameGenerator_{nullptr};
-    
-    // Thread management
-    void startFrameThread();
-    void stopFrameThread();
 #endif
 };
 
