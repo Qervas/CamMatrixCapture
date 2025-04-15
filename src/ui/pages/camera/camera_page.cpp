@@ -15,6 +15,8 @@
 #include <QListWidget>
 #include <QMessageBox>
 #include <QGroupBox>
+#include <QDebug>
+#include <QTimer>
 
 namespace cam_matrix::ui {
 
@@ -187,13 +189,25 @@ void CameraPage::onCameraSelected(int index) {
             // Connect to frame signals from this camera
             auto saperaCamera = cameraManager_->getSaperaCameraByIndex(index);
             if (saperaCamera) {
+                qDebug() << "Connecting to new frame signals from camera" << QString::fromStdString(saperaCamera->getName());
+                
+                // For thread safety, use a queued connection to receive frame signals
                 connect(saperaCamera, &core::SaperaCamera::newFrameAvailable,
-                        this, &CameraPage::onNewFrame);
+                        this, &CameraPage::onNewFrame, Qt::QueuedConnection);
 
                 // If already connected, display frames
                 if (saperaCamera->isConnected()) {
-                    onNewFrame(saperaCamera->getFrame());
+                    qDebug() << "Camera is already connected, getting current frame";
+                    QImage initialFrame = saperaCamera->getFrame();
+                    if (!initialFrame.isNull()) {
+                        qDebug() << "Got valid frame with size:" << initialFrame.width() << "x" << initialFrame.height();
+                        onNewFrame(initialFrame);
+                    } else {
+                        qDebug() << "Camera returned null frame";
+                        videoDisplay_->clearFrame();
+                    }
                 } else {
+                    qDebug() << "Camera not connected yet";
                     videoDisplay_->clearFrame();
                 }
             }
@@ -211,12 +225,33 @@ void CameraPage::onCameraSelected(int index) {
 void CameraPage::onConnectCamera() {
     if (selectedCameraIndex_ >= 0) {
         emit statusChanged(tr("Connecting to camera..."));
+        
+        qDebug() << "Attempting to connect to camera index:" << selectedCameraIndex_;
 
         if (cameraManager_->connectCamera(selectedCameraIndex_)) {
+            qDebug() << "Camera connected successfully";
             connectButton_->setEnabled(false);
             disconnectButton_->setEnabled(true);
+            
+            // Try to get an initial frame after connection
+            auto saperaCamera = cameraManager_->getSaperaCameraByIndex(selectedCameraIndex_);
+            if (saperaCamera) {
+                // Wait a brief moment for the camera to initialize
+                QTimer::singleShot(500, this, [this, saperaCamera]() {
+                    qDebug() << "Getting initial frame after connection";
+                    QImage initialFrame = saperaCamera->getFrame();
+                    if (!initialFrame.isNull()) {
+                        qDebug() << "Initial frame received, size:" << initialFrame.width() << "x" << initialFrame.height();
+                        videoDisplay_->updateFrame(initialFrame);
+                    } else {
+                        qDebug() << "Initial frame was null";
+                    }
+                });
+            }
+            
             emit statusChanged(tr("Camera connected"));
         } else {
+            qDebug() << "Camera connection failed";
             emit error(tr("Failed to connect to camera"));
         }
     }
@@ -274,7 +309,12 @@ void CameraPage::onManagerStatusChanged(const std::string& status) {
 }
 
 void CameraPage::onNewFrame(const QImage& frame) {
-    videoDisplay_->updateFrame(frame);
+    qDebug() << "New frame received, size:" << frame.width() << "x" << frame.height();
+    if (!frame.isNull()) {
+        videoDisplay_->updateFrame(frame);
+    } else {
+        qDebug() << "Received null frame";
+    }
 }
 
 } // namespace cam_matrix::ui

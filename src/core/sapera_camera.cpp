@@ -1,12 +1,14 @@
-#include "core/sapera_camera.hpp"
+#include "sapera_camera.hpp"
 #include <QDebug>
 #include <QColor>
 #include <QString>
 #include <QRandomGenerator>
 #include <QDateTime>
 #include <QPainter>
-#include <QMetaObject>
 #include <QFont>
+#include <QMetaObject>
+#include <QImage>
+#include <QThread>
 #include <cmath>
 
 namespace cam_matrix::core {
@@ -128,448 +130,130 @@ QImage FrameGeneratorWorker::generatePattern(int pattern, qint64 timestamp)
     
     // Add camera name and timestamp overlay
     QPainter painter(&newFrame);
+    
+    // Draw a colorful border to make it obvious the frame is being updated
+    painter.setPen(QPen(QColor(255, 0, 0), 4));  // Red border
+    painter.drawRect(2, 2, newFrame.width() - 4, newFrame.height() - 4);
+    
+    // Draw a moving indicator to show that frames are changing
+    int indicatorX = 20 + (timestamp / 100 % (newFrame.width() - 40));
+    painter.setBrush(QColor(0, 255, 0));  // Green indicator
+    painter.drawEllipse(QPoint(indicatorX, 20), 10, 10);
+    
+    // Add text overlays
     painter.setPen(Qt::white);
-    painter.setFont(QFont("Arial", 16));
-    painter.drawText(10, 30, QString::fromStdString(cameraName_));
-    painter.drawText(10, 60, QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss.zzz"));
-    painter.drawText(10, 90, QString("Exposure: %1 μs").arg(exposureValue));
+    painter.setFont(QFont("Arial", 16, QFont::Bold));
+    painter.drawText(10, 50, QString::fromStdString("Camera: " + cameraName_));
+    
+    painter.setFont(QFont("Arial", 14));
+    painter.drawText(10, 80, QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss.zzz"));
+    painter.drawText(10, 110, QString("Exposure: %1 μs").arg(exposureValue));
+    
+    // Add frame counter
+    static int frameCounter = 0;
+    frameCounter++;
+    painter.drawText(10, 140, QString("Frame: %1").arg(frameCounter));
+    
+    qDebug() << "Generated frame" << frameCounter << "for camera" << QString::fromStdString(cameraName_);
     
     return newFrame;
 }
 
 #if HAS_SAPERA
 
-SaperaCamera::SaperaCamera(const std::string& name)
+SaperaCamera::SaperaCamera(std::string name)
     : name_(name)
     , isConnected_(false)
-    , exposureTime_(10000.0) // Default to 10ms
 {
-    // Create empty QImage for now
-    currentFrame_ = QImage(640, 480, QImage::Format_RGB32);
-    currentFrame_.fill(Qt::black);
-    
-    // Draw camera name on start image
-    QPainter painter(&currentFrame_);
-    painter.setPen(Qt::white);
-    painter.setFont(QFont("Arial", 20, QFont::Bold));
-    painter.drawText(currentFrame_.rect(), Qt::AlignCenter, 
-                     QString::fromStdString(name_) + "\nNot Connected");
-    painter.end();
-    
-    // Create the frame generator but don't start it yet
-    frameGenerator_ = new FrameGeneratorWorker();
-    frameGenerator_->setCamera(name_, &exposureTime_);
+    qDebug() << "Creating SaperaCamera instance for" << QString::fromStdString(name);
+    // Frame generator worker is created for both real and mock implementations
+    frameGenerator_ = std::make_unique<FrameGeneratorWorker>(name);
     frameGenerator_->moveToThread(&frameGeneratorThread_);
+    connect(&frameGeneratorThread_, &QThread::finished, frameGenerator_.get(), &QObject::deleteLater);
+    connect(this, &SaperaCamera::startFrameGeneration, frameGenerator_.get(), &FrameGeneratorWorker::generateFrames);
+    connect(this, &SaperaCamera::stopFrameGeneration, frameGenerator_.get(), &FrameGeneratorWorker::stop);
+    connect(frameGenerator_.get(), &FrameGeneratorWorker::frameReady, this, &SaperaCamera::onFrameReady);
+    frameGeneratorThread_.start();
     
-    // Connect signals and slots with proper connection types
-    connect(&frameGeneratorThread_, &QThread::started, 
-            frameGenerator_, &FrameGeneratorWorker::generateFrames);
-    connect(frameGenerator_, &FrameGeneratorWorker::finished, 
-            &frameGeneratorThread_, &QThread::quit, Qt::QueuedConnection);
-    connect(&frameGeneratorThread_, &QThread::finished, 
-            frameGenerator_, &FrameGeneratorWorker::deleteLater, Qt::QueuedConnection);
-    // Use direct connection from worker to camera to avoid race conditions
-    connect(frameGenerator_, &FrameGeneratorWorker::frameGenerated,
-            this, &SaperaCamera::handleNewFrame, Qt::DirectConnection);
+    qDebug() << "SaperaCamera instance created successfully, thread started";
 }
 
-SaperaCamera::~SaperaCamera() {
-    // Make sure we're disconnected from camera
-    if (isConnected_) {
-        disconnectCamera();
-    }
-    
-    // Safely clean up thread resources
-    stopFrameThread();
-    
-    // If thread is still running, wait for it to finish
-    if (frameGeneratorThread_.isRunning()) {
-        frameGeneratorThread_.quit();
-        if (!frameGeneratorThread_.wait(1000)) {
-            qDebug() << "Warning: Frame generator thread taking too long to quit, terminating...";
-            frameGeneratorThread_.terminate();
-        }
-    }
-    
-    // Delete the frame generator if it wasn't automatically deleted
-    if (frameGenerator_) {
-        disconnect(frameGenerator_, nullptr, this, nullptr);
-        if (frameGenerator_->parent() == nullptr) {
-            delete frameGenerator_;
-            frameGenerator_ = nullptr;
-        }
-    }
+SaperaCamera::~SaperaCamera()
+{
+    qDebug() << "Destroying SaperaCamera instance for" << QString::fromStdString(name_);
+    disconnect();
+    frameGeneratorThread_.quit();
+    frameGeneratorThread_.wait();
+    qDebug() << "SaperaCamera instance destroyed";
 }
 
-bool SaperaCamera::connectCamera() {
-    if (isConnected_) {
+bool SaperaCamera::connect()
+{
+    qDebug() << "Attempting to connect to camera:" << QString::fromStdString(name_);
+    
+    if (isConnected_)
+    {
+        qDebug() << "Camera already connected";
         return true;
     }
-
-    // Create Sapera objects
-    try {
-        qDebug() << "Connecting to camera:" << QString::fromStdString(name_);
-        
-        // Create acquisition device
-        qDebug() << "Creating SapAcqDevice for" << QString::fromStdString(name_);
-        device_ = std::make_unique<SapAcqDevice>(name_.c_str());
-        if (!device_->Create()) {
-            qDebug() << "Failed to create acquisition device";
-            emit error("Failed to create acquisition device");
-            return false;
-        }
-        qDebug() << "SapAcqDevice created successfully";
-        
-        // Create buffer
-        qDebug() << "Creating SapBufferWithTrash";
-        buffer_ = std::make_unique<SapBufferWithTrash>(2, device_.get());
-        if (!buffer_->Create()) {
-            qDebug() << "Failed to create buffer";
-            emit error("Failed to create buffer");
-            destroySaperaObjects();
-            return false;
-        }
-        qDebug() << "SapBufferWithTrash created successfully";
-        
-        // Create view object
-        qDebug() << "Creating SapView";
-        view_ = std::make_unique<SapView>(buffer_.get());
-        if (!view_->Create()) {
-            qDebug() << "Failed to create view";
-            emit error("Failed to create view");
-            destroySaperaObjects();
-            return false;
-        }
-        qDebug() << "SapView created successfully";
-        
-        // Get initial camera properties
-        if (isFeatureAvailable("ExposureTime")) {
-            double exposure = 0.0;
-            if (device_->GetFeatureValue("ExposureTime", &exposure)) {
-                exposureTime_ = exposure;
-            }
-        }
-        
-        // Start the frame generation thread
-        startFrameThread();
-        
-        // Connection successful
-        isConnected_ = true;
-        qDebug() << "Successfully connected to camera:" << QString::fromStdString(name_);
-        emit statusChanged("Connected to camera: " + name_);
-        
-        return true;
-    }
-    catch (const std::exception& e) {
-        qDebug() << "Exception connecting to camera:" << e.what();
-        emit error(std::string("Exception connecting to camera: ") + e.what());
-        destroySaperaObjects();
+    
+    std::lock_guard<std::mutex> lock(mutex_);
+    
+#ifdef SAPERA_FOUND
+    qDebug() << "Using real Sapera SDK implementation";
+    if (!createSaperaObjects())
+    {
+        emit error("Failed to create Sapera objects");
         return false;
     }
-    catch (...) {
-        qDebug() << "Unknown exception connecting to camera";
-        emit error("Unknown exception connecting to camera");
-        destroySaperaObjects();
-        return false;
-    }
+#else
+    qDebug() << "Using mock camera implementation";
+    // Set a default exposure time for mock implementation
+    currentExposureTime_ = 10000.0;
+    frameGenerator_->setExposureTimePointer(&currentExposureTime_);
+#endif
+
+    isConnected_ = true;
+    emit connectionChanged(true);
+    emit statusChanged("Connected to camera: " + name_);
+    
+    // Start generating frames
+    qDebug() << "Starting frame generation";
+    emit startFrameGeneration();
+    
+    return true;
 }
 
-bool SaperaCamera::disconnectCamera() {
-    if (!isConnected_) {
+bool SaperaCamera::disconnect()
+{
+    qDebug() << "Attempting to disconnect camera:" << QString::fromStdString(name_);
+    if (!isConnected_)
+    {
+        qDebug() << "Camera not connected";
         return true;
     }
     
-    // Stop the frame generation thread
-    stopFrameThread();
-
-    // Destroy Sapera objects
+    std::lock_guard<std::mutex> lock(mutex_);
+    
+    // Stop frame generation
+    qDebug() << "Stopping frame generation";
+    emit stopFrameGeneration();
+    
+#ifdef SAPERA_FOUND
     destroySaperaObjects();
-
+#endif
+    
     isConnected_ = false;
+    emit connectionChanged(false);
     emit statusChanged("Disconnected from camera: " + name_);
     
-    // Update display with disconnected message
-    QImage disconnectedImage(640, 480, QImage::Format_RGB32);
-    disconnectedImage.fill(Qt::black);
-    
-    QPainter painter(&disconnectedImage);
-    painter.setPen(Qt::white);
-    painter.setFont(QFont("Arial", 20, QFont::Bold));
-    painter.drawText(disconnectedImage.rect(), Qt::AlignCenter, 
-                     QString::fromStdString(name_) + "\nDisconnected");
-    painter.end();
-    
-    {
-        std::lock_guard<std::mutex> lock(frameMutex_);
-        currentFrame_ = disconnectedImage;
-    }
-    
-    emit newFrameAvailable(disconnectedImage);
-    
     return true;
 }
 
-void SaperaCamera::startFrameThread() {
-    if (!frameGeneratorThread_.isRunning()) {
-        frameGeneratorThread_.start();
-    }
-}
-
-void SaperaCamera::stopFrameThread() {
-    if (frameGenerator_ && frameGeneratorThread_.isRunning()) {
-        frameGenerator_->stop();
-        frameGeneratorThread_.quit();
-        frameGeneratorThread_.wait(1000);  // Wait up to 1 second
-        
-        if (frameGeneratorThread_.isRunning()) {
-            // Force termination if not stopped normally
-            frameGeneratorThread_.terminate();
-            qDebug() << "Warning: Frame generator thread had to be terminated";
-        }
-    }
-}
-
-void SaperaCamera::handleNewFrame(const QImage& frame) {
-    // Create a copy of the frame
-    QImage frameCopy = frame.copy();
-    
-    // Update the current frame with thread safety
-    {
-        std::lock_guard<std::mutex> lock(frameMutex_);
-        currentFrame_ = frameCopy;
-    }
-    
-    // Use a queued connection to emit the signal to prevent deadlocks
-    // in the event loop when connecting to slots in the UI thread
-    QMetaObject::invokeMethod(this, [this, frameCopy]() {
-        emit newFrameAvailable(frameCopy);
-    }, Qt::QueuedConnection);
-}
-
-bool SaperaCamera::isConnected() const {
-    return isConnected_;
-}
-
-std::string SaperaCamera::getName() const {
-    return name_;
-}
-
-bool SaperaCamera::setExposureTime(double microseconds) {
-    if (!isConnected_) {
-        emit error("Cannot set exposure time: camera not connected");
-        return false;
-    }
-
-    if (device_) {
-        // Set the exposure time in the device
-        if (device_->SetFeatureValue("ExposureTime", microseconds)) {
-            exposureTime_ = microseconds;
-            emit statusChanged("Exposure time set to " + std::to_string(microseconds) + " microseconds");
-            return true;
-        }
-        else {
-            emit error("Failed to set exposure time");
-            return false;
-        }
-    }
-    
-    // If no device (simulation mode), just store the value
-    exposureTime_ = microseconds;
-    emit statusChanged("Exposure time set to " + std::to_string(microseconds) + " microseconds");
-    return true;
-}
-
-double SaperaCamera::getExposureTime() const {
-    if (!isConnected_) {
-        return exposureTime_; // Return cached value when not connected
-    }
-
-    if (device_) {
-        double value = 0.0;
-        if (device_->GetFeatureValue("ExposureTime", &value)) {
-            return value;
-        }
-    }
-    
-    return exposureTime_;
-}
-
-QImage SaperaCamera::getFrame() const {
-    std::lock_guard<std::mutex> lock(frameMutex_);
-    return currentFrame_.copy();
-}
-
-bool SaperaCamera::configureCamera() {
-    if (!device_ || !isConnected_) {
-        return false;
-    }
-
-    emit statusChanged("Configuring camera...");
-
-    // Print camera information
-    printCameraInfo();
-
-    // Configure acquisition mode
-    if (isFeatureAvailable("AcquisitionMode")) {
-        device_->SetFeatureValue("AcquisitionMode", "Continuous");
-    }
-
-    // Configure exposure mode
-    if (isFeatureAvailable("ExposureMode")) {
-        device_->SetFeatureValue("ExposureMode", "Timed");
-    }
-
-    // Set default exposure time
-    if (isFeatureAvailable("ExposureTime")) {
-        device_->SetFeatureValue("ExposureTime", exposureTime_);
-    }
-
-    return true;
-}
-
-void SaperaCamera::printCameraInfo() const {
-    if (!device_ || !isConnected_) {
-        return;
-    }
-
-    std::string infoMessage = "Camera Information:\n";
-
-    // Print some important camera information
-    const char* important_features[] = {
-        "DeviceModelName",
-        "DeviceSerialNumber",
-        "DeviceFirmwareVersion",
-        "DeviceUserID"
-    };
-
-    for (const char* feature : important_features) {
-        if (isFeatureAvailable(feature)) {
-            char value[256] = {0};
-            if (device_->GetFeatureValue(feature, value, sizeof(value))) {
-                infoMessage += std::string(feature) + ": " + std::string(value) + "\n";
-            }
-        }
-    }
-
-    // Use const_cast to safely emit the signal from a const method
-    const_cast<SaperaCamera*>(this)->emit statusChanged(infoMessage);
-}
-
-bool SaperaCamera::createSaperaObjects() {
-    // Objects are created in connectCamera
-    return true;
-}
-
-void SaperaCamera::destroySaperaObjects() {
-    if (view_) {
-        view_->Destroy();
-        view_.reset();
-    }
-
-    if (transfer_) {
-        transfer_->Destroy();
-        transfer_.reset();
-    }
-
-    if (buffer_) {
-        buffer_->Destroy();
-        buffer_.reset();
-    }
-
-    if (device_) {
-        device_->Destroy();
-        device_.reset();
-    }
-}
-
-void SaperaCamera::updateFrameFromBuffer() {
-    if (!buffer_ || !isConnected_) {
-        return;
-    }
-
-    // Get the buffer information
-    void* pData = nullptr;
-
-    try {
-        // Get the buffer data
-        if (buffer_->GetAddress(&pData)) {
-            // Get buffer properties
-            UINT32 width = buffer_->GetWidth();
-            UINT32 height = buffer_->GetHeight();
-            UINT32 pitch = buffer_->GetPitch();
-            UINT32 format = buffer_->GetFormat();
-
-            // Create QImage from buffer data
-            QImage newFrame(width, height, QImage::Format_RGB32);
-
-            // Convert buffer data to QImage based on format
-            const uint8_t* src = static_cast<const uint8_t*>(pData);
-            
-            // For simplicity, we'll treat everything as grayscale
-            for (UINT32 y = 0; y < height; y++) {
-                for (UINT32 x = 0; x < width; x++) {
-                    uint8_t pixel = src[y * pitch + x];
-                    newFrame.setPixelColor(x, y, QColor(pixel, pixel, pixel));
-                }
-            }
-
-            // Use a queued connection to pass the new frame to the main thread safely
-            QMetaObject::invokeMethod(this, [this, newFrame]() {
-                // Call handleNewFrame with a deep copy to ensure thread safety
-                handleNewFrame(newFrame.copy());
-            }, Qt::QueuedConnection);
-        }
-    }
-    catch (const std::exception& e) {
-        qDebug() << "Error updating frame:" << e.what();
-    }
-    catch (...) {
-        qDebug() << "Unknown exception in updateFrameFromBuffer";
-    }
-}
-
-void SaperaCamera::XferCallback(SapXferCallbackInfo *pInfo) {
-    SaperaCamera* camera = static_cast<SaperaCamera*>(pInfo->GetContext());
-    if (camera) {
-        camera->updateFrameFromBuffer();
-    }
-}
-
-void SaperaCamera::printFeatureValue(const char* featureName) const {
-    if (!device_ || !isConnected_) {
-        return;
-    }
-
-    BOOL isAvailable = FALSE;
-    if (device_->IsFeatureAvailable(featureName, &isAvailable) && isAvailable) {
-        // Get feature info to check access mode
-        SapFeature feature(device_->GetLocation());
-        if (feature.Create() && device_->GetFeatureInfo(featureName, &feature)) {
-            SapFeature::AccessMode accessMode;
-            if (feature.GetAccessMode(&accessMode)) {
-                if (accessMode == SapFeature::AccessRO || accessMode == SapFeature::AccessRW) {
-                    char valueBuffer[256] = {0};
-                    if (device_->GetFeatureValue(featureName, valueBuffer, sizeof(valueBuffer))) {
-                        // Use const_cast to safely emit the signal from a const method
-                        const_cast<SaperaCamera*>(this)->emit statusChanged(std::string(featureName) + ": " + std::string(valueBuffer));
-                    }
-                }
-            }
-            feature.Destroy();
-        }
-    }
-}
-
-bool SaperaCamera::isFeatureAvailable(const char* featureName) const {
-    if (!device_ || !isConnected_) {
-        return false;
-    }
-
-    BOOL isAvailable = FALSE;
-    if (device_->IsFeatureAvailable(featureName, &isAvailable)) {
-        return isAvailable == TRUE;
-    }
-    return false;
+void SaperaCamera::onFrameReady(const QImage& frame)
+{
+    qDebug() << "Frame ready from camera" << QString::fromStdString(name_) << "- size:" << frame.size();
+    emit newFrame(frame);
 }
 
 #elif HAS_GIGE_VISION

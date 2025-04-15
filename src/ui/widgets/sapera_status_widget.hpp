@@ -18,13 +18,13 @@ public:
 
 public slots:
     void refresh();
+    void showStatusDetails();
 
 signals:
     void statusChanged(const QString& status);
 
 private:
     void setupUi();
-    void updateStatus();
 
     QLabel* titleLabel_;
     QLabel* saperaStatusLabel_;
