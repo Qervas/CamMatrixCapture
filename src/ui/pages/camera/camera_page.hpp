@@ -2,23 +2,18 @@
 
 #include "ui/pages/page.hpp"
 #include "core/camera_manager.hpp"
-#include "core/simulated_camera_manager.hpp"
-#include "core/sapera_manager.hpp"
-#include "ui/widgets/video_display_widget.hpp"
-#include "ui/dialogs/camera_mode_selector_dialog.hpp"
+#include <memory>
 #include <QListWidget>
 #include <QPushButton>
-#include <memory>
+#include <QImage>
 
-namespace cam_matrix::core {
-    class CameraManager;
-    class SimulatedCameraManager;
-    class SaperaManager;
+// Forward declarations
+namespace cam_matrix::ui {
+    class CameraControlWidget;
+    class VideoDisplayWidget;
 }
 
 namespace cam_matrix::ui {
-
-class CameraControlWidget;
 
 class CameraPage : public Page {
     Q_OBJECT
@@ -26,50 +21,39 @@ class CameraPage : public Page {
 public:
     explicit CameraPage(QWidget* parent = nullptr);
     ~CameraPage() override;
-
+    
     QString title() const override { return tr("Cameras"); }
+
+protected:
+    void setupUi() override;
+    void createConnections() override;
     void initialize() override;
     void cleanup() override;
 
 private slots:
     void onRefreshCameras();
-    void onCameraSelected(int index);
-    void onCameraStatusChanged(const QString& status);
     void onConnectCamera();
     void onDisconnectCamera();
+    void onCameraSelected(int index);
+    void onCameraStatusChanged(const QString& status);
+    void onManagerStatusChanged(const std::string& status);
     void onNewFrame(const QImage& frame);
     void onTestSaperaCamera();
-    void switchCameraMode();
 
 private:
-    enum CameraMode {
-        Mode_Mock,
-        Mode_Simulated,
-        Mode_Sapera
-    };
-
-    void setupUi() override;
-    void createConnections() override;
     void loadSettings();
     void saveSettings();
     void updateCameraList();
-    void setupCameraMode(CameraMode mode, bool forceRefresh = false);
 
+    std::unique_ptr<core::CameraManager> cameraManager_;
     QListWidget* cameraList_;
-    CameraControlWidget* cameraControl_;
     QPushButton* refreshButton_;
     QPushButton* connectButton_;
     QPushButton* disconnectButton_;
-    VideoDisplayWidget* videoDisplay_;
-
-    std::shared_ptr<core::CameraManager> cameraManager_;
-    int selectedCameraIndex_;
     QPushButton* testSaperaButton_;
-
-    // Mode-specific members
-    CameraMode currentMode_ = Mode_Mock;
-    std::shared_ptr<core::SimulatedCameraManager> simulatedManager_;
-    QPushButton* switchModeButton_;
+    CameraControlWidget* cameraControl_;
+    VideoDisplayWidget* videoDisplay_;
+    int selectedCameraIndex_;
 };
 
 } // namespace cam_matrix::ui

@@ -1,9 +1,9 @@
 #pragma once
-#include "camera.hpp"
-#include "camera/mock_camera.hpp"
-#include <vector>
+
+#include "core/camera.hpp"
+#include "core/sapera_camera.hpp"
 #include <memory>
-#include <string>
+#include <vector>
 #include <QObject>
 
 namespace cam_matrix::core {
@@ -12,16 +12,18 @@ class CameraManager : public QObject {
     Q_OBJECT
 
 public:
-    CameraManager();
-    virtual ~CameraManager();
+    explicit CameraManager(QObject* parent = nullptr);
+    ~CameraManager();
 
     // Scan for available cameras
-    virtual bool scanForCameras();
+    void scanForCameras();
+
+    // Get list of available cameras
+    std::vector<Camera*> getCameras() const;
 
     // Camera access
-    std::vector<std::shared_ptr<Camera>> getCameras() const;
-    std::shared_ptr<Camera> getCameraByIndex(size_t index) const;
-    std::shared_ptr<MockCamera> getMockCameraByIndex(size_t index) const;
+    Camera* getCameraByIndex(size_t index) const;
+    SaperaCamera* getSaperaCameraByIndex(size_t index) const;
 
     // Connection management
     bool connectCamera(size_t index);
@@ -29,12 +31,13 @@ public:
     bool disconnectAllCameras();
 
 signals:
-    void camerasChanged();
+    void statusChanged(const std::string& status);
+    void error(const std::string& error);
     void cameraConnected(size_t index);
     void cameraDisconnected(size_t index);
 
-protected:
-    std::vector<std::shared_ptr<Camera>> cameras_;
+private:
+    std::vector<std::unique_ptr<Camera>> cameras_;
 };
 
 } // namespace cam_matrix::core

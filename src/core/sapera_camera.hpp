@@ -13,21 +13,21 @@ namespace cam_matrix::core {
 
 #if HAS_SAPERA
 // Only compile the real implementation if Sapera is available
-class SaperaCamera : public QObject, public Camera {
+class SaperaCamera : public Camera {
     Q_OBJECT
 
 public:
-    SaperaCamera(const std::string& serverName);
+    explicit SaperaCamera(const std::string& name);
     ~SaperaCamera() override;
 
     // Camera interface implementation
-    std::string getName() const override;
-    bool isConnected() const override;
     bool connectCamera() override;
     bool disconnectCamera() override;
+    bool isConnected() const override;
+    std::string getName() const override;
+    bool setExposureTime(double microseconds);
 
     // Camera properties
-    bool setExposureTime(double microseconds);
     double getExposureTime() const;
 
     // Get the current frame
@@ -38,14 +38,15 @@ public:
     void printCameraInfo() const;
 
 signals:
-    void newFrameAvailable(QImage frame);
+    void newFrameAvailable(const QImage& frame);
     void statusChanged(const std::string& message);
-    void error(const std::string& errorMessage);
+    void error(const std::string& message);
 
 private:
-    // Sapera objects
-    std::string serverName_;
+    std::string name_;
     bool isConnected_;
+
+    // Sapera objects
     std::unique_ptr<SapAcqDevice> device_;
     std::unique_ptr<SapBufferWithTrash> buffer_;
     std::unique_ptr<SapAcqDeviceToBuf> transfer_;
@@ -69,17 +70,21 @@ private:
 };
 #else
 // Provide a stub implementation when Sapera is not available
-class SaperaCamera : public QObject, public Camera {
+class SaperaCamera : public Camera {
     Q_OBJECT
 
 public:
-    SaperaCamera(const std::string& serverName) : serverName_(serverName), isConnected_(false) {}
+    SaperaCamera(const std::string& serverName) : Camera(), serverName_(serverName), isConnected_(false) {}
     ~SaperaCamera() override = default;
 
     std::string getName() const override { return serverName_ + " (Sapera SDK not available)"; }
     bool isConnected() const override { return false; }
     bool connectCamera() override { return false; }
     bool disconnectCamera() override { return false; }
+    bool setExposureTime(double microseconds) { 
+        emit statusChanged("Exposure time set to " + std::to_string(microseconds) + " microseconds (stub)");
+        return true; 
+    }
 
     QImage getFrame() const { return QImage(); }
 

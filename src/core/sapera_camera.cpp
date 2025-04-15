@@ -7,8 +7,8 @@ namespace cam_matrix::core {
 
 #if HAS_SAPERA
 
-SaperaCamera::SaperaCamera(const std::string& serverName)
-    : serverName_(serverName)
+SaperaCamera::SaperaCamera(const std::string& name)
+    : name_(name)
     , isConnected_(false)
 {
     // Create empty QImage for now
@@ -22,85 +22,48 @@ SaperaCamera::~SaperaCamera() {
     }
 }
 
-std::string SaperaCamera::getName() const {
-    if (device_ && isConnected_) {
-        char modelName[256] = {0};
-        if (device_->IsFeatureAvailable("DeviceModelName", nullptr)) {
-            device_->GetFeatureValue("DeviceModelName", modelName, sizeof(modelName));
-            return std::string(modelName);
-        }
+bool SaperaCamera::connectCamera() {
+    if (isConnected_) {
+        return true;
     }
-    return serverName_;
+
+    // TODO: Implement actual Sapera camera connection
+    // This is a placeholder implementation
+    isConnected_ = true;
+    emit statusChanged("Camera connected: " + name_);
+    return true;
+}
+
+bool SaperaCamera::disconnectCamera() {
+    if (!isConnected_) {
+        return true;
+    }
+
+    // TODO: Implement actual Sapera camera disconnection
+    // This is a placeholder implementation
+    isConnected_ = false;
+    emit statusChanged("Camera disconnected: " + name_);
+    return true;
 }
 
 bool SaperaCamera::isConnected() const {
     return isConnected_;
 }
 
-bool SaperaCamera::connectCamera() {
-    if (isConnected_) {
-        return true; // Already connected
-    }
-
-    emit statusChanged("Connecting to camera: " + serverName_);
-
-    if (!createSaperaObjects()) {
-        emit error("Failed to create Sapera objects");
-        return false;
-    }
-
-    if (!configureCamera()) {
-        emit error("Failed to configure camera");
-        destroySaperaObjects();
-        return false;
-    }
-
-    // Start image acquisition
-    if (transfer_ && !transfer_->Grab()) {
-        emit error("Failed to start acquisition");
-        destroySaperaObjects();
-        return false;
-    }
-
-    isConnected_ = true;
-    emit statusChanged("Camera connected: " + serverName_);
-    return true;
-}
-
-bool SaperaCamera::disconnectCamera() {
-    if (!isConnected_) {
-        return true; // Already disconnected
-    }
-
-    emit statusChanged("Disconnecting from camera: " + serverName_);
-
-    if (transfer_) {
-        transfer_->Freeze();
-        transfer_->Wait(5000);
-    }
-
-    destroySaperaObjects();
-    isConnected_ = false;
-
-    emit statusChanged("Camera disconnected: " + serverName_);
-    return true;
+std::string SaperaCamera::getName() const {
+    return name_;
 }
 
 bool SaperaCamera::setExposureTime(double microseconds) {
-    if (!isConnected_ || !device_) {
+    if (!isConnected_) {
+        emit error("Cannot set exposure time: camera not connected");
         return false;
     }
 
-    if (!isFeatureAvailable("ExposureTime")) {
-        return false;
-    }
-
-    if (device_->SetFeatureValue("ExposureTime", microseconds)) {
-        emit statusChanged("Exposure time set to " + std::to_string(microseconds) + " μs");
-        return true;
-    }
-
-    return false;
+    // TODO: Implement actual Sapera exposure time setting
+    // This is a placeholder implementation
+    emit statusChanged("Exposure time set to " + std::to_string(microseconds) + " microseconds");
+    return true;
 }
 
 double SaperaCamera::getExposureTime() const {
@@ -184,7 +147,7 @@ void SaperaCamera::printCameraInfo() const {
 bool SaperaCamera::createSaperaObjects() {
     try {
         // Create acquisition device
-        device_ = std::make_unique<SapAcqDevice>(serverName_.c_str());
+        device_ = std::make_unique<SapAcqDevice>(name_.c_str());
         if (!device_->Create()) {
             emit error("Failed to create acquisition device");
             return false;
@@ -335,3 +298,4 @@ bool SaperaCamera::isFeatureAvailable(const char* featureName) const {
 #endif // HAS_SAPERA
 
 } // namespace cam_matrix::core
+

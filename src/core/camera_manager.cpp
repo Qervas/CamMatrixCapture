@@ -1,50 +1,65 @@
 #include "core/camera_manager.hpp"
-#include <iostream>
+#include "core/sapera_camera.hpp"
+#include "core/sapera_defs.hpp"
+#include <QDebug>
 
 namespace cam_matrix::core {
 
-CameraManager::CameraManager() {
-    // Initial scan for cameras
-    scanForCameras();
+CameraManager::CameraManager(QObject* parent)
+    : QObject(parent)
+{
 }
 
-CameraManager::~CameraManager() {
-    disconnectAllCameras();
-}
+CameraManager::~CameraManager() = default;
 
-bool CameraManager::scanForCameras() {
-    disconnectAllCameras();
+void CameraManager::scanForCameras()
+{
     cameras_.clear();
 
-    // Create some mock cameras
-    for (int i = 0; i < 3; ++i) {
-        std::string cameraName = "Mock Camera " + std::to_string(i);
-        cameras_.push_back(std::make_shared<MockCamera>(i, cameraName));
+#if HAS_SAPERA
+    // Scan for Sapera cameras
+    std::vector<std::string> cameraNames;
+    if (SapManager::GetResourceList(SapManager::ResourceAcqDevice, &cameraNames)) {
+        for (const auto& name : cameraNames) {
+            cameras_.push_back(std::make_unique<SaperaCamera>(name));
+        }
+        emit statusChanged("Found " + std::to_string(cameras_.size()) + " Sapera cameras");
+    } else {
+        emit statusChanged("No Sapera cameras found");
     }
-
-    emit camerasChanged();
-    return true;
+#else
+    emit statusChanged("Sapera SDK not available");
+#endif
 }
 
-std::vector<std::shared_ptr<Camera>> CameraManager::getCameras() const {
-    return cameras_; // Now directly returns since we store Camera pointers
+std::vector<Camera*> CameraManager::getCameras() const
+{
+    std::vector<Camera*> result;
+    result.reserve(cameras_.size());
+    for (const auto& camera : cameras_) {
+        result.push_back(camera.get());
+    }
+    return result;
 }
 
-std::shared_ptr<Camera> CameraManager::getCameraByIndex(size_t index) const {
+Camera* CameraManager::getCameraByIndex(size_t index) const
+{
     if (index < cameras_.size()) {
-        return cameras_[index];
+        return cameras_[index].get();
     }
     return nullptr;
 }
 
-std::shared_ptr<MockCamera> CameraManager::getMockCameraByIndex(size_t index) const {
+SaperaCamera* CameraManager::getSaperaCameraByIndex(size_t index) const
+{
     if (index < cameras_.size()) {
-        return std::dynamic_pointer_cast<MockCamera>(cameras_[index]);
+        return dynamic_cast<SaperaCamera*>(cameras_[index].get());
     }
     return nullptr;
 }
 
-bool CameraManager::connectCamera(size_t index) {
+bool CameraManager::connectCamera(size_t index)
+{
     if (index < cameras_.size()) {
         bool result = cameras_[index]->connectCamera();
         if (result) {
@@ -55,7 +70,8 @@ bool CameraManager::connectCamera(size_t index) {
     return false;
 }
 
-bool CameraManager::disconnectCamera(size_t index) {
+bool CameraManager::disconnectCamera(size_t index)
+{
     if (index < cameras_.size()) {
         bool result = cameras_[index]->disconnectCamera();
         if (result) {
@@ -66,7 +82,8 @@ bool CameraManager::disconnectCamera(size_t index) {
     return false;
 }
 
-bool CameraManager::disconnectAllCameras() {
+bool CameraManager::disconnectAllCameras()
+{
     bool allDisconnected = true;
     for (size_t i = 0; i < cameras_.size(); ++i) {
         if (!disconnectCamera(i)) {

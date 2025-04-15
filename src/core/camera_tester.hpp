@@ -1,14 +1,10 @@
 #pragma once
-#include <QWidget>
-#include <QComboBox>
-#include <QPushButton>
-#include <QSlider>
-#include <QLabel>
-#include <QVBoxLayout>
-#include <memory>
+
 #include "core/camera_manager.hpp"
-#include "core/sapera_manager.hpp"
-#include "ui/widgets/video_display_widget.hpp"
+#include <memory>
+#include <vector>
+#include <QWidget>
+#include <QString>
 
 namespace cam_matrix::core {
 
@@ -19,41 +15,27 @@ public:
     explicit CameraTester(QWidget* parent = nullptr);
     ~CameraTester();
 
-public slots:
-    void refreshCameras();
-    void onMockSelected(bool selected);
-    void onRealSelected(bool selected);
+    void initialize();
+    void cleanup();
 
-private slots:
-    void connectToSelectedCamera();
-    void disconnectFromCamera();
-    void onCameraSelected(int index);
-    void onExposureChanged(int value);
-    void onFrameReceived(const QImage& frame);
+    void scanForCameras();
+    void connectCamera(size_t index);
+    void disconnectCamera(size_t index);
+    void disconnectAllCameras();
+
+    std::vector<Camera*> getCameras() const;
+    Camera* getCameraByIndex(size_t index) const;
+    SaperaCamera* getSaperaCameraByIndex(size_t index) const;
+
+signals:
+    void statusChanged(const QString& status);
+    void error(const QString& error);
+    void cameraConnected(size_t index);
+    void cameraDisconnected(size_t index);
 
 private:
     void setupUi();
-    void createConnections();
-    void updateCameraList();
-
-    // Camera managers
-    std::shared_ptr<CameraManager> mockManager_;
-    std::shared_ptr<SaperaManager> saperaManager_;
-
-    // UI elements
-    QComboBox* cameraListCombo_;
-    QPushButton* refreshButton_;
-    QPushButton* connectButton_;
-    QPushButton* disconnectButton_;
-    QSlider* exposureSlider_;
-    QLabel* exposureLabel_;
-    ui::VideoDisplayWidget* videoDisplay_;
-    QLabel* statusLabel_;
-
-    // Status
-    bool useMockCameras_;
-    int selectedCameraIndex_;
-    bool isConnected_;
+    std::unique_ptr<CameraManager> cameraManager_;
 };
 
 } // namespace cam_matrix::core
