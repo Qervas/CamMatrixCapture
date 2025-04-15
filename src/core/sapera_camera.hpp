@@ -54,6 +54,9 @@ public:
     bool isConnected() const override;
     std::string getName() const override;
     bool setExposureTime(double microseconds);
+    
+    // Photo capture implementation
+    bool capturePhoto(const std::string& savePath = "") override;
 
     // Camera properties
     double getExposureTime() const;
@@ -69,6 +72,7 @@ signals:
     void newFrameAvailable(const QImage& frame);
     void statusChanged(const std::string& message) const;
     void error(const std::string& message) const;
+    void photoCaptured(const QImage& image, const std::string& path);
 
 private slots:
     void handleNewFrame(const QImage& frame);
@@ -98,6 +102,7 @@ private:
     void updateFrameFromBuffer();
     void startFrameThread();
     void stopFrameThread();
+    bool saveImageToFile(const QImage& image, const std::string& filePath);
 
     // Static callback functions for the Sapera SDK
     static void XferCallback(SapXferCallbackInfo *pInfo);
@@ -122,6 +127,9 @@ public:
     bool isConnected() const override;
     std::string getName() const override;
     bool setExposureTime(double microseconds);
+    
+    // Photo capture implementation
+    bool capturePhoto(const std::string& savePath = "") override;
 
     // Camera properties
     double getExposureTime() const;
@@ -133,6 +141,7 @@ signals:
     void newFrameAvailable(const QImage& frame);
     void statusChanged(const std::string& message) const;
     void error(const std::string& message) const;
+    void photoCaptured(const QImage& image, const std::string& path);
 
 private slots:
     void handleNewFrame(const QImage& frame);
@@ -153,6 +162,7 @@ private:
     // Thread management
     void startFrameThread();
     void stopFrameThread();
+    bool saveImageToFile(const QImage& image, const std::string& filePath);
 };
 
 #else
@@ -170,6 +180,9 @@ public:
     bool isConnected() const override;
     std::string getName() const override;
     bool setExposureTime(double microseconds);
+    
+    // Photo capture implementation
+    bool capturePhoto(const std::string& savePath = "") override;
 
     // Camera properties
     double getExposureTime() const;
@@ -181,6 +194,7 @@ signals:
     void newFrameAvailable(const QImage& frame);
     void statusChanged(const std::string& message) const;
     void error(const std::string& message) const;
+    void photoCaptured(const QImage& image, const std::string& path);
 
 private slots:
     void handleNewFrame(const QImage& frame);
@@ -201,6 +215,7 @@ private:
     // Thread management
     void startFrameThread();
     void stopFrameThread();
+    bool saveImageToFile(const QImage& image, const std::string& filePath);
 };
 #endif
 

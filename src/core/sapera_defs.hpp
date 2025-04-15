@@ -33,6 +33,10 @@
         constexpr BOOL TRUE = 1;
         constexpr BOOL FALSE = 0;
         
+        // Callback function declaration - defined before SapXferCallbackInfo
+        class SapXferCallbackInfo;
+        typedef void (*XferCallbackFunc)(SapXferCallbackInfo*);
+        
         // Stub base SapManager class
         class SapManager {
         public:
@@ -89,6 +93,7 @@
         // Device class
         class SapAcqDevice {
         public:
+            SapAcqDevice() {}
             SapAcqDevice(const char* serverName) {}
             ~SapAcqDevice() {}
             
@@ -161,11 +166,19 @@
         
         class SapBufferWithTrash : public SapBuffer {
         public:
+            SapBufferWithTrash() {}
             SapBufferWithTrash(int count, SapAcqDevice* pDevice) {}
         };
         
-        // Callback function declaration
-        typedef void (*XferCallbackFunc)(SapXferCallbackInfo*);
+        // Callback information class
+        class SapXferCallbackInfo {
+        private:
+            void* m_pContext;
+            
+        public:
+            SapXferCallbackInfo(void* pContext) : m_pContext(pContext) {}
+            void* GetContext() { return m_pContext; }
+        };
         
         // Transfer classes
         class SapTransfer {
@@ -191,23 +204,15 @@
             }
         };
         
-        class SapXferCallbackInfo {
-        private:
-            void* m_pContext;
-            
-        public:
-            SapXferCallbackInfo(void* pContext) : m_pContext(pContext) {}
-            void* GetContext() { return m_pContext; }
-        };
-        
         class SapAcqDeviceToBuf : public SapTransfer {
         public:
+            SapAcqDeviceToBuf() {}
             SapAcqDeviceToBuf(SapAcqDevice* pDevice, SapBuffer* pBuffer) {}
         };
         
-        // View class
         class SapView {
         public:
+            SapView() {}
             SapView(SapBuffer* pBuffer, void* hwnd = nullptr) {}
             
             bool Create() { return true; }
@@ -215,25 +220,25 @@
             
             bool Show() { return true; }
         };
-    }
-
-    // Include our stub classes in the global namespace to avoid changing the code
-    using SaperaStubs::SapManager;
-    using SaperaStubs::SapLocation;
-    using SaperaStubs::SapAcqDevice;
-    using SaperaStubs::SapBuffer;
-    using SaperaStubs::SapBufferWithTrash;
-    using SaperaStubs::SapAcqDeviceToBuf;
-    using SaperaStubs::SapTransfer;
-    using SaperaStubs::SapXferCallbackInfo;
-    using SaperaStubs::SapView;
-    using SaperaStubs::SapFeature;
-    using SaperaStubs::CORSERVER_MAX_STRLEN;
-    using SaperaStubs::UINT32;
-    using SaperaStubs::BOOL;
-    using SaperaStubs::TRUE;
-    using SaperaStubs::FALSE;
-    using SaperaStubs::XferCallbackFunc;
+    } // namespace SaperaStubs
+    
+    // Use our stubs instead of the real Sapera types
+    using SapManager = SaperaStubs::SapManager;
+    using SapLocation = SaperaStubs::SapLocation;
+    using SapAcqDevice = SaperaStubs::SapAcqDevice;
+    using SapBuffer = SaperaStubs::SapBuffer;
+    using SapBufferWithTrash = SaperaStubs::SapBufferWithTrash;
+    using SapAcqDeviceToBuf = SaperaStubs::SapAcqDeviceToBuf;
+    using SapTransfer = SaperaStubs::SapTransfer;
+    using SapXferCallbackInfo = SaperaStubs::SapXferCallbackInfo;
+    using SapView = SaperaStubs::SapView;
+    using SapFeature = SaperaStubs::SapFeature;
+    
+    // Define some constants as preprocessor macros
+    #define SAPBUFFER_FORMAT_MONO8 0
+    #define SAPBUFFER_FORMAT_MONO16 1
+    #define SAPBUFFER_FORMAT_RGB24 2
+    #define SAPBUFFER_FORMAT_RGB32 3
 #endif
 
 namespace cam_matrix::core {

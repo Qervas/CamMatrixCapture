@@ -17,6 +17,8 @@
 #include <QGroupBox>
 #include <QDebug>
 #include <QTimer>
+#include <QDir>
+#include <QDateTime>
 
 namespace cam_matrix::ui {
 
@@ -117,6 +119,9 @@ void CameraPage::createConnections() {
 
     connect(cameraControl_, &CameraControlWidget::statusChanged,
             this, &CameraPage::onCameraStatusChanged);
+            
+    connect(cameraControl_, &CameraControlWidget::capturePhotoRequested,
+            this, &CameraPage::onCapturePhotoRequested);
 
     connect(testSaperaButton_, &QPushButton::clicked,
             this, &CameraPage::onTestSaperaCamera);
@@ -315,6 +320,59 @@ void CameraPage::onNewFrame(const QImage& frame) {
     } else {
         qDebug() << "Received null frame";
     }
+}
+
+void CameraPage::onCapturePhotoRequested(int cameraIndex) {
+    qDebug() << "Capture photo requested for camera index:" << cameraIndex;
+    
+    if (cameraIndex < 0) {
+        emit statusChanged(tr("No camera selected for photo capture"));
+        return;
+    }
+    
+    auto saperaCamera = cameraManager_->getSaperaCameraByIndex(cameraIndex);
+    if (!saperaCamera) {
+        emit statusChanged(tr("Failed to get camera for photo capture"));
+        return;
+    }
+    
+    if (!saperaCamera->isConnected()) {
+        emit statusChanged(tr("Camera not connected. Connect the camera before capturing photos."));
+        return;
+    }
+    
+    // Create a folder for captured photos if it doesn't exist
+    QDir captureDir("captures");
+    if (!captureDir.exists()) {
+        if (!captureDir.mkpath(".")) {
+            emit statusChanged(tr("Failed to create directory for photo captures"));
+            return;
+        }
+    }
+    
+    // Generate a filename with timestamp
+    QString timeStamp = QDateTime::currentDateTime().toString("yyyy-MM-dd_hh-mm-ss-zzz");
+    QString fileName = QString("captures/%1_%2.png")
+                            .arg(QString::fromStdString(saperaCamera->getName()))
+                            .arg(timeStamp);
+    
+    // Connect to photoCaptured signal if not already connected
+    if (!connect(saperaCamera, &core::SaperaCamera::photoCaptured,
+                this, &CameraPage::onPhotoCaptured, Qt::UniqueConnection)) {
+        qDebug() << "Connected to photoCaptured signal";
+    }
+    
+    // Trigger the photo capture
+    if (saperaCamera->capturePhoto(fileName.toStdString())) {
+        emit statusChanged(tr("Capturing photo from camera %1...").arg(cameraIndex));
+    } else {
+        emit statusChanged(tr("Failed to capture photo from camera %1").arg(cameraIndex));
+    }
+}
+
+void CameraPage::onPhotoCaptured(const QImage& image, const std::string& path) {
+    qDebug() << "Photo captured and saved to:" << QString::fromStdString(path);
+    emit statusChanged(tr("Photo captured and saved to: %1").arg(QString::fromStdString(path)));
 }
 
 } // namespace cam_matrix::ui

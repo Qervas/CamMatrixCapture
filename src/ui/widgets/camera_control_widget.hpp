@@ -5,6 +5,7 @@
 #include <QSlider>
 #include <QComboBox>
 #include <QCheckBox>
+#include <QPushButton>
 
 namespace cam_matrix::ui {
 
@@ -20,11 +21,13 @@ public:
 signals:
     void controlValueChanged(const QString& controlName, int value);
     void statusChanged(const QString& message);
+    void capturePhotoRequested(int cameraIndex);
 
 private slots:
     void onExposureChanged(int value);
     void onGainChanged(int value);
     void onFormatChanged(int index);
+    void onCapturePhotoClicked();
 
 private:
     void setupUi();
@@ -40,6 +43,9 @@ private:
     QComboBox* formatCombo_;
 
     QCheckBox* autoExposureCheck_;
+    
+    QGroupBox* captureGroup_;
+    QPushButton* captureButton_;
 
     int currentCameraIndex_;
 };

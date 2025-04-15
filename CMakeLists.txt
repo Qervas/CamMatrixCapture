@@ -57,6 +57,10 @@ if(EXISTS "${SAPERA_CLASSES_BASIC_DIR}/SapClassBasic.h" AND EXISTS "${SAPCLASSBA
         add_definitions(-DHAS_SAPERA=0)
         add_definitions(-DHAS_GIGE_VISION=1)
         message(STATUS "Using mock Sapera implementation (forced by USE_MOCK_SAPERA)")
+        
+        # Disable direct access components that require the full SDK
+        set(EXCLUDE_DIRECT_ACCESS TRUE)
+        add_definitions(-DEXCLUDE_DIRECT_ACCESS=1)
     else()
         # Use real SDK
         set(SAPERA_FOUND TRUE)

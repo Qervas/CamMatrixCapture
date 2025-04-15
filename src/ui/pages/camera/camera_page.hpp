@@ -41,6 +41,8 @@ private slots:
     void onNewFrame(const QImage& frame);
     void onTestSaperaCamera();
     void onDirectCameraAccess();
+    void onCapturePhotoRequested(int cameraIndex);
+    void onPhotoCaptured(const QImage& image, const std::string& path);
 
 private:
     void loadSettings();

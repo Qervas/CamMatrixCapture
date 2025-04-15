@@ -20,11 +20,15 @@ public:
     // Adding these to match MockCamera's implementation
     virtual bool connectCamera() = 0;
     virtual bool disconnectCamera() = 0;
+    
+    // Photo capture functionality
+    virtual bool capturePhoto(const std::string& savePath = "") = 0;
 
 signals:
     void newFrameAvailable(const QImage& frame);
     void statusChanged(const std::string& message);
     void error(const std::string& message);
+    void photoCaptured(const QImage& image, const std::string& path);
 };
 
 } // namespace cam_matrix::core

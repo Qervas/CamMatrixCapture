@@ -9,6 +9,8 @@
 #include <QMetaObject>
 #include <QImage>
 #include <QThread>
+#include <QFileInfo>
+#include <QDir>
 #include <cmath>
 
 namespace cam_matrix::core {
@@ -161,19 +163,26 @@ QImage FrameGeneratorWorker::generatePattern(int pattern, qint64 timestamp)
 
 #if HAS_SAPERA
 
-SaperaCamera::SaperaCamera(std::string name)
+SaperaCamera::SaperaCamera(const std::string& name)
     : name_(name)
     , isConnected_(false)
 {
     qDebug() << "Creating SaperaCamera instance for" << QString::fromStdString(name);
     // Frame generator worker is created for both real and mock implementations
-    frameGenerator_ = std::make_unique<FrameGeneratorWorker>(name);
+    frameGenerator_ = new FrameGeneratorWorker();
+    frameGenerator_->setCamera(name_, &exposureTime_);
     frameGenerator_->moveToThread(&frameGeneratorThread_);
-    connect(&frameGeneratorThread_, &QThread::finished, frameGenerator_.get(), &QObject::deleteLater);
-    connect(this, &SaperaCamera::startFrameGeneration, frameGenerator_.get(), &FrameGeneratorWorker::generateFrames);
-    connect(this, &SaperaCamera::stopFrameGeneration, frameGenerator_.get(), &FrameGeneratorWorker::stop);
-    connect(frameGenerator_.get(), &FrameGeneratorWorker::frameReady, this, &SaperaCamera::onFrameReady);
-    frameGeneratorThread_.start();
+    
+    // Connect signals and slots with proper connection types
+    connect(&frameGeneratorThread_, &QThread::started, 
+            frameGenerator_, &FrameGeneratorWorker::generateFrames);
+    connect(frameGenerator_, &FrameGeneratorWorker::finished, 
+            &frameGeneratorThread_, &QThread::quit, Qt::QueuedConnection);
+    connect(&frameGeneratorThread_, &QThread::finished, 
+            frameGenerator_, &FrameGeneratorWorker::deleteLater, Qt::QueuedConnection);
+    // Use direct connection from worker to camera to avoid race conditions
+    connect(frameGenerator_, &FrameGeneratorWorker::frameGenerated,
+            this, &SaperaCamera::handleNewFrame, Qt::DirectConnection);
     
     qDebug() << "SaperaCamera instance created successfully, thread started";
 }
@@ -181,13 +190,33 @@ SaperaCamera::SaperaCamera(std::string name)
 SaperaCamera::~SaperaCamera()
 {
     qDebug() << "Destroying SaperaCamera instance for" << QString::fromStdString(name_);
-    disconnect();
-    frameGeneratorThread_.quit();
-    frameGeneratorThread_.wait();
+    disconnectCamera();
+    
+    // Safely clean up thread resources
+    stopFrameThread();
+    
+    // If thread is still running, wait for it to finish
+    if (frameGeneratorThread_.isRunning()) {
+        frameGeneratorThread_.quit();
+        if (!frameGeneratorThread_.wait(1000)) {
+            qDebug() << "Warning: Frame generator thread taking too long to quit, terminating...";
+            frameGeneratorThread_.terminate();
+        }
+    }
+    
+    // Delete the frame generator if it wasn't automatically deleted
+    if (frameGenerator_) {
+        disconnect(frameGenerator_, nullptr, this, nullptr);
+        if (frameGenerator_->parent() == nullptr) {
+            delete frameGenerator_;
+            frameGenerator_ = nullptr;
+        }
+    }
+    
     qDebug() << "SaperaCamera instance destroyed";
 }
 
-bool SaperaCamera::connect()
+bool SaperaCamera::connectCamera()
 {
     qDebug() << "Attempting to connect to camera:" << QString::fromStdString(name_);
     
@@ -197,34 +226,26 @@ bool SaperaCamera::connect()
         return true;
     }
     
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::mutex> lock(frameMutex_);
     
-#ifdef SAPERA_FOUND
     qDebug() << "Using real Sapera SDK implementation";
     if (!createSaperaObjects())
     {
         emit error("Failed to create Sapera objects");
         return false;
     }
-#else
-    qDebug() << "Using mock camera implementation";
-    // Set a default exposure time for mock implementation
-    currentExposureTime_ = 10000.0;
-    frameGenerator_->setExposureTimePointer(&currentExposureTime_);
-#endif
 
     isConnected_ = true;
-    emit connectionChanged(true);
     emit statusChanged("Connected to camera: " + name_);
     
     // Start generating frames
     qDebug() << "Starting frame generation";
-    emit startFrameGeneration();
+    startFrameThread();
     
     return true;
 }
 
-bool SaperaCamera::disconnect()
+bool SaperaCamera::disconnectCamera()
 {
     qDebug() << "Attempting to disconnect camera:" << QString::fromStdString(name_);
     if (!isConnected_)
@@ -233,27 +254,348 @@ bool SaperaCamera::disconnect()
         return true;
     }
     
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::mutex> lock(frameMutex_);
     
     // Stop frame generation
     qDebug() << "Stopping frame generation";
-    emit stopFrameGeneration();
+    stopFrameThread();
     
-#ifdef SAPERA_FOUND
     destroySaperaObjects();
-#endif
     
     isConnected_ = false;
-    emit connectionChanged(false);
     emit statusChanged("Disconnected from camera: " + name_);
     
     return true;
 }
 
-void SaperaCamera::onFrameReady(const QImage& frame)
+void SaperaCamera::handleNewFrame(const QImage& frame)
 {
     qDebug() << "Frame ready from camera" << QString::fromStdString(name_) << "- size:" << frame.size();
-    emit newFrame(frame);
+    
+    // Create a copy of the frame
+    QImage frameCopy = frame.copy();
+    
+    // Update the current frame with thread safety
+    {
+        std::lock_guard<std::mutex> lock(frameMutex_);
+        currentFrame_ = frameCopy;
+    }
+    
+    // Use a queued connection to emit the signal to prevent deadlocks
+    QMetaObject::invokeMethod(this, [this, frameCopy]() {
+        emit newFrameAvailable(frameCopy);
+    }, Qt::QueuedConnection);
+}
+
+bool SaperaCamera::createSaperaObjects()
+{
+    qDebug() << "Creating Sapera objects for camera:" << QString::fromStdString(name_);
+    
+    try {
+        // Create a Sapera acquisition device
+        device_ = std::make_unique<SapAcqDevice>(name_.c_str());
+        if (!device_->Create()) {
+            qDebug() << "Failed to create SapAcqDevice";
+            destroySaperaObjects();
+            return false;
+        }
+        
+        // Create a buffer with trash for image storage - using dummy values for now
+        const int bufferCount = 2; // Number of buffers to use
+        buffer_ = std::make_unique<SapBufferWithTrash>(bufferCount, device_.get());
+        if (!buffer_->Create()) {
+            qDebug() << "Failed to create SapBufferWithTrash";
+            destroySaperaObjects();
+            return false;
+        }
+        
+        // Create a transfer object from device to buffer
+        transfer_ = std::make_unique<SapAcqDeviceToBuf>(device_.get(), buffer_.get());
+        if (!transfer_->Create()) {
+            qDebug() << "Failed to create SapAcqDeviceToBuf";
+            destroySaperaObjects();
+            return false;
+        }
+        
+        // Set the transfer callback
+        transfer_->SetCallbackInfo(XferCallback, this);
+        
+        // Create a view for displaying the image - null handle means no windows will be created
+        view_ = std::make_unique<SapView>(buffer_.get(), nullptr);
+        if (!view_->Create()) {
+            qDebug() << "Failed to create SapView";
+            destroySaperaObjects();
+            return false;
+        }
+        
+        qDebug() << "Sapera objects created successfully";
+        return true;
+    }
+    catch (const std::exception& e) {
+        qDebug() << "Exception creating Sapera objects:" << e.what();
+        destroySaperaObjects();
+        return false;
+    }
+}
+
+void SaperaCamera::destroySaperaObjects()
+{
+    qDebug() << "Destroying Sapera objects";
+    
+    // Destroy objects in reverse order of creation
+    if (view_) {
+        view_->Destroy();
+        view_.reset();
+    }
+    
+    if (transfer_) {
+        transfer_->Destroy();
+        transfer_.reset();
+    }
+    
+    if (buffer_) {
+        buffer_->Destroy();
+        buffer_.reset();
+    }
+    
+    if (device_) {
+        device_->Destroy();
+        device_.reset();
+    }
+    
+    qDebug() << "Sapera objects destroyed";
+}
+
+void SaperaCamera::startFrameThread()
+{
+    if (!frameGeneratorThread_.isRunning()) {
+        frameGeneratorThread_.start();
+    }
+}
+
+void SaperaCamera::stopFrameThread()
+{
+    if (frameGenerator_ && frameGeneratorThread_.isRunning()) {
+        frameGenerator_->stop();
+        frameGeneratorThread_.quit();
+        frameGeneratorThread_.wait(500);  // Wait up to 500ms
+    }
+}
+
+void SaperaCamera::XferCallback(SapXferCallbackInfo* pInfo)
+{
+    // Get the camera object from the context
+    SaperaCamera* camera = static_cast<SaperaCamera*>(pInfo->GetContext());
+    if (camera) {
+        camera->updateFrameFromBuffer();
+    }
+}
+
+void SaperaCamera::updateFrameFromBuffer()
+{
+    if (!buffer_) {
+        return;
+    }
+    
+    try {
+        // Get the image data from the buffer
+        // This is just a placeholder - in a real implementation, you would 
+        // convert the Sapera buffer to a QImage
+        QImage frame(640, 480, QImage::Format_RGB32);
+        frame.fill(Qt::blue);  // Fill with blue as a placeholder
+        
+        // Add a timestamp
+        QPainter painter(&frame);
+        painter.setPen(Qt::white);
+        painter.setFont(QFont("Arial", 14));
+        painter.drawText(10, 30, QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss.zzz"));
+        painter.drawText(10, 50, QString::fromStdString("Camera: " + name_));
+        painter.end();
+        
+        // Update the current frame
+        {
+            std::lock_guard<std::mutex> lock(frameMutex_);
+            currentFrame_ = frame.copy();
+        }
+        
+        // Emit the frame available signal
+        emit newFrameAvailable(frame);
+    }
+    catch (const std::exception& e) {
+        qDebug() << "Exception in updateFrameFromBuffer:" << e.what();
+    }
+}
+
+bool SaperaCamera::configureCamera()
+{
+    if (!device_ || !isConnected_) {
+        return false;
+    }
+    
+    try {
+        // Configure camera settings
+        // This is just a placeholder - in a real implementation, you would
+        // set various camera parameters
+        
+        // Print some camera info
+        printCameraInfo();
+        
+        return true;
+    }
+    catch (const std::exception& e) {
+        qDebug() << "Exception configuring camera:" << e.what();
+        return false;
+    }
+}
+
+void SaperaCamera::printCameraInfo() const
+{
+    if (!device_ || !isConnected_) {
+        return;
+    }
+    
+    qDebug() << "Camera Info for" << QString::fromStdString(name_);
+    qDebug() << "----------------";
+    
+    // Print various camera features
+    printFeatureValue("DeviceVendorName");
+    printFeatureValue("DeviceModelName");
+    printFeatureValue("DeviceVersion");
+    printFeatureValue("DeviceID");
+    
+    // Print exposure time
+    qDebug() << "Exposure Time:" << getExposureTime() << "microseconds";
+    
+    qDebug() << "----------------";
+}
+
+void SaperaCamera::printFeatureValue(const char* featureName) const
+{
+    if (!device_ || !isFeatureAvailable(featureName)) {
+        return;
+    }
+    
+    try {
+        // This is a placeholder - in a real implementation, you would
+        // get the actual feature value from the camera
+        qDebug() << featureName << ": [Feature value would be shown here]";
+    }
+    catch (const std::exception& e) {
+        qDebug() << "Error getting feature" << featureName << ":" << e.what();
+    }
+}
+
+bool SaperaCamera::isFeatureAvailable(const char* featureName) const
+{
+    if (!device_) {
+        return false;
+    }
+    
+    // This is a placeholder - in a real implementation, you would
+    // check if the feature exists on the camera
+    return true;
+}
+
+bool SaperaCamera::capturePhoto(const std::string& savePath)
+{
+    if (!isConnected_) {
+        emit error("Cannot capture photo: Camera not connected");
+        return false;
+    }
+
+    // Get the current frame
+    QImage capturedFrame;
+    {
+        std::lock_guard<std::mutex> lock(frameMutex_);
+        capturedFrame = currentFrame_.copy(); // Make a copy to avoid threading issues
+    }
+
+    if (capturedFrame.isNull()) {
+        emit error("Failed to capture photo: No valid frame available");
+        return false;
+    }
+
+    // Generate a filename if not provided
+    std::string finalPath = savePath;
+    if (finalPath.empty()) {
+        // Create a timestamp-based filename in the current directory
+        QString timeStamp = QDateTime::currentDateTime().toString("yyyy-MM-dd_hh-mm-ss-zzz");
+        finalPath = name_ + "_" + timeStamp.toStdString() + ".png";
+    }
+
+    // Save the image to file
+    bool saved = saveImageToFile(capturedFrame, finalPath);
+    if (saved) {
+        emit statusChanged("Photo captured and saved to: " + finalPath);
+        emit photoCaptured(capturedFrame, finalPath);
+    } else {
+        emit error("Failed to save photo to: " + finalPath);
+    }
+
+    return saved;
+}
+
+bool SaperaCamera::saveImageToFile(const QImage& image, const std::string& filePath)
+{
+    if (image.isNull()) {
+        return false;
+    }
+
+    // Ensure the directory exists
+    QFileInfo fileInfo(QString::fromStdString(filePath));
+    QDir dir = fileInfo.dir();
+    if (!dir.exists()) {
+        if (!dir.mkpath(".")) {
+            qDebug() << "Failed to create directory for saving image:" << dir.path();
+            return false;
+        }
+    }
+
+    // Save the image to file
+    bool success = image.save(QString::fromStdString(filePath));
+    qDebug() << "Saved image to" << QString::fromStdString(filePath) << ":" << (success ? "Success" : "Failed");
+    return success;
+}
+
+std::string SaperaCamera::getName() const
+{
+    return name_;
+}
+
+bool SaperaCamera::isConnected() const
+{
+    return isConnected_;
+}
+
+bool SaperaCamera::setExposureTime(double microseconds)
+{
+    if (!isConnected_ || !device_) {
+        return false;
+    }
+    
+    try {
+        // Set the exposure time
+        // This is a placeholder - in a real implementation, you would
+        // set the actual exposure time on the camera
+        exposureTime_ = microseconds;
+        emit statusChanged("Exposure time set to " + std::to_string(microseconds) + " microseconds");
+        return true;
+    }
+    catch (const std::exception& e) {
+        qDebug() << "Error setting exposure time:" << e.what();
+        return false;
+    }
+}
+
+double SaperaCamera::getExposureTime() const
+{
+    return exposureTime_;
+}
+
+QImage SaperaCamera::getFrame() const
+{
+    std::lock_guard<std::mutex> lock(frameMutex_);
+    return currentFrame_.copy();
 }
 
 #elif HAS_GIGE_VISION
@@ -460,6 +802,67 @@ void SaperaCamera::handleNewFrame(const QImage& frame) {
     }, Qt::QueuedConnection);
 }
 
+bool SaperaCamera::capturePhoto(const std::string& savePath)
+{
+    if (!isConnected_) {
+        emit error("Cannot capture photo: Camera not connected");
+        return false;
+    }
+
+    // Get the current frame
+    QImage capturedFrame;
+    {
+        std::lock_guard<std::mutex> lock(frameMutex_);
+        capturedFrame = currentFrame_.copy(); // Make a copy to avoid threading issues
+    }
+
+    if (capturedFrame.isNull()) {
+        emit error("Failed to capture photo: No valid frame available");
+        return false;
+    }
+
+    // Generate a filename if not provided
+    std::string finalPath = savePath;
+    if (finalPath.empty()) {
+        // Create a timestamp-based filename in the current directory
+        QString timeStamp = QDateTime::currentDateTime().toString("yyyy-MM-dd_hh-mm-ss-zzz");
+        finalPath = name_ + "_" + timeStamp.toStdString() + ".png";
+    }
+
+    // Save the image to file
+    bool saved = saveImageToFile(capturedFrame, finalPath);
+    if (saved) {
+        emit statusChanged("Photo captured and saved to: " + finalPath);
+        emit photoCaptured(capturedFrame, finalPath);
+    } else {
+        emit error("Failed to save photo to: " + finalPath);
+    }
+
+    return saved;
+}
+
+bool SaperaCamera::saveImageToFile(const QImage& image, const std::string& filePath)
+{
+    if (image.isNull()) {
+        return false;
+    }
+
+    // Ensure the directory exists
+    QFileInfo fileInfo(QString::fromStdString(filePath));
+    QDir dir = fileInfo.dir();
+    if (!dir.exists()) {
+        if (!dir.mkpath(".")) {
+            qDebug() << "Failed to create directory for saving image:" << dir.path();
+            return false;
+        }
+    }
+
+    // Save the image to file
+    bool success = image.save(QString::fromStdString(filePath));
+    qDebug() << "Saved image to" << QString::fromStdString(filePath) << ":" << (success ? "Success" : "Failed");
+    return success;
+}
+
 #else
 // Stub implementation when no camera SDK is available
 
@@ -633,6 +1036,67 @@ void SaperaCamera::handleNewFrame(const QImage& frame) {
     QMetaObject::invokeMethod(this, [this, frameCopy]() {
         emit newFrameAvailable(frameCopy);
     }, Qt::QueuedConnection);
+}
+
+bool SaperaCamera::capturePhoto(const std::string& savePath)
+{
+    if (!isConnected_) {
+        emit error("Cannot capture photo: Camera not connected");
+        return false;
+    }
+
+    // Get the current frame
+    QImage capturedFrame;
+    {
+        std::lock_guard<std::mutex> lock(frameMutex_);
+        capturedFrame = currentFrame_.copy(); // Make a copy to avoid threading issues
+    }
+
+    if (capturedFrame.isNull()) {
+        emit error("Failed to capture photo: No valid frame available");
+        return false;
+    }
+
+    // Generate a filename if not provided
+    std::string finalPath = savePath;
+    if (finalPath.empty()) {
+        // Create a timestamp-based filename in the current directory
+        QString timeStamp = QDateTime::currentDateTime().toString("yyyy-MM-dd_hh-mm-ss-zzz");
+        finalPath = name_ + "_" + timeStamp.toStdString() + ".png";
+    }
+
+    // Save the image to file
+    bool saved = saveImageToFile(capturedFrame, finalPath);
+    if (saved) {
+        emit statusChanged("Photo captured and saved to: " + finalPath);
+        emit photoCaptured(capturedFrame, finalPath);
+    } else {
+        emit error("Failed to save photo to: " + finalPath);
+    }
+
+    return saved;
+}
+
+bool SaperaCamera::saveImageToFile(const QImage& image, const std::string& filePath)
+{
+    if (image.isNull()) {
+        return false;
+    }
+
+    // Ensure the directory exists
+    QFileInfo fileInfo(QString::fromStdString(filePath));
+    QDir dir = fileInfo.dir();
+    if (!dir.exists()) {
+        if (!dir.mkpath(".")) {
+            qDebug() << "Failed to create directory for saving image:" << dir.path();
+            return false;
+        }
+    }
+
+    // Save the image to file
+    bool success = image.save(QString::fromStdString(filePath));
+    qDebug() << "Saved image to" << QString::fromStdString(filePath) << ":" << (success ? "Success" : "Failed");
+    return success;
 }
 
 #endif

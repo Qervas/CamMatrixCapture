@@ -3,6 +3,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QGroupBox>
+#include <QPushButton>
 
 namespace cam_matrix::ui {
 
@@ -15,6 +16,8 @@ CameraControlWidget::CameraControlWidget(QWidget* parent)
     , formatGroup_(nullptr)
     , formatCombo_(nullptr)
     , autoExposureCheck_(nullptr)
+    , captureGroup_(nullptr)
+    , captureButton_(nullptr)
     , currentCameraIndex_(-1)
 {
     setupUi();
@@ -72,6 +75,16 @@ void CameraControlWidget::setupUi()
     formatLayout->addWidget(formatCombo_);
 
     mainLayout->addWidget(formatGroup_);
+    
+    // Capture photo control
+    captureGroup_ = new QGroupBox(tr("Photo Capture"), this);
+    auto* captureLayout = new QVBoxLayout(captureGroup_);
+    
+    captureButton_ = new QPushButton(tr("Capture Photo"), this);
+    captureButton_->setEnabled(false); // Initially disabled until camera connected
+    captureLayout->addWidget(captureButton_);
+    
+    mainLayout->addWidget(captureGroup_);
 
     // Add stretch at the end
     mainLayout->addStretch();
@@ -93,6 +106,9 @@ void CameraControlWidget::createConnections()
                 exposureSlider_->setEnabled(!checked);
                 emit statusChanged(tr("Auto exposure %1").arg(checked ? "enabled" : "disabled"));
             });
+            
+    connect(captureButton_, &QPushButton::clicked,
+            this, &CameraControlWidget::onCapturePhotoClicked);
 }
 
 void CameraControlWidget::setCameraIndex(int index)
@@ -101,6 +117,9 @@ void CameraControlWidget::setCameraIndex(int index)
         return;
 
     currentCameraIndex_ = index;
+    
+    // Enable capture button when a camera is selected
+    captureButton_->setEnabled(index >= 0);
 
     // In a real implementation, we would load the camera's current settings
     // and update the UI controls accordingly
@@ -133,6 +152,15 @@ void CameraControlWidget::onFormatChanged(int index)
     QString format = formatCombo_->itemText(index);
     emit controlValueChanged("format", index);
     emit statusChanged(tr("Format changed to %1").arg(format));
+}
+
+void CameraControlWidget::onCapturePhotoClicked()
+{
+    if (currentCameraIndex_ < 0)
+        return;
+        
+    emit statusChanged(tr("Capturing photo from camera %1...").arg(currentCameraIndex_));
+    emit capturePhotoRequested(currentCameraIndex_);
 }
 
 } // namespace cam_matrix::ui
