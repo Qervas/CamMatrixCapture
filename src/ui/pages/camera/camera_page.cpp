@@ -19,6 +19,7 @@
 #include <QTimer>
 #include <QDir>
 #include <QDateTime>
+#include <QMetaObject>
 
 namespace cam_matrix::ui {
 
@@ -145,24 +146,30 @@ void CameraPage::initialize() {
 }
 
 void CameraPage::cleanup() {
-    // Disconnect all signal connections first to prevent deadlocks
-    if (selectedCameraIndex_ >= 0) {
-        auto saperaCamera = cameraManager_->getSaperaCameraByIndex(selectedCameraIndex_);
-        if (saperaCamera) {
-            // Disconnect from frame signals to prevent deadlocks during shutdown
-            disconnect(saperaCamera, &core::sapera::SaperaCamera::newFrameAvailable,
-                      this, &CameraPage::onNewFrame);
-            disconnect(saperaCamera, &core::sapera::SaperaCamera::photoCaptured,
-                      this, &CameraPage::onPhotoCaptured);
+    try {
+        // Disconnect all signal connections first to prevent deadlocks
+        if (selectedCameraIndex_ >= 0) {
+            auto saperaCamera = cameraManager_->getSaperaCameraByIndex(selectedCameraIndex_);
+            if (saperaCamera) {
+                // Disconnect from frame signals to prevent deadlocks during shutdown
+                disconnect(saperaCamera, &core::sapera::SaperaCamera::newFrameAvailable,
+                          this, &CameraPage::onNewFrame);
+                disconnect(saperaCamera, &core::sapera::SaperaCamera::photoCaptured,
+                          this, &CameraPage::onPhotoCaptured);
+            }
         }
+        
+        // Now it's safe to disconnect all cameras
+        saveSettings();
+        cameraManager_->disconnectAllCameras();
+        
+        videoDisplay_->clearFrame();
+        Page::cleanup();
+    } catch (const std::exception& e) {
+        qWarning() << "Exception in CameraPage::cleanup:" << e.what();
+    } catch (...) {
+        qWarning() << "Unknown exception in CameraPage::cleanup";
     }
-    
-    // Now it's safe to disconnect all cameras
-    saveSettings();
-    cameraManager_->disconnectAllCameras();
-    
-    videoDisplay_->clearFrame();
-    Page::cleanup();
 }
 
 void CameraPage::loadSettings() {
@@ -182,105 +189,164 @@ void CameraPage::onRefreshCameras() {
 }
 
 void CameraPage::onCameraSelected(int index) {
-    // Disconnect from previous camera
-    if (selectedCameraIndex_ >= 0) {
-        auto camera = cameraManager_->getCameraByIndex(selectedCameraIndex_);
-        if (camera && camera->isConnected()) {
-            camera->disconnectCamera();
-        }
-
-        // Disconnect signal connections for the old camera
-        auto saperaCamera = cameraManager_->getSaperaCameraByIndex(selectedCameraIndex_);
-        if (saperaCamera) {
-            // Use disconnect with specific signals to avoid disconnecting all signals
-            disconnect(saperaCamera, &core::sapera::SaperaCamera::newFrameAvailable,
-                      this, &CameraPage::onNewFrame);
-            disconnect(saperaCamera, &core::sapera::SaperaCamera::photoCaptured,
-                      this, &CameraPage::onPhotoCaptured);
-        }
-    }
-
-    selectedCameraIndex_ = index;
-
-    if (index >= 0) {
-        auto camera = cameraManager_->getCameraByIndex(index);
-        if (camera) {
-            connectButton_->setEnabled(!camera->isConnected());
-            disconnectButton_->setEnabled(camera->isConnected());
-            cameraControl_->setEnabled(true);
-            cameraControl_->setCameraIndex(index);
-
-            // Connect to frame signals from this camera
-            auto saperaCamera = cameraManager_->getSaperaCameraByIndex(index);
-            if (saperaCamera) {
-                qDebug() << "Connecting to new frame signals from camera" << QString::fromStdString(saperaCamera->getName());
-                
-                // For thread safety, use a queued connection to receive frame signals
-                connect(saperaCamera, &core::sapera::SaperaCamera::newFrameAvailable,
-                        this, &CameraPage::onNewFrame, Qt::QueuedConnection);
-
-                // If already connected, display frames
-                if (saperaCamera->isConnected()) {
-                    qDebug() << "Camera is already connected, getting current frame";
-                    QImage initialFrame = saperaCamera->getFrame();
-                    if (!initialFrame.isNull()) {
-                        qDebug() << "Got valid frame with size:" << initialFrame.width() << "x" << initialFrame.height();
-                        onNewFrame(initialFrame);
-                    } else {
-                        qDebug() << "Camera returned null frame";
-                        videoDisplay_->clearFrame();
-                    }
-                } else {
-                    qDebug() << "Camera not connected yet";
-                    videoDisplay_->clearFrame();
-                }
+    try {
+        // Disconnect from previous camera
+        if (selectedCameraIndex_ >= 0) {
+            auto camera = cameraManager_->getCameraByIndex(selectedCameraIndex_);
+            if (camera && camera->isConnected()) {
+                camera->disconnectCamera();
             }
 
-            emit statusChanged(tr("Selected camera: %1").arg(QString::fromStdString(camera->getName())));
+            // Disconnect signal connections for the old camera
+            auto saperaCamera = cameraManager_->getSaperaCameraByIndex(selectedCameraIndex_);
+            if (saperaCamera) {
+                // Use disconnect with specific signals to avoid disconnecting all signals
+                disconnect(saperaCamera, &core::sapera::SaperaCamera::newFrameAvailable,
+                          this, &CameraPage::onNewFrame);
+                disconnect(saperaCamera, &core::sapera::SaperaCamera::photoCaptured,
+                          this, &CameraPage::onPhotoCaptured);
+            }
         }
-    } else {
-        connectButton_->setEnabled(false);
-        disconnectButton_->setEnabled(false);
-        cameraControl_->setEnabled(false);
-        videoDisplay_->clearFrame();
+
+        selectedCameraIndex_ = index;
+
+        if (index >= 0) {
+            auto camera = cameraManager_->getCameraByIndex(index);
+            if (camera) {
+                connectButton_->setEnabled(!camera->isConnected());
+                disconnectButton_->setEnabled(camera->isConnected());
+                cameraControl_->setEnabled(true);
+                cameraControl_->setCameraIndex(index);
+
+                // Connect to frame signals from this camera
+                auto saperaCamera = cameraManager_->getSaperaCameraByIndex(index);
+                if (saperaCamera) {
+                    qDebug() << "Connecting to new frame signals from camera" << QString::fromStdString(saperaCamera->getName());
+                    
+                    // For thread safety, use a queued connection to receive frame signals
+                    connect(saperaCamera, &core::sapera::SaperaCamera::newFrameAvailable,
+                            this, &CameraPage::onNewFrame, Qt::QueuedConnection);
+
+                    // If already connected, display frames
+                    if (saperaCamera->isConnected()) {
+                        qDebug() << "Camera is already connected, getting current frame";
+                        // Get the initial frame in a thread-safe way
+                        QImage initialFrame = saperaCamera->getFrame();
+                        if (!initialFrame.isNull()) {
+                            qDebug() << "Got valid frame with size:" << initialFrame.width() << "x" << initialFrame.height();
+                            
+                            // Use the same queued approach as onNewFrame for consistency
+                            QMetaObject::invokeMethod(this, [this, initialFrame]() {
+                                try {
+                                    // Create a deep copy
+                                    QImage frameCopy = initialFrame.copy();
+                                    videoDisplay_->updateFrame(frameCopy);
+                                } catch (const std::exception& e) {
+                                    qWarning() << "Exception in initial frame update:" << e.what();
+                                } catch (...) {
+                                    qWarning() << "Unknown exception in initial frame update";
+                                }
+                            }, Qt::QueuedConnection);
+                        } else {
+                            qDebug() << "Camera returned null frame";
+                            // Use queued connection for clearing frame
+                            QMetaObject::invokeMethod(videoDisplay_, "clearFrame", Qt::QueuedConnection);
+                        }
+                    } else {
+                        qDebug() << "Camera not connected yet";
+                        // Use queued connection for clearing frame
+                        QMetaObject::invokeMethod(videoDisplay_, "clearFrame", Qt::QueuedConnection);
+                    }
+                }
+
+                emit statusChanged(tr("Selected camera: %1").arg(QString::fromStdString(camera->getName())));
+            }
+        } else {
+            connectButton_->setEnabled(false);
+            disconnectButton_->setEnabled(false);
+            cameraControl_->setEnabled(false);
+            videoDisplay_->clearFrame();
+        }
+    } catch (const std::exception& e) {
+        qWarning() << "Exception in onCameraSelected:" << e.what();
+        emit error(tr("Error selecting camera: %1").arg(e.what()));
+    } catch (...) {
+        qWarning() << "Unknown exception in onCameraSelected";
+        emit error(tr("Unknown error selecting camera"));
     }
 }
 
 void CameraPage::onConnectCamera() {
-    if (selectedCameraIndex_ >= 0) {
-        emit statusChanged(tr("Connecting to camera..."));
-        
-        qDebug() << "Attempting to connect to camera index:" << selectedCameraIndex_;
+    try {
+        if (selectedCameraIndex_ >= 0) {
+            emit statusChanged(tr("Connecting to camera..."));
+            
+            qDebug() << "Attempting to connect to camera index:" << selectedCameraIndex_;
 
-        if (cameraManager_->connectCamera(selectedCameraIndex_)) {
-            qDebug() << "Camera connected successfully";
-            connectButton_->setEnabled(false);
-            disconnectButton_->setEnabled(true);
-            
-            // The camera is now connected and will emit newFrameAvailable signals
-            // which are already connected to onNewFrame via the onCameraSelected method
-            // No need to manually get a frame here, which could cause deadlocks
-            
-            emit statusChanged(tr("Camera connected"));
-        } else {
-            qDebug() << "Camera connection failed";
-            emit error(tr("Failed to connect to camera"));
+            if (cameraManager_->connectCamera(selectedCameraIndex_)) {
+                qDebug() << "Camera connected successfully";
+                connectButton_->setEnabled(false);
+                disconnectButton_->setEnabled(true);
+                
+                // The camera is now connected and will emit newFrameAvailable signals
+                // which are already connected to onNewFrame via the onCameraSelected method
+                // No need to manually get a frame here, which could cause deadlocks
+                
+                emit statusChanged(tr("Camera connected"));
+            } else {
+                qDebug() << "Camera connection failed";
+                emit error(tr("Failed to connect to camera"));
+            }
         }
+    } catch (const std::exception& e) {
+        qWarning() << "Exception in onConnectCamera:" << e.what();
+        emit error(tr("Error connecting to camera: %1").arg(e.what()));
+    } catch (...) {
+        qWarning() << "Unknown exception in onConnectCamera";
+        emit error(tr("Unknown error connecting to camera"));
     }
 }
 
 void CameraPage::onDisconnectCamera() {
-    if (selectedCameraIndex_ >= 0) {
-        emit statusChanged(tr("Disconnecting from camera..."));
+    try {
+        if (selectedCameraIndex_ >= 0) {
+            emit statusChanged(tr("Disconnecting from camera..."));
 
-        if (cameraManager_->disconnectCamera(selectedCameraIndex_)) {
-            connectButton_->setEnabled(true);
-            disconnectButton_->setEnabled(false);
-            videoDisplay_->clearFrame();
-            emit statusChanged(tr("Camera disconnected"));
-        } else {
-            emit error(tr("Failed to disconnect from camera"));
+            // First disconnect from signals to prevent any deadlocks
+            auto saperaCamera = cameraManager_->getSaperaCameraByIndex(selectedCameraIndex_);
+            if (saperaCamera) {
+                disconnect(saperaCamera, &core::sapera::SaperaCamera::newFrameAvailable,
+                          this, &CameraPage::onNewFrame);
+                disconnect(saperaCamera, &core::sapera::SaperaCamera::photoCaptured,
+                          this, &CameraPage::onPhotoCaptured);
+            }
+
+            // Then disconnect the camera
+            if (cameraManager_->disconnectCamera(selectedCameraIndex_)) {
+                connectButton_->setEnabled(true);
+                disconnectButton_->setEnabled(false);
+                videoDisplay_->clearFrame();
+                emit statusChanged(tr("Camera disconnected"));
+            } else {
+                emit error(tr("Failed to disconnect from camera"));
+            }
         }
+    } catch (const std::exception& e) {
+        qWarning() << "Exception in onDisconnectCamera:" << e.what();
+        emit error(tr("Error disconnecting camera: %1").arg(e.what()));
+        
+        // Try to reset UI state
+        connectButton_->setEnabled(true);
+        disconnectButton_->setEnabled(false);
+        videoDisplay_->clearFrame();
+    } catch (...) {
+        qWarning() << "Unknown exception in onDisconnectCamera";
+        emit error(tr("Unknown error disconnecting camera"));
+        
+        // Try to reset UI state
+        connectButton_->setEnabled(true);
+        disconnectButton_->setEnabled(false);
+        videoDisplay_->clearFrame();
     }
 }
 
@@ -321,65 +387,102 @@ void CameraPage::onManagerStatusChanged(const std::string& status) {
 }
 
 void CameraPage::onNewFrame(const QImage& frame) {
-    qDebug() << "New frame received, size:" << frame.width() << "x" << frame.height();
-    if (!frame.isNull()) {
-        videoDisplay_->updateFrame(frame);
-    } else {
-        qDebug() << "Received null frame";
+    try {
+        qDebug() << "New frame received, size:" << frame.width() << "x" << frame.height();
+        
+        if (!frame.isNull()) {
+            // Create a deep copy of the frame to ensure thread safety
+            QImage frameCopy = frame.copy();
+            
+            // Use QMetaObject::invokeMethod to update the UI with a queued connection
+            // This prevents deadlocks by not blocking the calling thread
+            QMetaObject::invokeMethod(this, [this, frameCopy]() {
+                try {
+                    videoDisplay_->updateFrame(frameCopy);
+                } catch (const std::exception& e) {
+                    qWarning() << "Exception in frame update:" << e.what();
+                } catch (...) {
+                    qWarning() << "Unknown exception in frame update";
+                }
+            }, Qt::QueuedConnection);
+        } else {
+            qDebug() << "Received null frame";
+            
+            // Also use queued connection for clearing frame
+            QMetaObject::invokeMethod(videoDisplay_, "clearFrame", Qt::QueuedConnection);
+        }
+    } catch (const std::exception& e) {
+        qWarning() << "Exception in onNewFrame:" << e.what();
+    } catch (...) {
+        qWarning() << "Unknown exception in onNewFrame";
     }
 }
 
 void CameraPage::onCapturePhotoRequested(int cameraIndex) {
-    qDebug() << "Capture photo requested for camera index:" << cameraIndex;
-    
-    if (cameraIndex < 0) {
-        emit statusChanged(tr("No camera selected for photo capture"));
-        return;
-    }
-    
-    auto saperaCamera = cameraManager_->getSaperaCameraByIndex(cameraIndex);
-    if (!saperaCamera) {
-        emit statusChanged(tr("Failed to get camera for photo capture"));
-        return;
-    }
-    
-    if (!saperaCamera->isConnected()) {
-        emit statusChanged(tr("Camera not connected. Connect the camera before capturing photos."));
-        return;
-    }
-    
-    // Create a folder for captured photos if it doesn't exist
-    QDir captureDir("captures");
-    if (!captureDir.exists()) {
-        if (!captureDir.mkpath(".")) {
-            emit statusChanged(tr("Failed to create directory for photo captures"));
+    try {
+        qDebug() << "Capture photo requested for camera index:" << cameraIndex;
+        
+        if (cameraIndex < 0) {
+            emit statusChanged(tr("No camera selected for photo capture"));
             return;
         }
-    }
-    
-    // Generate a filename with timestamp
-    QString timeStamp = QDateTime::currentDateTime().toString("yyyy-MM-dd_hh-mm-ss-zzz");
-    QString fileName = QString("captures/%1_%2.png")
-                            .arg(QString::fromStdString(saperaCamera->getName()))
-                            .arg(timeStamp);
-    
-    // Connect to photoCaptured signal if not already connected
-    if (!connect(saperaCamera, &core::sapera::SaperaCamera::photoCaptured,
-                this, &CameraPage::onPhotoCaptured, Qt::UniqueConnection)) {
-        qDebug() << "Connected to photoCaptured signal";
-    }
-    
-    // Trigger the photo capture
-    if (saperaCamera->capturePhoto(fileName.toStdString())) {
-        emit statusChanged(tr("Capturing photo from camera %1...").arg(cameraIndex));
-    } else {
-        emit statusChanged(tr("Failed to capture photo from camera %1").arg(cameraIndex));
+        
+        auto saperaCamera = cameraManager_->getSaperaCameraByIndex(cameraIndex);
+        if (!saperaCamera) {
+            emit statusChanged(tr("Failed to get camera for photo capture"));
+            return;
+        }
+        
+        if (!saperaCamera->isConnected()) {
+            emit statusChanged(tr("Camera not connected. Connect the camera before capturing photos."));
+            return;
+        }
+        
+        // Create a folder for captured photos if it doesn't exist
+        QDir captureDir("captures");
+        if (!captureDir.exists()) {
+            if (!captureDir.mkpath(".")) {
+                emit statusChanged(tr("Failed to create directory for photo captures"));
+                return;
+            }
+        }
+        
+        // Generate a filename with timestamp
+        QString timeStamp = QDateTime::currentDateTime().toString("yyyy-MM-dd_hh-mm-ss-zzz");
+        QString fileName = QString("captures/%1_%2.png")
+                                .arg(QString::fromStdString(saperaCamera->getName()))
+                                .arg(timeStamp);
+        
+        // Connect to photoCaptured signal if not already connected
+        if (!connect(saperaCamera, &core::sapera::SaperaCamera::photoCaptured,
+                    this, &CameraPage::onPhotoCaptured, Qt::UniqueConnection)) {
+            qDebug() << "Connected to photoCaptured signal";
+        }
+        
+        // Trigger the photo capture
+        if (saperaCamera->capturePhoto(fileName.toStdString())) {
+            emit statusChanged(tr("Capturing photo from camera %1...").arg(cameraIndex));
+        } else {
+            emit statusChanged(tr("Failed to capture photo from camera %1").arg(cameraIndex));
+        }
+    } catch (const std::exception& e) {
+        qWarning() << "Exception in onCapturePhotoRequested:" << e.what();
+        emit error(tr("Error capturing photo: %1").arg(e.what()));
+    } catch (...) {
+        qWarning() << "Unknown exception in onCapturePhotoRequested";
+        emit error(tr("Unknown error capturing photo"));
     }
 }
 
 void CameraPage::onPhotoCaptured(const QImage& image, const std::string& path) {
-    qDebug() << "Photo captured and saved to:" << QString::fromStdString(path);
-    emit statusChanged(tr("Photo captured and saved to: %1").arg(QString::fromStdString(path)));
+    try {
+        qDebug() << "Photo captured and saved to:" << QString::fromStdString(path);
+        emit statusChanged(tr("Photo captured and saved to: %1").arg(QString::fromStdString(path)));
+    } catch (const std::exception& e) {
+        qWarning() << "Exception in onPhotoCaptured:" << e.what();
+    } catch (...) {
+        qWarning() << "Unknown exception in onPhotoCaptured";
+    }
 }
 
 } // namespace cam_matrix::ui

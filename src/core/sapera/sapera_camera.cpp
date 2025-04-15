@@ -295,67 +295,107 @@ bool SaperaCamera::connectCamera()
 
 bool SaperaCamera::disconnectCamera()
 {
-    if (!isConnected()) {
-        return false; // Already disconnected
-    }
+    try {
+        if (!isConnected()) {
+            return false; // Already disconnected
+        }
 
-    bool success = false;
-    std::promise<bool> resultPromise;
-    std::future<bool> resultFuture = resultPromise.get_future();
-    
-    // Disconnect all signal connections before shutting down to prevent deadlocks
-    disconnect(this, &SaperaCamera::newFrameAvailable, nullptr, nullptr);
-    
-    // Queue disconnect operation
-    cameraThread_->queueOperation(CameraOpType::Disconnect, 
-        [this]() {
-            // This runs in the camera thread
-            
-        #ifdef HAS_SAPERA
-            stopFrameAcquisition();
-            destroySaperaObjects();
-        #else
-            stopFrameThread();
-        #endif
+        bool success = false;
+        std::promise<bool> resultPromise;
+        std::future<bool> resultFuture = resultPromise.get_future();
         
-            // Create a disconnected image to show
-            QImage disconnectedImage(640, 480, QImage::Format_RGB32);
-            disconnectedImage.fill(Qt::black);
-            
-            QPainter painter(&disconnectedImage);
-            painter.setPen(Qt::white);
-            painter.setFont(QFont("Arial", 14));
-            painter.drawText(disconnectedImage.rect(), Qt::AlignCenter, 
-                            "Camera Disconnected");
-            painter.end();
-            
-            // Update the frame with a safe lock
-            {
-                std::lock_guard<std::mutex> lock(frameMutex_);
-                currentFrame_ = disconnectedImage;
-            }
-            
-            // Signal that the camera is disconnected but don't use blocking connections
-            QMetaObject::invokeMethod(this, [this, disconnectedImage]() {
-                emit newFrameAvailable(disconnectedImage);
-                emit statusChanged("Camera disconnected: " + name_);
-            }, Qt::QueuedConnection);
-            
-            // Set state to disconnected
-            isConnected_ = false;
-        },
-        [&resultPromise](bool success) {
-            // Callback - this also runs in the camera thread
-            resultPromise.set_value(success);
-        },
-        "DisconnectCamera");
-    
-    // Wait for the operation to complete
-    success = resultFuture.get();
-    
-    emit operationCompleted("DisconnectCamera", success);
-    
-    return success;
+        // Disconnect all signal connections before shutting down to prevent deadlocks
+        disconnect(this, &SaperaCamera::newFrameAvailable, nullptr, nullptr);
+        
+        // Queue disconnect operation
+        cameraThread_->queueOperation(CameraOpType::Disconnect, 
+            [this]() {
+                try {
+                    // This runs in the camera thread
+                    
+                #ifdef HAS_SAPERA
+                    stopFrameAcquisition();
+                    destroySaperaObjects();
+                #else
+                    stopFrameThread();
+                #endif
+                
+                    // Create a disconnected image to show
+                    QImage disconnectedImage(640, 480, QImage::Format_RGB32);
+                    disconnectedImage.fill(Qt::black);
+                    
+                    QPainter painter(&disconnectedImage);
+                    painter.setPen(Qt::white);
+                    painter.setFont(QFont("Arial", 14));
+                    painter.drawText(disconnectedImage.rect(), Qt::AlignCenter, 
+                                    "Camera Disconnected");
+                    painter.end();
+                    
+                    // Update the frame with a safe lock
+                    {
+                        std::lock_guard<std::mutex> lock(frameMutex_);
+                        currentFrame_ = disconnectedImage;
+                    }
+                    
+                    // Signal that the camera is disconnected but don't use blocking connections
+                    QMetaObject::invokeMethod(this, [this, disconnectedImage]() {
+                        try {
+                            emit newFrameAvailable(disconnectedImage);
+                            emit statusChanged("Camera disconnected: " + name_);
+                        } catch (const std::exception& e) {
+                            qWarning() << "Exception in disconnect signals:" << e.what();
+                        } catch (...) {
+                            qWarning() << "Unknown exception in disconnect signals";
+                        }
+                    }, Qt::QueuedConnection);
+                    
+                    // Set state to disconnected
+                    isConnected_ = false;
+                } catch (const std::exception& e) {
+                    qWarning() << "Exception in disconnectCamera operation:" << e.what();
+                    return false;
+                } catch (...) {
+                    qWarning() << "Unknown exception in disconnectCamera operation";
+                    return false;
+                }
+                return true;
+            },
+            [&resultPromise](bool success) {
+                try {
+                    // Callback - this also runs in the camera thread
+                    resultPromise.set_value(success);
+                } catch (...) {
+                    // Prevent exceptions from propagating
+                    resultPromise.set_value(false);
+                }
+            },
+            "DisconnectCamera");
+        
+        // Wait for the operation to complete
+        try {
+            success = resultFuture.get();
+        } catch (const std::exception& e) {
+            qWarning() << "Exception waiting for disconnectCamera future:" << e.what();
+            success = false;
+        } catch (...) {
+            qWarning() << "Unknown exception waiting for disconnectCamera future";
+            success = false;
+        }
+        
+        try {
+            emit operationCompleted("DisconnectCamera", success);
+        } catch (...) {
+            qWarning() << "Exception in operationCompleted signal";
+        }
+        
+        return success;
+    } catch (const std::exception& e) {
+        qWarning() << "Exception in disconnectCamera:" << e.what();
+        return false;
+    } catch (...) {
+        qWarning() << "Unknown exception in disconnectCamera";
+        return false;
+    }
 }
 
 bool SaperaCamera::capturePhoto(const std::string& savePath)
@@ -582,66 +622,110 @@ void SaperaCamera::disconnectCameraAsync(const std::function<void(bool)>& callba
 
 void SaperaCamera::capturePhotoAsync(const std::string& savePath, const std::function<void(bool)>& callback)
 {
-    if (!isConnected()) {
-        emit error("Cannot capture photo: Camera not connected");
-        if (callback) {
-            callback(false);
+    try {
+        if (!isConnected()) {
+            emit error("Cannot capture photo: Camera not connected");
+            if (callback) {
+                callback(false);
+            }
+            return;
         }
-        return;
-    }
-    
-    cameraThread_->queueOperation(CameraOpType::CapturePhoto, 
-        [this, savePath]() {
-            // This runs in the camera thread
-            
-            // Get the current frame
-            QImage capturedFrame;
-            {
-                std::lock_guard<std::mutex> lock(frameMutex_);
-                capturedFrame = currentFrame_.copy();
-            }
+        
+        cameraThread_->queueOperation(CameraOpType::CapturePhoto, 
+            [this, savePath]() {
+                try {
+                    // This runs in the camera thread
+                    
+                    // Get the current frame
+                    QImage capturedFrame;
+                    {
+                        std::lock_guard<std::mutex> lock(frameMutex_);
+                        capturedFrame = currentFrame_.copy();
+                    }
 
-            if (capturedFrame.isNull()) {
-                QMetaObject::invokeMethod(this, [this]() {
-                    emit error("Failed to capture photo: No valid frame available");
-                }, Qt::QueuedConnection);
-                return;
-            }
-
-            // Generate a filename if not provided
-            std::string finalPath = savePath;
-            if (finalPath.empty()) {
-                // Create a timestamp-based filename in the captures directory
-                QString timeStamp = QDateTime::currentDateTime().toString("yyyy-MM-dd_hh-mm-ss-zzz");
-                finalPath = "captures/" + name_ + "_" + timeStamp.toStdString() + ".png";
-                
-                // Ensure the capture directory exists
-                QDir captureDir("captures");
-                if (!captureDir.exists()) {
-                    if (!captureDir.mkpath(".")) {
+                    if (capturedFrame.isNull()) {
                         QMetaObject::invokeMethod(this, [this]() {
-                            emit error("Failed to create 'captures' directory");
+                            try {
+                                emit error("Failed to capture photo: No valid frame available");
+                            } catch (...) {
+                                qWarning() << "Exception in error signal";
+                            }
                         }, Qt::QueuedConnection);
                         return;
                     }
-                }
-            }
 
-            // Save the image to file
-            bool saved = saveImageToFile(capturedFrame, finalPath);
-            if (saved) {
-                QMetaObject::invokeMethod(this, [this, capturedFrame, finalPath]() {
-                    emit statusChanged("Photo captured and saved to: " + finalPath);
-                    emit photoCaptured(capturedFrame, finalPath);
-                }, Qt::QueuedConnection);
-            } else {
-                QMetaObject::invokeMethod(this, [this, finalPath]() {
-                    emit error("Failed to save photo to: " + finalPath);
-                }, Qt::QueuedConnection);
-            }
-        },
-        callback,
-        "CapturePhotoAsync");
+                    // Generate a filename if not provided
+                    std::string finalPath = savePath;
+                    if (finalPath.empty()) {
+                        // Create a timestamp-based filename in the captures directory
+                        QString timeStamp = QDateTime::currentDateTime().toString("yyyy-MM-dd_hh-mm-ss-zzz");
+                        finalPath = "captures/" + name_ + "_" + timeStamp.toStdString() + ".png";
+                        
+                        // Ensure the capture directory exists
+                        QDir captureDir("captures");
+                        if (!captureDir.exists()) {
+                            if (!captureDir.mkpath(".")) {
+                                QMetaObject::invokeMethod(this, [this]() {
+                                    try {
+                                        emit error("Failed to create 'captures' directory");
+                                    } catch (...) {
+                                        qWarning() << "Exception in error signal";
+                                    }
+                                }, Qt::QueuedConnection);
+                                return;
+                            }
+                        }
+                    }
+
+                    // Save the image to file
+                    bool saved = saveImageToFile(capturedFrame, finalPath);
+                    if (saved) {
+                        QMetaObject::invokeMethod(this, [this, capturedFrame, finalPath]() {
+                            try {
+                                emit statusChanged("Photo captured and saved to: " + finalPath);
+                                emit photoCaptured(capturedFrame, finalPath);
+                            } catch (...) {
+                                qWarning() << "Exception in photoCaptured signal";
+                            }
+                        }, Qt::QueuedConnection);
+                    } else {
+                        QMetaObject::invokeMethod(this, [this, finalPath]() {
+                            try {
+                                emit error("Failed to save photo to: " + finalPath);
+                            } catch (...) {
+                                qWarning() << "Exception in error signal";
+                            }
+                        }, Qt::QueuedConnection);
+                    }
+                } catch (const std::exception& e) {
+                    qWarning() << "Exception in capturePhotoAsync lambda:" << e.what();
+                } catch (...) {
+                    qWarning() << "Unknown exception in capturePhotoAsync lambda";
+                }
+            },
+            [callback](bool success) {
+                try {
+                    if (callback) {
+                        callback(success);
+                    }
+                } catch (const std::exception& e) {
+                    qWarning() << "Exception in capturePhotoAsync callback:" << e.what();
+                } catch (...) {
+                    qWarning() << "Unknown exception in capturePhotoAsync callback";
+                }
+            },
+            "CapturePhotoAsync");
+    } catch (const std::exception& e) {
+        qWarning() << "Exception in capturePhotoAsync:" << e.what();
+        if (callback) {
+            callback(false);
+        }
+    } catch (...) {
+        qWarning() << "Unknown exception in capturePhotoAsync";
+        if (callback) {
+            callback(false);
+        }
+    }
 }
 
 void SaperaCamera::getFrameAsync(const std::function<void(QImage)>& callback)
@@ -686,29 +770,41 @@ double SaperaCamera::getExposureTime() const
 
 QImage SaperaCamera::getFrame() const
 {
-    // Create a copy of the current frame in a non-blocking way
-    QImage result;
-    
-    // Try to lock the mutex, but don't block if it's unavailable
-    if (frameMutex_.try_lock()) {
-        // Make a copy of the frame while holding the lock
-        result = currentFrame_.copy();
-        frameMutex_.unlock();
-    } else {
-        // If we couldn't get the lock, return an empty image rather than blocking
-        qDebug() << "Could not acquire frame lock in getFrame() - returning empty image";
-        result = QImage(640, 480, QImage::Format_RGB32);
-        result.fill(Qt::black);
+    try {
+        // Create a copy of the current frame in a non-blocking way
+        QImage result;
         
-        // Add text to indicate that the frame is unavailable
-        QPainter painter(&result);
-        painter.setPen(Qt::white);
-        painter.setFont(QFont("Arial", 14));
-        painter.drawText(result.rect(), Qt::AlignCenter, "Frame Unavailable - Try Again");
-        painter.end();
+        // Try to lock the mutex, but don't block if it's unavailable
+        if (frameMutex_.try_lock()) {
+            // Make a copy of the frame while holding the lock
+            result = currentFrame_.copy();
+            frameMutex_.unlock();
+        } else {
+            // If we couldn't get the lock, return an empty image rather than blocking
+            qDebug() << "Could not acquire frame lock in getFrame() - returning empty image";
+            result = QImage(640, 480, QImage::Format_RGB32);
+            result.fill(Qt::black);
+            
+            // Add text to indicate that the frame is unavailable
+            QPainter painter(&result);
+            painter.setPen(Qt::white);
+            painter.setFont(QFont("Arial", 14));
+            painter.drawText(result.rect(), Qt::AlignCenter, "Frame Unavailable - Try Again");
+            painter.end();
+        }
+        
+        return result;
+    } catch (const std::exception& e) {
+        qWarning() << "Exception in getFrame:" << e.what();
+        QImage errorImage(640, 480, QImage::Format_RGB32);
+        errorImage.fill(Qt::red);
+        return errorImage;
+    } catch (...) {
+        qWarning() << "Unknown exception in getFrame";
+        QImage errorImage(640, 480, QImage::Format_RGB32);
+        errorImage.fill(Qt::red);
+        return errorImage;
     }
-    
-    return result;
 }
 
 bool SaperaCamera::saveImageToFile(const QImage& image, const std::string& filePath)
@@ -735,20 +831,32 @@ bool SaperaCamera::saveImageToFile(const QImage& image, const std::string& fileP
 
 void SaperaCamera::handleNewFrame(const QImage& frame)
 {
-    // Create a copy of the frame without holding the mutex lock for too long
-    QImage frameCopy = frame.copy();
-    
-    // Update the current frame with a brief lock
-    {
-        std::lock_guard<std::mutex> lock(frameMutex_);
-        currentFrame_ = frameCopy;
+    try {
+        // Create a copy of the frame without holding the mutex lock for too long
+        QImage frameCopy = frame.copy();
+        
+        // Update the current frame with a brief lock
+        {
+            std::lock_guard<std::mutex> lock(frameMutex_);
+            currentFrame_ = frameCopy;
+        }
+        
+        // Emit the signal in a non-blocking way using a queued connection
+        // This prevents deadlocks when the main thread is busy or shutting down
+        QMetaObject::invokeMethod(this, [this, frameCopy]() {
+            try {
+                emit newFrameAvailable(frameCopy);
+            } catch (const std::exception& e) {
+                qWarning() << "Exception in newFrameAvailable signal:" << e.what();
+            } catch (...) {
+                qWarning() << "Unknown exception in newFrameAvailable signal";
+            }
+        }, Qt::QueuedConnection);
+    } catch (const std::exception& e) {
+        qWarning() << "Exception in handleNewFrame:" << e.what();
+    } catch (...) {
+        qWarning() << "Unknown exception in handleNewFrame";
     }
-    
-    // Emit the signal in a non-blocking way using a queued connection
-    // This prevents deadlocks when the main thread is busy or shutting down
-    QMetaObject::invokeMethod(this, [this, frameCopy]() {
-        emit newFrameAvailable(frameCopy);
-    }, Qt::QueuedConnection);
 }
 
 void SaperaCamera::handleThreadError(const QString& errorMessage)
@@ -820,23 +928,37 @@ void SaperaCamera::startFrameThread()
 
 void SaperaCamera::stopFrameThread()
 {
-    if (!frameGeneratorThread_.isRunning()) {
-        return;
+    try {
+        if (!frameGeneratorThread_.isRunning()) {
+            return;
+        }
+        
+        // Stop the frame generator
+        if (frameGenerator_) {
+            frameGenerator_->stop();
+        }
+        
+        // Stop the thread
+        frameGeneratorThread_.quit();
+        
+        // Wait with timeout, and terminate if necessary
+        if (!frameGeneratorThread_.wait(2000)) {
+            qDebug() << "Warning: Frame generator thread taking too long to quit, terminating...";
+            // Disconnect all connections to prevent deadlocks on terminate
+            if (frameGenerator_) {
+                frameGenerator_->disconnect();
+            }
+            frameGeneratorThread_.disconnect();
+            frameGeneratorThread_.terminate();
+            frameGeneratorThread_.wait(1000); // Give it a chance to terminate
+        }
+        
+        qDebug() << "Frame generation thread stopped";
+    } catch (const std::exception& e) {
+        qWarning() << "Exception in stopFrameThread:" << e.what();
+    } catch (...) {
+        qWarning() << "Unknown exception in stopFrameThread";
     }
-    
-    // Stop the frame generator
-    if (frameGenerator_) {
-        frameGenerator_->stop();
-    }
-    
-    // Stop the thread
-    frameGeneratorThread_.quit();
-    if (!frameGeneratorThread_.wait(1000)) {
-        qDebug() << "Warning: Frame generator thread taking too long to quit, terminating...";
-        frameGeneratorThread_.terminate();
-    }
-    
-    qDebug() << "Frame generation thread stopped";
 }
 #endif
 
