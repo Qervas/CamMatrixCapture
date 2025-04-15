@@ -7,13 +7,16 @@ namespace cam_matrix::ui {
 SaperaStatusWidget::SaperaStatusWidget(QWidget* parent)
     : QWidget(parent)
     , titleLabel_(nullptr)
-    , statusLabel_(nullptr)
-    , versionLabel_(nullptr)
+    , saperaStatusLabel_(nullptr)
+    , saperaVersionLabel_(nullptr)
+    , gigeStatusLabel_(nullptr)
+    , gigeVersionLabel_(nullptr)
     , cameraCountLabel_(nullptr)
     , refreshButton_(nullptr)
     , testConnectionButton_(nullptr)
     , autoRefreshTimer_(nullptr)
-    , isConnected_(false)
+    , isSaperaConnected_(false)
+    , isGigeConnected_(false)
 {
     setupUi();
     updateStatus();
@@ -29,7 +32,7 @@ void SaperaStatusWidget::setupUi()
     auto* layout = new QGridLayout(this);
     
     // Title label
-    titleLabel_ = new QLabel(tr("Sapera SDK Status"), this);
+    titleLabel_ = new QLabel(tr("Camera SDK Status"), this);
     QFont titleFont = titleLabel_->font();
     titleFont.setBold(true);
     titleFont.setPointSize(titleFont.pointSize() + 2);
@@ -37,20 +40,30 @@ void SaperaStatusWidget::setupUi()
     layout->addWidget(titleLabel_, 0, 0, 1, 2);
     
     // Status labels
-    QLabel* statusTextLabel = new QLabel(tr("Status:"), this);
-    statusLabel_ = new QLabel(tr("Checking..."), this);
-    layout->addWidget(statusTextLabel, 1, 0);
-    layout->addWidget(statusLabel_, 1, 1);
+    QLabel* saperaTextLabel = new QLabel(tr("Sapera SDK:"), this);
+    saperaStatusLabel_ = new QLabel(tr("Checking..."), this);
+    layout->addWidget(saperaTextLabel, 1, 0);
+    layout->addWidget(saperaStatusLabel_, 1, 1);
     
-    QLabel* versionTextLabel = new QLabel(tr("Version:"), this);
-    versionLabel_ = new QLabel(tr("N/A"), this);
-    layout->addWidget(versionTextLabel, 2, 0);
-    layout->addWidget(versionLabel_, 2, 1);
+    QLabel* saperaVersionTextLabel = new QLabel(tr("Sapera Version:"), this);
+    saperaVersionLabel_ = new QLabel(tr("N/A"), this);
+    layout->addWidget(saperaVersionTextLabel, 2, 0);
+    layout->addWidget(saperaVersionLabel_, 2, 1);
+
+    QLabel* gigeTextLabel = new QLabel(tr("GigE Vision:"), this);
+    gigeStatusLabel_ = new QLabel(tr("Checking..."), this);
+    layout->addWidget(gigeTextLabel, 3, 0);
+    layout->addWidget(gigeStatusLabel_, 3, 1);
+    
+    QLabel* gigeVersionTextLabel = new QLabel(tr("GigE Version:"), this);
+    gigeVersionLabel_ = new QLabel(tr("N/A"), this);
+    layout->addWidget(gigeVersionTextLabel, 4, 0);
+    layout->addWidget(gigeVersionLabel_, 4, 1);
     
     QLabel* cameraCountTextLabel = new QLabel(tr("Available Cameras:"), this);
     cameraCountLabel_ = new QLabel(tr("0"), this);
-    layout->addWidget(cameraCountTextLabel, 3, 0);
-    layout->addWidget(cameraCountLabel_, 3, 1);
+    layout->addWidget(cameraCountTextLabel, 5, 0);
+    layout->addWidget(cameraCountLabel_, 5, 1);
     
     // Buttons
     refreshButton_ = new QPushButton(tr("Refresh"), this);
@@ -59,59 +72,80 @@ void SaperaStatusWidget::setupUi()
     auto* buttonLayout = new QHBoxLayout;
     buttonLayout->addWidget(refreshButton_);
     buttonLayout->addWidget(testConnectionButton_);
-    layout->addLayout(buttonLayout, 4, 0, 1, 2);
+    layout->addLayout(buttonLayout, 6, 0, 1, 2);
     
     // Connect signals
     connect(refreshButton_, &QPushButton::clicked, this, &SaperaStatusWidget::refresh);
     connect(testConnectionButton_, &QPushButton::clicked, this, [this]() {
-        if (isConnected_) {
+        if (isSaperaConnected_) {
             QMessageBox::information(this, tr("Sapera Connection Test"),
                 tr("Sapera SDK is connected and working properly.\nVersion: %1")
                 .arg(QString::fromStdString(core::SaperaUtils::getSaperaVersion())));
+        } else if (isGigeConnected_) {
+            QMessageBox::information(this, tr("GigE Vision Connection Test"),
+                tr("GigE Vision Interface is connected and working properly.\nVersion: %1")
+                .arg(QString::fromStdString(core::SaperaUtils::getGigeVisionVersion())));
         } else {
-            QMessageBox::warning(this, tr("Sapera Connection Test"),
-                tr("Sapera SDK is not available or not initialized properly."));
+            QMessageBox::warning(this, tr("Camera SDK Connection Test"),
+                tr("Neither Sapera SDK nor GigE Vision Interface is available."));
         }
     });
     
     // Set fixed width for labels
-    statusTextLabel->setFixedWidth(150);
-    versionTextLabel->setFixedWidth(150);
+    saperaTextLabel->setFixedWidth(150);
+    saperaVersionTextLabel->setFixedWidth(150);
+    gigeTextLabel->setFixedWidth(150);
+    gigeVersionTextLabel->setFixedWidth(150);
     cameraCountTextLabel->setFixedWidth(150);
 }
 
 void SaperaStatusWidget::refresh()
 {
     updateStatus();
-    emit statusChanged(tr("Sapera status refreshed"));
+    emit statusChanged(tr("Camera SDK status refreshed"));
 }
 
 void SaperaStatusWidget::updateStatus()
 {
     // Check if Sapera SDK is available
-    isConnected_ = core::SaperaUtils::isSaperaAvailable();
+    isSaperaConnected_ = core::SaperaUtils::isSaperaAvailable();
     
-    if (isConnected_) {
-        statusLabel_->setText(tr("Available"));
-        statusLabel_->setStyleSheet("color: green;");
+    if (isSaperaConnected_) {
+        saperaStatusLabel_->setText(tr("Available"));
+        saperaStatusLabel_->setStyleSheet("color: green;");
         
         // Get version
         std::string versionStr = core::SaperaUtils::getSaperaVersion();
-        versionLabel_->setText(QString::fromStdString(versionStr));
-        
-        // Get camera count
-        std::vector<std::string> cameras;
-        core::SaperaUtils::getAvailableCameras(cameras);
-        cameraCountLabel_->setText(QString::number(cameras.size()));
-        
-        testConnectionButton_->setEnabled(true);
+        saperaVersionLabel_->setText(QString::fromStdString(versionStr));
     } else {
-        statusLabel_->setText(tr("Not Available"));
-        statusLabel_->setStyleSheet("color: red;");
-        versionLabel_->setText(tr("N/A"));
-        cameraCountLabel_->setText("0");
-        testConnectionButton_->setEnabled(false);
+        saperaStatusLabel_->setText(tr("Not Available"));
+        saperaStatusLabel_->setStyleSheet("color: red;");
+        saperaVersionLabel_->setText(tr("N/A"));
     }
+    
+    // Check if GigE Vision Interface is available
+    isGigeConnected_ = core::SaperaUtils::isGigeVisionAvailable();
+    
+    if (isGigeConnected_) {
+        gigeStatusLabel_->setText(tr("Available"));
+        gigeStatusLabel_->setStyleSheet("color: green;");
+        
+        // Get version
+        std::string versionStr = core::SaperaUtils::getGigeVisionVersion();
+        gigeVersionLabel_->setText(QString::fromStdString(versionStr));
+    } else {
+        gigeStatusLabel_->setText(tr("Not Available"));
+        gigeStatusLabel_->setStyleSheet("color: red;");
+        gigeVersionLabel_->setText(tr("N/A"));
+    }
+    
+    // Get camera count
+    std::vector<std::string> cameras;
+    core::SaperaUtils::getAvailableCameras(cameras);
+    cameraCountLabel_->setText(QString::number(cameras.size()));
+    
+    // Enable/disable test button
+    testConnectionButton_->setEnabled(isSaperaConnected_ || isGigeConnected_);
 }
 
 } // namespace cam_matrix::ui 

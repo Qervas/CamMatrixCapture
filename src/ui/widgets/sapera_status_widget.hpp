@@ -27,13 +27,16 @@ private:
     void updateStatus();
 
     QLabel* titleLabel_;
-    QLabel* statusLabel_;
-    QLabel* versionLabel_;
+    QLabel* saperaStatusLabel_;
+    QLabel* saperaVersionLabel_;
+    QLabel* gigeStatusLabel_;
+    QLabel* gigeVersionLabel_;
     QLabel* cameraCountLabel_;
     QPushButton* refreshButton_;
     QPushButton* testConnectionButton_;
     QTimer* autoRefreshTimer_;
-    bool isConnected_;
+    bool isSaperaConnected_;
+    bool isGigeConnected_;
 };
 
 } // namespace cam_matrix::ui 

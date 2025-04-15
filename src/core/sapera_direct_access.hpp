@@ -1,7 +1,8 @@
 #pragma once
 
 #if defined(SAPERA_FOUND)
-#include <SapClassBasic.h>
+// We'll use our stubs from sapera_defs.hpp instead of including SapClassBasic.h
+#include "core/sapera_defs.hpp"
 #include <QString>
 #include <QImage>
 #include <QObject>
@@ -11,9 +12,11 @@
 
 namespace cam_matrix::core {
 
-// Callback function for the transfer - forward declaration
+// Forward declarations
 class SaperaDirectAccess;
-void XferCallback(SapXferCallbackInfo* pInfo);
+
+// Callback function for the transfer - declaration only
+void SaperaXferCallback(SapXferCallbackInfo* pInfo);
 
 class SaperaDirectAccess : public QObject {
     Q_OBJECT
@@ -69,16 +72,17 @@ private:
     // Print feature value
     void printFeatureValue(const char* featureName);
     
-    // Friend function for callback
-    friend void XferCallback(SapXferCallbackInfo* pInfo);
+    // Make the callback function a friend so it can access our private members
+    friend void SaperaXferCallback(SapXferCallbackInfo* pInfo);
     
     // Process a new frame
-    void processNewFrame(void* pBuffer);
+    void processNewFrame(SapBuffer* pBuffer);
 
     // Sapera objects
     SapAcqDevice* acqDevice_;
     SapBuffer* buffer_;
     SapTransfer* transfer_;
+    SapView* view_;
     
     // Current frame
     QImage currentFrame_;

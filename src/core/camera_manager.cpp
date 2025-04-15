@@ -36,8 +36,29 @@ void CameraManager::scanForCameras()
     } else {
         emit statusChanged("Sapera SDK not initialized properly");
     }
+#elif HAS_GIGE_VISION
+    // Using GigE Vision Interface
+    std::string version = SaperaUtils::getGigeVisionVersion();
+    emit statusChanged("GigE Vision Interface: " + version);
+    
+    // Scan for GigE Vision cameras
+    std::vector<std::string> cameraNames;
+    if (SaperaUtils::getAvailableCameras(cameraNames)) {
+        for (const auto& name : cameraNames) {
+            cameras_.push_back(std::make_unique<SaperaCamera>(name));
+        }
+        emit statusChanged("Found " + std::to_string(cameras_.size()) + " GigE Vision cameras");
+    } else {
+        // Add at least a mock camera for interface testing
+        cameras_.push_back(std::make_unique<SaperaCamera>("Mock Camera"));
+        emit statusChanged("No GigE Vision cameras found, added mock camera");
+    }
 #else
-    emit statusChanged("Sapera SDK not available");
+    emit statusChanged("Camera SDK not available");
+    
+    // Add dummy camera for UI testing
+    cameras_.push_back(std::make_unique<SaperaCamera>("Dummy Camera"));
+    emit statusChanged("Added dummy camera for testing");
 #endif
 }
 

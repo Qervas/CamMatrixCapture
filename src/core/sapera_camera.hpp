@@ -8,6 +8,7 @@
 #include <QTimer>
 #include <QObject>
 #include <mutex>
+#include <QPainter>
 
 namespace cam_matrix::core {
 
@@ -42,9 +43,13 @@ signals:
     void statusChanged(const std::string& message);
     void error(const std::string& message);
 
+private slots:
+    void generateMockFrame();
+
 private:
     std::string name_;
     bool isConnected_;
+    double exposureTime_ = 10000.0; // Default to 10ms
 
     // Sapera objects
     std::unique_ptr<SapAcqDevice> device_;
@@ -55,6 +60,9 @@ private:
     // Current frame
     mutable std::mutex frameMutex_;
     QImage currentFrame_;
+
+    // For simulation mode
+    std::unique_ptr<QTimer> frameTimer_;
 
     // Helper functions
     bool createSaperaObjects();
@@ -68,34 +76,91 @@ private:
     void printFeatureValue(const char* featureName) const;
     bool isFeatureAvailable(const char* featureName) const;
 };
-#else
-// Provide a stub implementation when Sapera is not available
+
+#elif HAS_GIGE_VISION
+// GigE Vision Interface implementation
 class SaperaCamera : public Camera {
     Q_OBJECT
 
 public:
-    SaperaCamera(const std::string& serverName) : Camera(), serverName_(serverName), isConnected_(false) {}
-    ~SaperaCamera() override = default;
+    explicit SaperaCamera(const std::string& name);
+    ~SaperaCamera() override;
 
-    std::string getName() const override { return serverName_ + " (Sapera SDK not available)"; }
-    bool isConnected() const override { return false; }
-    bool connectCamera() override { return false; }
-    bool disconnectCamera() override { return false; }
-    bool setExposureTime(double microseconds) { 
-        emit statusChanged("Exposure time set to " + std::to_string(microseconds) + " microseconds (stub)");
-        return true; 
-    }
+    // Camera interface implementation
+    bool connectCamera() override;
+    bool disconnectCamera() override;
+    bool isConnected() const override;
+    std::string getName() const override;
+    bool setExposureTime(double microseconds);
 
-    QImage getFrame() const { return QImage(); }
+    // Camera properties
+    double getExposureTime() const;
+
+    // Get the current frame
+    QImage getFrame() const;
 
 signals:
-    void newFrameAvailable(QImage frame);
+    void newFrameAvailable(const QImage& frame);
     void statusChanged(const std::string& message);
-    void error(const std::string& errorMessage);
+    void error(const std::string& message);
+
+private slots:
+    void generateDummyFrame();
 
 private:
-    std::string serverName_;
+    std::string name_;
     bool isConnected_;
+    double exposureTime_ = 10000.0; // Default exposure time
+
+    // Current frame
+    mutable std::mutex frameMutex_;
+    QImage currentFrame_;
+
+    // For simulation mode
+    std::unique_ptr<QTimer> frameTimer_;
+};
+
+#else
+// Provide a stub implementation when no camera SDK is available
+class SaperaCamera : public Camera {
+    Q_OBJECT
+
+public:
+    explicit SaperaCamera(const std::string& name);
+    ~SaperaCamera() override;
+
+    // Camera interface implementation
+    bool connectCamera() override;
+    bool disconnectCamera() override;
+    bool isConnected() const override;
+    std::string getName() const override;
+    bool setExposureTime(double microseconds);
+
+    // Camera properties
+    double getExposureTime() const;
+
+    // Get the current frame
+    QImage getFrame() const;
+
+signals:
+    void newFrameAvailable(const QImage& frame);
+    void statusChanged(const std::string& message);
+    void error(const std::string& message);
+
+private slots:
+    void generateDummyFrame();
+
+private:
+    std::string name_;
+    bool isConnected_;
+    double exposureTime_;
+
+    // Current frame
+    mutable std::mutex frameMutex_;
+    QImage currentFrame_;
+
+    // For simulation mode
+    std::unique_ptr<QTimer> frameTimer_;
 };
 #endif
 
