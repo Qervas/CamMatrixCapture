@@ -25,7 +25,7 @@ public:
 
     std::vector<Camera*> getCameras() const;
     Camera* getCameraByIndex(size_t index) const;
-    SaperaCamera* getSaperaCameraByIndex(size_t index) const;
+    sapera::SaperaCamera* getSaperaCameraByIndex(size_t index) const;
 
 signals:
     void statusChanged(const QString& status);

@@ -1,6 +1,6 @@
 #pragma once
 
-#if defined(SAPERA_FOUND)
+#if defined(SAPERA_FOUND) && SAPERA_FOUND
 // We'll use our stubs from sapera_defs.hpp instead of including SapClassBasic.h
 #include "core/sapera_defs.hpp"
 #include <QString>
@@ -15,7 +15,7 @@ namespace cam_matrix::core {
 // Forward declarations
 class SaperaDirectAccess;
 
-// Callback function for the transfer - declaration only
+// Callback function for the transfer - proper function declaration
 void SaperaXferCallback(SapXferCallbackInfo* pInfo);
 
 class SaperaDirectAccess : public QObject {
@@ -79,18 +79,18 @@ private:
     void processNewFrame(SapBuffer* pBuffer);
 
     // Sapera objects
-    SapAcqDevice* acqDevice_;
-    SapBuffer* buffer_;
-    SapTransfer* transfer_;
-    SapView* view_;
+    SapAcqDevice* acqDevice_{nullptr};
+    SapBuffer* buffer_{nullptr};
+    SapTransfer* transfer_{nullptr};
+    SapView* view_{nullptr};
     
     // Current frame
     QImage currentFrame_;
     
     // Camera parameters
     std::string serverName_;
-    double exposureTime_;
-    bool isAcquiring_;
+    double exposureTime_{10000.0};
+    bool isAcquiring_{false};
     
     // Last error message
     QString lastError_;

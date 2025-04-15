@@ -1,6 +1,7 @@
 #pragma once
 #include <string>
 #include <vector>
+#include <cstring> // For strncpy
 
 // Let CMake decide if we should use the real Sapera SDK or our mock implementation
 #if defined(SAPERA_FOUND) && SAPERA_FOUND && defined(HAS_SAPERA) && HAS_SAPERA
@@ -33,9 +34,40 @@
         constexpr BOOL TRUE = 1;
         constexpr BOOL FALSE = 0;
         
+        // Define buffer format constants
+        namespace SapFormatConstants {
+            constexpr int SAPBUFFER_FORMAT_MONO8 = 0;
+            constexpr int SAPBUFFER_FORMAT_MONO16 = 1;
+            constexpr int SAPBUFFER_FORMAT_RGB24 = 2;
+            constexpr int SAPBUFFER_FORMAT_RGB32 = 3;
+        }
+        
         // Callback function declaration - defined before SapXferCallbackInfo
         class SapXferCallbackInfo;
         typedef void (*XferCallbackFunc)(SapXferCallbackInfo*);
+        
+        // Define SapManVersionInfo structure to match Sapera SDK
+        class SapManVersionInfo {
+        protected:
+            int m_Major;
+            int m_Minor;
+            int m_Revision;
+            int m_Build;
+            char m_Date[64];
+            char m_Time[64];
+            
+        public:
+            SapManVersionInfo() : m_Major(8), m_Minor(70), m_Revision(0), m_Build(1) {
+                strcpy(m_Date, "Apr 15 2025");
+                strcpy(m_Time, "12:00:00");
+            }
+            
+            // Add accessor methods
+            int GetMajor() const { return m_Major; }
+            int GetMinor() const { return m_Minor; }
+            int GetRevision() const { return m_Revision; }
+            int GetBuild() const { return m_Build; }
+        };
         
         // Stub base SapManager class
         class SapManager {
@@ -50,16 +82,26 @@
                 return false;
             }
             
-            static bool GetVersionInfo(char* versionStr, size_t maxLen) {
-                const char* version = "Sapera SDK 8.70 (Mock Implementation)";
-                strncpy(versionStr, version, maxLen);
-                return true;
+            // Match the real Sapera SDK method signature
+            static BOOL GetVersionInfo(SapManVersionInfo* pVersionInfo) {
+                if (pVersionInfo) {
+                    return TRUE;
+                }
+                return FALSE;
             }
         };
         
         // Stub SapLocation class
         class SapLocation {
         public:
+            enum LocationType {
+                ServerSystem = 0,
+                ServerFile = 1,
+                ServerDef = 2,
+                ServerRemote = 3,
+                ServerUnknown = 4
+            };
+            
             SapLocation() {}
             SapLocation(const char* serverName) {}
         };
@@ -89,6 +131,9 @@
                 return false;
             }
         };
+        
+        // Forward declaration for SapXferCallbackInfo which is used in SapAcqDevice
+        typedef void (*SaperaXferCallbackType)(SapXferCallbackInfo*);
         
         // Device class
         class SapAcqDevice {
@@ -145,6 +190,12 @@
         // Buffer classes
         class SapBuffer {
         public:
+            enum BufferType {
+                TypeDefault = 0,
+                TypeContiguous = 1,
+                TypeScatterGather = 2
+            };
+            
             SapBuffer() {}
             virtual ~SapBuffer() {}
             
@@ -154,9 +205,16 @@
             UINT32 GetWidth() { return 640; }
             UINT32 GetHeight() { return 480; }
             UINT32 GetPitch() { return 640; }
-            UINT32 GetFormat() { return 0; } // Mono8
+            UINT32 GetFormat() { return SapFormatConstants::SAPBUFFER_FORMAT_MONO8; }
             UINT32 GetIndex() { return 0; }
             
+            // Return a pointer to buffer data
+            void* GetAddress() { 
+                static std::vector<uint8_t> dummyData(640 * 480, 128);
+                return dummyData.data();
+            }
+            
+            // This version takes a pointer-to-pointer, to match some Sapera API styles
             bool GetAddress(void** ppData) { 
                 static std::vector<uint8_t> dummyData(640 * 480, 128);
                 *ppData = dummyData.data();
@@ -233,12 +291,13 @@
     using SapXferCallbackInfo = SaperaStubs::SapXferCallbackInfo;
     using SapView = SaperaStubs::SapView;
     using SapFeature = SaperaStubs::SapFeature;
+    using SapManVersionInfo = SaperaStubs::SapManVersionInfo;
     
-    // Define some constants as preprocessor macros
-    #define SAPBUFFER_FORMAT_MONO8 0
-    #define SAPBUFFER_FORMAT_MONO16 1
-    #define SAPBUFFER_FORMAT_RGB24 2
-    #define SAPBUFFER_FORMAT_RGB32 3
+    // Expose buffer format constants at global scope
+    constexpr int SAPBUFFER_FORMAT_MONO8 = SaperaStubs::SapFormatConstants::SAPBUFFER_FORMAT_MONO8;
+    constexpr int SAPBUFFER_FORMAT_MONO16 = SaperaStubs::SapFormatConstants::SAPBUFFER_FORMAT_MONO16;
+    constexpr int SAPBUFFER_FORMAT_RGB24 = SaperaStubs::SapFormatConstants::SAPBUFFER_FORMAT_RGB24;
+    constexpr int SAPBUFFER_FORMAT_RGB32 = SaperaStubs::SapFormatConstants::SAPBUFFER_FORMAT_RGB32;
 #endif
 
 namespace cam_matrix::core {
@@ -247,14 +306,14 @@ class SaperaUtils {
 public:
     // Check if Sapera SDK is available and properly initialized
     static bool isSaperaAvailable() {
-        #if defined(SAPERA_FOUND)
+        #if defined(SAPERA_FOUND) && SAPERA_FOUND
             return true;
         #else
             return false;
         #endif
     }
     
-    // Check if GigE Vision Interface is available
+    // Check if GigE Vision is available
     static bool isGigeVisionAvailable() {
         #if defined(HAS_GIGE_VISION) && HAS_GIGE_VISION
             return true;
@@ -262,65 +321,55 @@ public:
             return false;
         #endif
     }
-
+    
     // Get the Sapera SDK version
     static std::string getSaperaVersion() {
-        #if defined(SAPERA_FOUND)
-            char versionStr[128] = { 0 };
-            int major=0, minor=0, revision=0, build=0;
-            
-            #ifdef SAPERA_LT_VERSION_MAJOR
-                major = SAPERA_LT_VERSION_MAJOR;
-                minor = SAPERA_LT_VERSION_MINOR;
-                revision = SAPERA_LT_REVISION_NUMBER;
-                build = SAPERA_LT_BUILD_NUMBER;
-                sprintf(versionStr, "Sapera LT %d.%d.%d.%d", major, minor, revision, build);
-            #else
-                // Try to get version through API
-                if (SapManager::GetVersionInfo(versionStr, sizeof(versionStr))) {
-                    return std::string(versionStr);
-                }
-                return "Sapera SDK (version unknown)";
-            #endif
-            
-            return std::string(versionStr);
+        #if defined(SAPERA_FOUND) && SAPERA_FOUND
+            SapManVersionInfo versionInfo;
+            if (SapManager::GetVersionInfo(&versionInfo)) {
+                char versionStr[256] = {0};
+                // Use accessor methods instead of direct member access
+                sprintf(versionStr, "Sapera SDK %d.%d.%d.%d", 
+                        versionInfo.GetMajor(), versionInfo.GetMinor(), 
+                        versionInfo.GetRevision(), versionInfo.GetBuild());
+                return versionStr;
+            }
+            return "Sapera SDK (Unknown Version)";
         #else
-            return "Mock Sapera SDK 8.70";
+            return "Sapera SDK Not Available (Stub Implementation)";
         #endif
     }
     
     // Get the GigE Vision version
     static std::string getGigeVisionVersion() {
         #if defined(HAS_GIGE_VISION) && HAS_GIGE_VISION
-            return "Teledyne GigE Vision Interface";
+            return "GigE Vision Simulation Mode";
         #else
-            return "Not available";
+            return "GigE Vision Not Available";
         #endif
     }
-
-    // Get the list of available cameras
+    
+    // Get available cameras
     static bool getAvailableCameras(std::vector<std::string>& cameraNames) {
         cameraNames.clear();
         
-        #if defined(SAPERA_FOUND)
-            // Get the number of servers (cameras)
+        #if defined(SAPERA_FOUND) && SAPERA_FOUND
+            // Query real cameras from Sapera SDK
             int serverCount = SapManager::GetServerCount();
-            
-            for (int i = 0; i < serverCount; i++) {
+            for (int i = 0; i < serverCount; ++i) {
                 char serverName[CORSERVER_MAX_STRLEN];
                 if (SapManager::GetServerName(i, serverName, sizeof(serverName))) {
                     cameraNames.push_back(serverName);
                 }
             }
-            
-            return !cameraNames.empty();
         #else
-            // Add mock cameras
-            cameraNames.push_back("Nano-C4020 (Mock Camera 1)");
-            cameraNames.push_back("Nano-C4020 (Mock Camera 2)");
-            
-            return !cameraNames.empty();
+            // Return some simulated cameras
+            cameraNames.push_back("Nano-C4020 (Mock)");
+            cameraNames.push_back("GigE-1800 (Mock)");
+            cameraNames.push_back("FiberCam-6K (Mock)");
         #endif
+        
+        return !cameraNames.empty();
     }
 };
 

@@ -1,6 +1,6 @@
 #include "core/sapera_direct_access.hpp"
 
-#if defined(SAPERA_FOUND)
+#if defined(SAPERA_FOUND) && SAPERA_FOUND
 #include <QDebug>
 #include <cstring>
 #include <QPainter>
@@ -22,12 +22,6 @@ void SaperaXferCallback(SapXferCallbackInfo* pInfo)
 
 SaperaDirectAccess::SaperaDirectAccess(QObject* parent)
     : QObject(parent)
-    , acqDevice_(nullptr)
-    , buffer_(nullptr)
-    , transfer_(nullptr)
-    , view_(nullptr)
-    , exposureTime_(10000.0) // 10ms default
-    , isAcquiring_(false)
 {
     // Create empty placeholder image
     currentFrame_ = QImage(640, 480, QImage::Format_RGB32);
@@ -154,16 +148,19 @@ bool SaperaDirectAccess::configureCamera() {
     printFeatureValue("DeviceUserID");
     
     // Set acquisition mode to continuous
-    acqDevice_->SetFeatureValue("AcquisitionMode", "Continuous");
-    emit statusChanged(tr("Set acquisition mode to Continuous"));
+    if (acqDevice_->SetFeatureValue("AcquisitionMode", "Continuous")) {
+        emit statusChanged(tr("Set acquisition mode to Continuous"));
+    }
     
     // Set exposure mode to Timed
-    acqDevice_->SetFeatureValue("ExposureMode", "Timed");
-    emit statusChanged(tr("Set exposure mode to Timed"));
+    if (acqDevice_->SetFeatureValue("ExposureMode", "Timed")) {
+        emit statusChanged(tr("Set exposure mode to Timed"));
+    }
     
     // Set exposure time
-    acqDevice_->SetFeatureValue("ExposureTime", exposureTime_);
-    emit statusChanged(tr("Set exposure time to %1 μs").arg(exposureTime_));
+    if (acqDevice_->SetFeatureValue("ExposureTime", exposureTime_)) {
+        emit statusChanged(tr("Set exposure time to %1 μs").arg(exposureTime_));
+    }
     
     return true;
 }
@@ -255,70 +252,81 @@ bool SaperaDirectAccess::stopAcquisition() {
     return true;
 }
 
-bool SaperaDirectAccess::isAcquiring() const {
-    return isAcquiring_;
-}
-
 void SaperaDirectAccess::processNewFrame(SapBuffer* pBuffer) {
-    // In the mock implementation, we'll generate a new frame periodically
-    static int frameCount = 0;
-    frameCount++;
+    if (!pBuffer) return;
     
-    if (frameCount % 30 == 0) { // Update frame about once per second
-        QImage newFrame(640, 480, QImage::Format_RGB32);
-        newFrame.fill(Qt::darkGray);
-        
-        QPainter painter(&newFrame);
-        
-        // Draw some dynamic elements
-        qint64 timestamp = QDateTime::currentMSecsSinceEpoch();
-        double phase = timestamp * 0.001;
-        
-        // Draw moving object
-        int centerX = 320 + int(150 * cos(phase));
-        int centerY = 240 + int(100 * sin(phase * 0.7));
-        
-        painter.setPen(QPen(Qt::white, 2));
-        painter.setBrush(QColor(255, 128, 0));
-        painter.drawEllipse(QPoint(centerX, centerY), 40, 40);
-        
-        // Draw crosshair
-        painter.setPen(QPen(Qt::green, 1));
-        painter.drawLine(centerX - 50, centerY, centerX + 50, centerY);
-        painter.drawLine(centerX, centerY - 50, centerX, centerY + 50);
-        
-        // Draw some info text
-        painter.setPen(Qt::white);
-        painter.setFont(QFont("Arial", 12));
-        painter.drawText(10, 20, tr("Mock Camera: %1").arg(QString::fromStdString(serverName_)));
-        painter.drawText(10, 40, QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss.zzz"));
-        painter.drawText(10, 60, tr("Frame: %1").arg(frameCount));
-        painter.drawText(10, 80, tr("Exposure: %1 μs").arg(exposureTime_));
-        
-        // Add some noise for realism
-        for (int i = 0; i < 500; i++) {
-            int x = QRandomGenerator::global()->bounded(640);
-            int y = QRandomGenerator::global()->bounded(480);
-            int intensity = QRandomGenerator::global()->bounded(128) + 128;
-            painter.setPen(QColor(intensity, intensity, intensity));
-            painter.drawPoint(x, y);
-        }
-        
-        currentFrame_ = newFrame;
-        emit newFrameAvailable(currentFrame_);
+    // Get buffer information
+    int width = pBuffer->GetWidth();
+    int height = pBuffer->GetHeight();
+    int format = pBuffer->GetFormat();
+    
+    // Create QImage from buffer data
+    QImage newFrame;
+    
+    // Get buffer address directly using the GetAddress method with a pointer
+    void* pData = nullptr;
+    if (!pBuffer->GetAddress(&pData) || !pData) {
+        return;
     }
+    
+    // Define format constants locally for the switch statement
+    constexpr int FORMAT_MONO8 = 0;  // SAPBUFFER_FORMAT_MONO8
+    constexpr int FORMAT_MONO16 = 1; // SAPBUFFER_FORMAT_MONO16
+    constexpr int FORMAT_RGB24 = 2;  // SAPBUFFER_FORMAT_RGB24
+    constexpr int FORMAT_RGB32 = 3;  // SAPBUFFER_FORMAT_RGB32
+    
+    // Create QImage based on format
+    // Note: in a real implementation, we would handle different pixel formats
+    switch (format) {
+        case FORMAT_MONO8:
+            newFrame = QImage(static_cast<uchar*>(pData), width, height, width, QImage::Format_Grayscale8);
+            break;
+        case FORMAT_RGB24:
+            newFrame = QImage(static_cast<uchar*>(pData), width, height, width * 3, QImage::Format_RGB888);
+            break;
+        case FORMAT_RGB32:
+            newFrame = QImage(static_cast<uchar*>(pData), width, height, width * 4, QImage::Format_RGB32);
+            break;
+        default:
+            // Create a mock image if format is not supported
+            newFrame = QImage(width, height, QImage::Format_RGB32);
+            newFrame.fill(Qt::darkGray);
+            break;
+    }
+    
+    // Make a deep copy of the image to ensure it remains valid
+    currentFrame_ = newFrame.copy();
+    
+    // Add overlay with camera information
+    QPainter painter(&currentFrame_);
+    painter.setPen(Qt::white);
+    painter.setFont(QFont("Arial", 12));
+    painter.drawText(10, 20, tr("Camera: %1").arg(QString::fromStdString(serverName_)));
+    painter.drawText(10, 40, QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss.zzz"));
+    painter.drawText(10, 60, tr("Exposure: %1 μs").arg(exposureTime_, 0, 'f', 1));
+    
+    // Emit signal with the new frame
+    emit newFrameAvailable(currentFrame_);
 }
 
 bool SaperaDirectAccess::setExposureTime(double microseconds) {
     if (!acqDevice_) return false;
     
-    if (acqDevice_->SetFeatureValue("ExposureTime", microseconds)) {
-        exposureTime_ = microseconds;
-        emit statusChanged(tr("Set exposure time to %1 μs").arg(exposureTime_));
-        return true;
+    if (microseconds <= 0) {
+        lastError_ = tr("Invalid exposure time: %1").arg(microseconds);
+        emit error(lastError_);
+        return false;
     }
     
-    return false;
+    if (acqDevice_->SetFeatureValue("ExposureTime", microseconds)) {
+        exposureTime_ = microseconds;
+        emit statusChanged(tr("Exposure time set to %1 μs").arg(microseconds));
+        return true;
+    } else {
+        lastError_ = tr("Failed to set exposure time");
+        emit error(lastError_);
+        return false;
+    }
 }
 
 double SaperaDirectAccess::getExposureTime() const {
@@ -326,46 +334,46 @@ double SaperaDirectAccess::getExposureTime() const {
 }
 
 std::string SaperaDirectAccess::getCameraModelName() const {
-    if (!acqDevice_) return "Unknown Model";
+    if (!acqDevice_) return "Unknown";
     
-    char value[256] = {0};
-    if (acqDevice_->GetFeatureValue("DeviceModelName", value, sizeof(value))) {
-        return value;
+    char modelName[256] = {0};
+    if (acqDevice_->GetFeatureValue("DeviceModelName", modelName, sizeof(modelName))) {
+        return modelName;
     }
-    
-    return "Nano-C4020 (Mock)";
+    return "Unknown Model";
 }
 
 std::string SaperaDirectAccess::getCameraSerialNumber() const {
-    if (!acqDevice_) return "Unknown SN";
+    if (!acqDevice_) return "Unknown";
     
-    char value[256] = {0};
-    if (acqDevice_->GetFeatureValue("DeviceSerialNumber", value, sizeof(value))) {
-        return value;
+    char serialNumber[256] = {0};
+    if (acqDevice_->GetFeatureValue("DeviceSerialNumber", serialNumber, sizeof(serialNumber))) {
+        return serialNumber;
     }
-    
-    return "SN12345678";
+    return "Unknown SN";
 }
 
 std::string SaperaDirectAccess::getCameraFirmwareVersion() const {
-    if (!acqDevice_) return "Unknown Version";
+    if (!acqDevice_) return "Unknown";
     
-    char value[256] = {0};
-    if (acqDevice_->GetFeatureValue("DeviceFirmwareVersion", value, sizeof(value))) {
-        return value;
+    char firmwareVersion[256] = {0};
+    if (acqDevice_->GetFeatureValue("DeviceFirmwareVersion", firmwareVersion, sizeof(firmwareVersion))) {
+        return firmwareVersion;
     }
-    
-    return "1.0.0";
+    return "Unknown Version";
 }
 
 std::vector<std::string> SaperaDirectAccess::getAvailablePixelFormats() const {
-    std::vector<std::string> formats = {
-        "Mono8",
-        "Mono16",
-        "RGB8",
-        "RGB16",
-        "YUV422_8"
-    };
+    std::vector<std::string> formats;
+    
+    if (!acqDevice_) return formats;
+    
+    // In the real implementation, we would query the camera for supported pixel formats
+    // For the mock implementation, return some common formats
+    formats.push_back("Mono8");
+    formats.push_back("Mono16");
+    formats.push_back("RGB24");
+    formats.push_back("RGB32");
     
     return formats;
 }
@@ -374,26 +382,27 @@ bool SaperaDirectAccess::setPixelFormat(const std::string& format) {
     if (!acqDevice_) return false;
     
     if (acqDevice_->SetFeatureValue("PixelFormat", format.c_str())) {
-        emit statusChanged(tr("Set pixel format to %1").arg(QString::fromStdString(format)));
+        emit statusChanged(tr("Pixel format set to %1").arg(QString::fromStdString(format)));
         return true;
+    } else {
+        lastError_ = tr("Failed to set pixel format to %1").arg(QString::fromStdString(format));
+        emit error(lastError_);
+        return false;
     }
-    
-    return false;
 }
 
 QImage SaperaDirectAccess::getCurrentFrame() const {
-    return currentFrame_;
+    return currentFrame_.copy();
 }
 
 std::vector<std::string> SaperaDirectAccess::getAvailableCameras() {
     std::vector<std::string> cameras;
-    
-    // Add some mock cameras
-    cameras.push_back("Nano-C4020 (Mock Camera 1)");
-    cameras.push_back("Nano-C4020 (Mock Camera 2)");
-    cameras.push_back("Linea-CLHS (Mock Camera 3)");
-    
+    cam_matrix::core::SaperaUtils::getAvailableCameras(cameras);
     return cameras;
+}
+
+bool SaperaDirectAccess::isAcquiring() const {
+    return isAcquiring_;
 }
 
 } // namespace cam_matrix::core

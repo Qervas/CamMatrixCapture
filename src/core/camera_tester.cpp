@@ -84,7 +84,7 @@ Camera* CameraTester::getCameraByIndex(size_t index) const
     return cameraManager_->getCameraByIndex(index);
 }
 
-SaperaCamera* CameraTester::getSaperaCameraByIndex(size_t index) const
+sapera::SaperaCamera* CameraTester::getSaperaCameraByIndex(size_t index) const
 {
     return cameraManager_->getSaperaCameraByIndex(index);
 }

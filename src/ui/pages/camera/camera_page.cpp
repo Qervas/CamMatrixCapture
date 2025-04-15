@@ -145,8 +145,23 @@ void CameraPage::initialize() {
 }
 
 void CameraPage::cleanup() {
+    // Disconnect all signal connections first to prevent deadlocks
+    if (selectedCameraIndex_ >= 0) {
+        auto saperaCamera = cameraManager_->getSaperaCameraByIndex(selectedCameraIndex_);
+        if (saperaCamera) {
+            // Disconnect from frame signals to prevent deadlocks during shutdown
+            disconnect(saperaCamera, &core::sapera::SaperaCamera::newFrameAvailable,
+                      this, &CameraPage::onNewFrame);
+            disconnect(saperaCamera, &core::sapera::SaperaCamera::photoCaptured,
+                      this, &CameraPage::onPhotoCaptured);
+        }
+    }
+    
+    // Now it's safe to disconnect all cameras
     saveSettings();
     cameraManager_->disconnectAllCameras();
+    
+    videoDisplay_->clearFrame();
     Page::cleanup();
 }
 
@@ -177,7 +192,11 @@ void CameraPage::onCameraSelected(int index) {
         // Disconnect signal connections for the old camera
         auto saperaCamera = cameraManager_->getSaperaCameraByIndex(selectedCameraIndex_);
         if (saperaCamera) {
-            saperaCamera->disconnect(this);
+            // Use disconnect with specific signals to avoid disconnecting all signals
+            disconnect(saperaCamera, &core::sapera::SaperaCamera::newFrameAvailable,
+                      this, &CameraPage::onNewFrame);
+            disconnect(saperaCamera, &core::sapera::SaperaCamera::photoCaptured,
+                      this, &CameraPage::onPhotoCaptured);
         }
     }
 
@@ -197,7 +216,7 @@ void CameraPage::onCameraSelected(int index) {
                 qDebug() << "Connecting to new frame signals from camera" << QString::fromStdString(saperaCamera->getName());
                 
                 // For thread safety, use a queued connection to receive frame signals
-                connect(saperaCamera, &core::SaperaCamera::newFrameAvailable,
+                connect(saperaCamera, &core::sapera::SaperaCamera::newFrameAvailable,
                         this, &CameraPage::onNewFrame, Qt::QueuedConnection);
 
                 // If already connected, display frames
@@ -238,21 +257,9 @@ void CameraPage::onConnectCamera() {
             connectButton_->setEnabled(false);
             disconnectButton_->setEnabled(true);
             
-            // Try to get an initial frame after connection
-            auto saperaCamera = cameraManager_->getSaperaCameraByIndex(selectedCameraIndex_);
-            if (saperaCamera) {
-                // Wait a brief moment for the camera to initialize
-                QTimer::singleShot(500, this, [this, saperaCamera]() {
-                    qDebug() << "Getting initial frame after connection";
-                    QImage initialFrame = saperaCamera->getFrame();
-                    if (!initialFrame.isNull()) {
-                        qDebug() << "Initial frame received, size:" << initialFrame.width() << "x" << initialFrame.height();
-                        videoDisplay_->updateFrame(initialFrame);
-                    } else {
-                        qDebug() << "Initial frame was null";
-                    }
-                });
-            }
+            // The camera is now connected and will emit newFrameAvailable signals
+            // which are already connected to onNewFrame via the onCameraSelected method
+            // No need to manually get a frame here, which could cause deadlocks
             
             emit statusChanged(tr("Camera connected"));
         } else {
@@ -357,7 +364,7 @@ void CameraPage::onCapturePhotoRequested(int cameraIndex) {
                             .arg(timeStamp);
     
     // Connect to photoCaptured signal if not already connected
-    if (!connect(saperaCamera, &core::SaperaCamera::photoCaptured,
+    if (!connect(saperaCamera, &core::sapera::SaperaCamera::photoCaptured,
                 this, &CameraPage::onPhotoCaptured, Qt::UniqueConnection)) {
         qDebug() << "Connected to photoCaptured signal";
     }

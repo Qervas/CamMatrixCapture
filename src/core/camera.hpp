@@ -24,6 +24,9 @@ public:
     // Photo capture functionality
     virtual bool capturePhoto(const std::string& savePath = "") = 0;
 
+    // Camera settings
+    virtual bool setExposureTime(double microseconds) = 0;
+
 signals:
     void newFrameAvailable(const QImage& frame);
     void statusChanged(const std::string& message);

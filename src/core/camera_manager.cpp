@@ -1,5 +1,5 @@
 #include "core/camera_manager.hpp"
-#include "core/sapera_camera.hpp"
+#include "core/sapera/sapera_camera.hpp"
 #include "core/sapera_defs.hpp"
 #include <QDebug>
 
@@ -27,7 +27,7 @@ void CameraManager::scanForCameras()
         std::vector<std::string> cameraNames;
         if (SaperaUtils::getAvailableCameras(cameraNames)) {
             for (const auto& name : cameraNames) {
-                cameras_.push_back(std::make_unique<SaperaCamera>(name));
+                cameras_.push_back(std::make_unique<sapera::SaperaCamera>(name));
             }
             emit statusChanged("Found " + std::to_string(cameras_.size()) + " Sapera cameras");
         } else {
@@ -45,19 +45,19 @@ void CameraManager::scanForCameras()
     std::vector<std::string> cameraNames;
     if (SaperaUtils::getAvailableCameras(cameraNames)) {
         for (const auto& name : cameraNames) {
-            cameras_.push_back(std::make_unique<SaperaCamera>(name));
+            cameras_.push_back(std::make_unique<sapera::SaperaCamera>(name));
         }
         emit statusChanged("Found " + std::to_string(cameras_.size()) + " GigE Vision cameras");
     } else {
         // Add at least a mock camera for interface testing
-        cameras_.push_back(std::make_unique<SaperaCamera>("Mock Camera"));
+        cameras_.push_back(std::make_unique<sapera::SaperaCamera>("Mock Camera"));
         emit statusChanged("No GigE Vision cameras found, added mock camera");
     }
 #else
     emit statusChanged("Camera SDK not available");
     
     // Add dummy camera for UI testing
-    cameras_.push_back(std::make_unique<SaperaCamera>("Dummy Camera"));
+    cameras_.push_back(std::make_unique<sapera::SaperaCamera>("Dummy Camera"));
     emit statusChanged("Added dummy camera for testing");
 #endif
 }
@@ -80,10 +80,10 @@ Camera* CameraManager::getCameraByIndex(size_t index) const
     return nullptr;
 }
 
-SaperaCamera* CameraManager::getSaperaCameraByIndex(size_t index) const
+sapera::SaperaCamera* CameraManager::getSaperaCameraByIndex(size_t index) const
 {
     if (index < cameras_.size()) {
-        return dynamic_cast<SaperaCamera*>(cameras_[index].get());
+        return dynamic_cast<sapera::SaperaCamera*>(cameras_[index].get());
     }
     return nullptr;
 }

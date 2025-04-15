@@ -1,7 +1,7 @@
 #pragma once
 
 #include "core/camera.hpp"
-#include "core/sapera_camera.hpp"
+#include "core/sapera/sapera_camera.hpp"
 #include <memory>
 #include <vector>
 #include <QObject>
@@ -23,7 +23,7 @@ public:
 
     // Camera access
     Camera* getCameraByIndex(size_t index) const;
-    SaperaCamera* getSaperaCameraByIndex(size_t index) const;
+    sapera::SaperaCamera* getSaperaCameraByIndex(size_t index) const;
 
     // Connection management
     bool connectCamera(size_t index);
