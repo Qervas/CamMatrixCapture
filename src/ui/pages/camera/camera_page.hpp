@@ -24,11 +24,11 @@ public:
     ~CameraPage() override;
     
     QString title() const override { return tr("Cameras"); }
+    void initialize() override;
 
 protected:
     void setupUi() override;
     void createConnections() override;
-    void initialize() override;
     void cleanup() override;
 
 private slots:
