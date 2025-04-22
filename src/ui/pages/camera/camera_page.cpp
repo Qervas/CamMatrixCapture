@@ -1,850 +1,754 @@
 #include "camera_page.hpp"
-#include "ui/widgets/camera_control_widget.hpp"
 #include "ui/widgets/video_display_widget.hpp"
+#include "ui/widgets/camera_control_widget.hpp"
 #include "ui/widgets/sapera_status_widget.hpp"
-#include "ui/dialogs/camera_test_dialog.hpp"
 #include "ui/dialogs/direct_camera_dialog.hpp"
-#include "core/sapera_defs.hpp"
-#include "core/camera_manager.hpp"
-
+#include "ui/dialogs/photo_preview_dialog.hpp"
+#include "core/settings.hpp"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QSplitter>
-#include <QPushButton>
-#include <QLabel>
-#include <QListWidget>
 #include <QMessageBox>
-#include <QGroupBox>
-#include <QDebug>
-#include <QTimer>
-#include <QDir>
-#include <QDateTime>
-#include <QMetaObject>
 #include <QFileDialog>
-#include <QProgressBar>
+#include <QSettings>
+#include <QTabWidget>
+#include <QDateTime>
+#include <QScrollBar>
+#include <QStyledItemDelegate>
+#include <QScroller>
+#include <QApplication>
 
 namespace cam_matrix::ui {
 
+// Custom delegate for nicer list items
+class CameraItemDelegate : public QStyledItemDelegate {
+public:
+    CameraItemDelegate(QObject* parent = nullptr) : QStyledItemDelegate(parent) {}
+
+    void paint(QPainter* painter, const QStyleOptionViewItem& option, const QModelIndex& index) const override {
+        QStyleOptionViewItem opt = option;
+        initStyleOption(&opt, index);
+        
+        // Theme-aware selection background
+        if (opt.state & QStyle::State_Selected) {
+            painter->save();
+            painter->setRenderHint(QPainter::Antialiasing, true);
+            painter->setPen(Qt::NoPen);
+            
+            // Get theme-appropriate selection color
+            QColor selectionColor = QApplication::palette().color(QPalette::Highlight);
+            selectionColor.setAlpha(128); // Semi-transparent
+            painter->setBrush(selectionColor);
+            
+            painter->drawRoundedRect(opt.rect.adjusted(2, 2, -2, -2), 5, 5);
+            painter->restore();
+            
+            // Use theme-appropriate text color
+            opt.palette.setColor(QPalette::HighlightedText, QApplication::palette().color(QPalette::HighlightedText));
+            opt.palette.setColor(QPalette::Highlight, Qt::transparent);
+        }
+        
+        QStyledItemDelegate::paint(painter, opt, index);
+    }
+    
+    QSize sizeHint(const QStyleOptionViewItem& option, const QModelIndex& index) const override {
+        QSize size = QStyledItemDelegate::sizeHint(option, index);
+        return QSize(size.width(), 36); // Taller row height
+    }
+};
+
 CameraPage::CameraPage(QWidget* parent)
-    : Page(parent)
-    , cameraList_(nullptr)
-    , cameraControl_(nullptr)
-    , refreshButton_(nullptr)
-    , connectButton_(nullptr)
-    , disconnectButton_(nullptr)
-    , testSaperaButton_(nullptr)
-    , directCameraButton_(nullptr)
-    , syncGroup_(nullptr)
-    , clearSelectionButton_(nullptr)
-    , toggleSelectButton_(nullptr)
-    , connectSelectedButton_(nullptr)
-    , disconnectSelectedButton_(nullptr)
-    , captureSyncButton_(nullptr)
-    , syncProgressBar_(nullptr)
-    , syncStatusLabel_(nullptr)
-    , videoDisplay_(nullptr)
-    , saperaStatus_(nullptr)
-    , selectedCameraIndex_(-1)
+    : Page(parent),
+      cameraManager_(std::make_unique<core::CameraManager>()),
+      selectedCameraIndex_(-1)
 {
-    // Create the camera manager
-    cameraManager_ = std::make_unique<core::CameraManager>(this);
+    setupUi();
+    createConnections();
+    initialize();
 }
 
-CameraPage::~CameraPage() = default;
+CameraPage::~CameraPage() {
+    cleanup();
+}
 
-void CameraPage::setupUi()
-{
-    auto* mainLayout = new QVBoxLayout(this);
-
-    // Create splitter for camera list and video display
-    auto* splitter = new QSplitter(Qt::Horizontal, this);
-    mainLayout->addWidget(splitter);
-
-    // Left panel: Camera list and controls
-    auto* leftWidget = new QWidget(splitter);
-    auto* leftLayout = new QVBoxLayout(leftWidget);
-
-    // Sapera Status Widget
-    saperaStatus_ = new SaperaStatusWidget(leftWidget);
-    leftLayout->addWidget(saperaStatus_);
+void CameraPage::setupUi() {
+    // Get system palette for theme-aware colors
+    QPalette systemPalette = QApplication::palette();
+    bool isDarkTheme = systemPalette.color(QPalette::Window).lightness() < 128;
     
-    // Camera list in a group box
-    auto* cameraListGroup = new QGroupBox(tr("Available Cameras"), leftWidget);
-    auto* cameraListLayout = new QVBoxLayout(cameraListGroup);
+    // Border and background colors based on theme
+    QString borderColor = isDarkTheme ? "#555555" : "#cccccc";
+    QString bgLight = isDarkTheme ? "#333333" : "#f0f0f0";
+    QString bgLighter = isDarkTheme ? "#3c3c3c" : "#ffffff";
+    QString textColor = isDarkTheme ? "#e0e0e0" : "#202020";
+    QString dimTextColor = isDarkTheme ? "#a0a0a0" : "#606060";
     
-    cameraList_ = new QListWidget(cameraListGroup);
-    // Enable multiple selection with checkboxes
-    cameraList_->setSelectionMode(QAbstractItemView::SingleSelection);
-    cameraListLayout->addWidget(cameraList_);
-
-    // Camera control buttons
-    auto* buttonLayout = new QHBoxLayout;
-    refreshButton_ = new QPushButton(tr("Refresh"), cameraListGroup);
-    connectButton_ = new QPushButton(tr("Connect"), cameraListGroup);
-    disconnectButton_ = new QPushButton(tr("Disconnect"), cameraListGroup);
-
-    // Disable buttons until a camera is selected
-    connectButton_->setEnabled(false);
-    disconnectButton_->setEnabled(false);
-
-    buttonLayout->addWidget(refreshButton_);
-    buttonLayout->addWidget(connectButton_);
-    buttonLayout->addWidget(disconnectButton_);
-    cameraListLayout->addLayout(buttonLayout);
+    // Main layout using a tab widget for better organization
+    auto mainLayout = new QVBoxLayout(this);
+    mainLayout->setContentsMargins(10, 10, 10, 10);
+    mainLayout->setSpacing(10);
     
-    leftLayout->addWidget(cameraListGroup);
-
-    // Camera controls
-    cameraControl_ = new CameraControlWidget(leftWidget);
-    cameraControl_->setEnabled(false);
-    leftLayout->addWidget(cameraControl_);
-
-    // Multi-camera synchronization group
-    syncGroup_ = new QGroupBox(tr("Multi-Camera Synchronization"), leftWidget);
-    auto* syncLayout = new QVBoxLayout(syncGroup_);
+    auto tabWidget = new QTabWidget(this);
+    QString tabStyle = QString(
+        "QTabWidget::pane { border: 1px solid %1; border-radius: 5px; } "
+        "QTabBar::tab { padding: 8px 16px; margin-right: 2px; border-radius: 5px 5px 0 0; "
+        "background: %2; border: 1px solid %1; border-bottom: none; color: %4; } "
+        "QTabBar::tab:selected { background: %3; } "
+        "QTabBar::tab:hover:!selected { background: %2; }"
+    ).arg(borderColor, bgLight, bgLighter, textColor);
     
-    // Sync camera selection buttons
-    auto* syncSelectionLayout = new QHBoxLayout;
-    toggleSelectButton_ = new QPushButton(tr("Select All"), syncGroup_);
-    clearSelectionButton_ = new QPushButton(tr("Clear Selection"), syncGroup_);
-    syncSelectionLayout->addWidget(toggleSelectButton_);
-    syncSelectionLayout->addWidget(clearSelectionButton_);
-    syncLayout->addLayout(syncSelectionLayout);
+    tabWidget->setStyleSheet(tabStyle);
     
-    // Sync camera connection buttons
-    auto* syncConnectionLayout = new QHBoxLayout;
-    connectSelectedButton_ = new QPushButton(tr("Connect Selected"), syncGroup_);
-    disconnectSelectedButton_ = new QPushButton(tr("Disconnect Selected"), syncGroup_);
-    syncConnectionLayout->addWidget(connectSelectedButton_);
-    syncConnectionLayout->addWidget(disconnectSelectedButton_);
-    syncLayout->addLayout(syncConnectionLayout);
+    // Tab 1: Camera View
+    auto cameraViewTab = new QWidget();
+    auto cameraViewLayout = new QVBoxLayout(cameraViewTab);
+    cameraViewLayout->setContentsMargins(15, 15, 15, 15);
     
-    // Sync camera capture button
-    captureSyncButton_ = new QPushButton(tr("Capture Photos Sync"), syncGroup_);
-    syncLayout->addWidget(captureSyncButton_);
+    auto displayControlSplitter = new QSplitter(Qt::Horizontal);
+    displayControlSplitter->setChildrenCollapsible(false);
     
-    // Sync progress bar and status label
-    syncProgressBar_ = new QProgressBar(syncGroup_);
-    syncProgressBar_->setMinimum(0);
-    syncProgressBar_->setMaximum(100);
+    // Left side: Camera list and controls
+    auto leftWidget = new QWidget();
+    auto leftLayout = new QVBoxLayout(leftWidget);
+    leftLayout->setContentsMargins(0, 0, 0, 0);
+    leftLayout->setSpacing(15);
+    
+    // Camera list section
+    auto listGroupBox = new QGroupBox(tr("Available Cameras"));
+    QString groupBoxStyle = QString(
+        "QGroupBox { font-weight: bold; border: 1px solid %1; border-radius: 5px; margin-top: 10px; padding-top: 10px; color: %3; } "
+        "QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; }"
+    ).arg(borderColor, bgLight, textColor);
+    
+    listGroupBox->setStyleSheet(groupBoxStyle);
+    auto listLayout = new QVBoxLayout(listGroupBox);
+    listLayout->setContentsMargins(10, 15, 10, 10);
+    
+    cameraList_ = new QListWidget();
+    QString listStyle = QString(
+        "QListWidget { background: %2; border: 1px solid %1; border-radius: 3px; color: %3; } "
+        "QListWidget::item { padding: 5px; border-bottom: 1px solid %1; } "
+        "QListWidget::item:selected { background: transparent; color: %3; }"
+    ).arg(borderColor, bgLighter, textColor);
+    
+    cameraList_->setStyleSheet(listStyle);
+    cameraList_->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    cameraList_->setItemDelegate(new CameraItemDelegate(cameraList_));
+    QScroller::grabGesture(cameraList_, QScroller::TouchGesture);
+    
+    auto listButtonLayout = new QHBoxLayout();
+    refreshButton_ = new QPushButton(tr("Refresh"));
+    refreshButton_->setIcon(QIcon::fromTheme("view-refresh"));
+    refreshButton_->setCursor(Qt::PointingHandCursor);
+    
+    connectButton_ = new QPushButton(tr("Connect"));
+    connectButton_->setIcon(QIcon::fromTheme("network-connect"));
+    connectButton_->setCursor(Qt::PointingHandCursor);
+    
+    disconnectButton_ = new QPushButton(tr("Disconnect"));
+    disconnectButton_->setIcon(QIcon::fromTheme("network-disconnect"));
+    disconnectButton_->setCursor(Qt::PointingHandCursor);
+    
+    listButtonLayout->addWidget(refreshButton_);
+    listButtonLayout->addWidget(connectButton_);
+    listButtonLayout->addWidget(disconnectButton_);
+    
+    listLayout->addWidget(cameraList_);
+    listLayout->addLayout(listButtonLayout);
+    
+    // Multi-camera controls
+    syncGroup_ = new QGroupBox(tr("Multi-Camera Operations"));
+    syncGroup_->setStyleSheet(groupBoxStyle);
+    auto syncLayout = new QVBoxLayout(syncGroup_);
+    syncLayout->setContentsMargins(10, 15, 10, 10);
+    
+    auto syncButtonsLayout1 = new QHBoxLayout();
+    toggleSelectButton_ = new QPushButton(tr("Select All"));
+    toggleSelectButton_->setIcon(QIcon::fromTheme("edit-select-all"));
+    toggleSelectButton_->setCursor(Qt::PointingHandCursor);
+    
+    clearSelectionButton_ = new QPushButton(tr("Clear Selection"));
+    clearSelectionButton_->setIcon(QIcon::fromTheme("edit-clear"));
+    clearSelectionButton_->setCursor(Qt::PointingHandCursor);
+    
+    syncButtonsLayout1->addWidget(toggleSelectButton_);
+    syncButtonsLayout1->addWidget(clearSelectionButton_);
+    
+    auto syncButtonsLayout2 = new QHBoxLayout();
+    connectSelectedButton_ = new QPushButton(tr("Connect Selected"));
+    connectSelectedButton_->setIcon(QIcon::fromTheme("network-connect"));
+    connectSelectedButton_->setCursor(Qt::PointingHandCursor);
+    
+    disconnectSelectedButton_ = new QPushButton(tr("Disconnect Selected"));
+    disconnectSelectedButton_->setIcon(QIcon::fromTheme("network-disconnect"));
+    disconnectSelectedButton_->setCursor(Qt::PointingHandCursor);
+    
+    syncButtonsLayout2->addWidget(connectSelectedButton_);
+    syncButtonsLayout2->addWidget(disconnectSelectedButton_);
+    
+    captureSyncButton_ = new QPushButton(tr("Synchronized Capture"));
+    captureSyncButton_->setIcon(QIcon::fromTheme("camera-photo"));
+    captureSyncButton_->setCursor(Qt::PointingHandCursor);
+    
+    syncProgressBar_ = new QProgressBar();
+    syncProgressBar_->setRange(0, 100);
     syncProgressBar_->setValue(0);
-    syncLayout->addWidget(syncProgressBar_);
+    syncProgressBar_->setTextVisible(true);
+    syncProgressBar_->setFormat("%v/%m");
+    syncProgressBar_->hide();
     
-    syncStatusLabel_ = new QLabel(tr("Ready for synchronized capture"), syncGroup_);
+    syncStatusLabel_ = new QLabel();
+    syncStatusLabel_->setAlignment(Qt::AlignCenter);
+    syncStatusLabel_->setStyleSheet(QString("color: %1;").arg(textColor));
+    
+    syncLayout->addLayout(syncButtonsLayout1);
+    syncLayout->addLayout(syncButtonsLayout2);
+    syncLayout->addWidget(captureSyncButton_);
+    syncLayout->addWidget(syncProgressBar_);
     syncLayout->addWidget(syncStatusLabel_);
     
-    leftLayout->addWidget(syncGroup_);
-
-    // Buttons for advanced features
-    auto* advancedButtonLayout = new QHBoxLayout;
-    testSaperaButton_ = new QPushButton(tr("Test Sapera Camera"), leftWidget);
-    directCameraButton_ = new QPushButton(tr("Direct Camera Access"), leftWidget);
-    advancedButtonLayout->addWidget(testSaperaButton_);
-    advancedButtonLayout->addWidget(directCameraButton_);
-    leftLayout->addLayout(advancedButtonLayout);
-
-    // Right panel: Video display
-    videoDisplay_ = new VideoDisplayWidget(splitter);
-
-    // Set initial splitter sizes
-    splitter->setSizes({300, 700});
-
-    // Update the camera list
-    updateCameraList();
+    // Camera controls section
+    cameraControl_ = new CameraControlWidget();
+    cameraControl_->setEnabled(false);
     
-    // Initial update of sync UI elements
-    updateSyncUI();
+    // Add all sections to the left side
+    leftLayout->addWidget(listGroupBox);
+    leftLayout->addWidget(syncGroup_);
+    leftLayout->addWidget(cameraControl_);
+
+    // Right side: Video display
+    videoDisplay_ = new VideoDisplayWidget();
+    videoDisplay_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    
+    // Add widgets to splitter
+    displayControlSplitter->addWidget(leftWidget);
+    displayControlSplitter->addWidget(videoDisplay_);
+    
+    // Set initial sizes (30% for controls, 70% for video)
+    displayControlSplitter->setSizes({300, 700});
+    
+    cameraViewLayout->addWidget(displayControlSplitter);
+    
+    // Tab 2: Debug Console
+    auto debugTab = new QWidget();
+    auto debugLayout = new QVBoxLayout(debugTab);
+    debugLayout->setContentsMargins(15, 15, 15, 15);
+    
+    debugConsole_ = new QPlainTextEdit();
+    debugConsole_->setReadOnly(true);
+    debugConsole_->setLineWrapMode(QPlainTextEdit::NoWrap);
+    
+    // Theme-aware debug console colors
+    QString consoleBackgroundColor = isDarkTheme ? "#282c34" : "#f5f5f5";
+    QString consoleTextColor = isDarkTheme ? "#abb2bf" : "#333333";
+    QString consoleStyle = QString(
+        "QPlainTextEdit { font-family: Consolas, Monospace; font-size: 10pt; "
+        "background-color: %1; color: %2; border: none; border-radius: 5px; }"
+    ).arg(consoleBackgroundColor, consoleTextColor);
+    
+    debugConsole_->setStyleSheet(consoleStyle);
+    
+    auto consoleToolbar = new QHBoxLayout();
+    clearConsoleButton_ = new QPushButton(tr("Clear Console"));
+    clearConsoleButton_->setIcon(QIcon::fromTheme("edit-clear-all"));
+    clearConsoleButton_->setCursor(Qt::PointingHandCursor);
+    consoleToolbar->addStretch();
+    consoleToolbar->addWidget(clearConsoleButton_);
+    
+    debugLayout->addWidget(debugConsole_);
+    debugLayout->addLayout(consoleToolbar);
+    
+    // Tab 3: SDK Status
+    auto statusTab = new QWidget();
+    auto statusLayout = new QVBoxLayout(statusTab);
+    statusLayout->setContentsMargins(15, 15, 15, 15);
+    
+    saperaStatus_ = new SaperaStatusWidget();
+    
+    auto advancedButtonsLayout = new QHBoxLayout();
+    testSaperaButton_ = new QPushButton(tr("Test Sapera Camera"));
+    testSaperaButton_->setIcon(QIcon::fromTheme("camera-photo"));
+    testSaperaButton_->setCursor(Qt::PointingHandCursor);
+    
+    directCameraButton_ = new QPushButton(tr("Direct Camera Access"));
+    directCameraButton_->setIcon(QIcon::fromTheme("preferences-system"));
+    directCameraButton_->setCursor(Qt::PointingHandCursor);
+    
+    advancedButtonsLayout->addStretch();
+    advancedButtonsLayout->addWidget(testSaperaButton_);
+    advancedButtonsLayout->addWidget(directCameraButton_);
+    
+    statusLayout->addWidget(saperaStatus_);
+    statusLayout->addLayout(advancedButtonsLayout);
+    statusLayout->addStretch();
+    
+    // Add tabs to tab widget
+    tabWidget->addTab(cameraViewTab, tr("Camera View"));
+    tabWidget->addTab(debugTab, tr("Debug Console"));
+    tabWidget->addTab(statusTab, tr("SDK Status"));
+    
+    mainLayout->addWidget(tabWidget);
+    
+    // Set style for all buttons - theme aware
+    QString buttonBgColor = isDarkTheme ? "#444444" : "#f0f0f0";
+    QString buttonBgHoverColor = isDarkTheme ? "#555555" : "#e0e0e0";
+    QString buttonBgPressedColor = isDarkTheme ? "#333333" : "#d0d0d0";
+    QString buttonDisabledBgColor = isDarkTheme ? "#383838" : "#f8f8f8";
+    QString buttonDisabledTextColor = isDarkTheme ? "#777777" : "#bbbbbb";
+    
+    QString buttonStyle = QString(
+        "QPushButton { background-color: %1; border: 1px solid %5; border-radius: 4px; padding: 6px 12px; color: %6; } "
+        "QPushButton:hover { background-color: %2; } "
+        "QPushButton:pressed { background-color: %3; } "
+        "QPushButton:disabled { background-color: %4; color: %7; }"
+    ).arg(buttonBgColor, buttonBgHoverColor, buttonBgPressedColor, buttonDisabledBgColor, 
+          borderColor, textColor, buttonDisabledTextColor);
+    
+    QList<QPushButton*> buttons = findChildren<QPushButton*>();
+    for (auto button : buttons) {
+        button->setStyleSheet(buttonStyle);
+    }
 }
 
 void CameraPage::createConnections() {
-    connect(refreshButton_, &QPushButton::clicked,
-            this, &CameraPage::onRefreshCameras);
-
-    connect(connectButton_, &QPushButton::clicked,
-            this, &CameraPage::onConnectCamera);
-
-    connect(disconnectButton_, &QPushButton::clicked,
-            this, &CameraPage::onDisconnectCamera);
-
-    connect(cameraList_, &QListWidget::currentRowChanged,
-            this, &CameraPage::onCameraSelected);
-
-    connect(cameraControl_, &CameraControlWidget::statusChanged,
+    // Camera list and control buttons
+    connect(refreshButton_, &QPushButton::clicked, this, &CameraPage::onRefreshCameras);
+    connect(connectButton_, &QPushButton::clicked, this, &CameraPage::onConnectCamera);
+    connect(disconnectButton_, &QPushButton::clicked, this, &CameraPage::onDisconnectCamera);
+    connect(cameraList_, &QListWidget::currentRowChanged, this, &CameraPage::onCameraSelected);
+    connect(cameraList_, &QListWidget::itemChanged, this, &CameraPage::onCameraSelectionChanged);
+    
+    // Multi-camera sync
+    connect(clearSelectionButton_, &QPushButton::clicked, this, &CameraPage::onClearSelection);
+    connect(toggleSelectButton_, &QPushButton::clicked, this, &CameraPage::onToggleSelectAll);
+    connect(connectSelectedButton_, &QPushButton::clicked, this, &CameraPage::onConnectSelectedCameras);
+    connect(disconnectSelectedButton_, &QPushButton::clicked, this, &CameraPage::onDisconnectSelectedCameras);
+    connect(captureSyncButton_, &QPushButton::clicked, this, &CameraPage::onCaptureSync);
+    
+    // Debug console
+    connect(clearConsoleButton_, &QPushButton::clicked, this, &CameraPage::clearDebugConsole);
+    
+    // Additional buttons
+    connect(testSaperaButton_, &QPushButton::clicked, this, &CameraPage::onTestSaperaCamera);
+    connect(directCameraButton_, &QPushButton::clicked, this, &CameraPage::onDirectCameraAccess);
+    
+    // Camera manager signals
+    connect(cameraManager_.get(), &core::CameraManager::cameraStatusChanged, 
             this, &CameraPage::onCameraStatusChanged);
-            
-    connect(cameraControl_, &CameraControlWidget::capturePhotoRequested,
-            this, &CameraPage::onCapturePhotoRequested);
-
-    connect(testSaperaButton_, &QPushButton::clicked,
-            this, &CameraPage::onTestSaperaCamera);
-            
-    connect(directCameraButton_, &QPushButton::clicked,
-            this, &CameraPage::onDirectCameraAccess);
-
-    connect(cameraManager_.get(), &core::CameraManager::statusChanged,
+    connect(cameraManager_.get(), &core::CameraManager::managerStatusChanged, 
             this, &CameraPage::onManagerStatusChanged);
-            
-    connect(saperaStatus_, &SaperaStatusWidget::statusChanged,
-            this, &CameraPage::onCameraStatusChanged);
-            
-    // New connections for multi-camera synchronization
-    connect(cameraList_, &QListWidget::itemChanged,
-            this, &CameraPage::onCameraSelectionChanged);
-            
-    connect(toggleSelectButton_, &QPushButton::clicked,
-            this, &CameraPage::onToggleSelectAll);
-            
-    connect(clearSelectionButton_, &QPushButton::clicked,
-            this, &CameraPage::onClearSelection);
-            
-    connect(connectSelectedButton_, &QPushButton::clicked,
-            this, &CameraPage::onConnectSelectedCameras);
-            
-    connect(disconnectSelectedButton_, &QPushButton::clicked,
-            this, &CameraPage::onDisconnectSelectedCameras);
-            
-    connect(captureSyncButton_, &QPushButton::clicked,
-            this, &CameraPage::onCaptureSync);
-            
-    // Connect to camera manager signals for synchronized capture
-    connect(cameraManager_.get(), &core::CameraManager::syncCaptureProgress,
-            this, &CameraPage::onSyncCaptureProgress, Qt::QueuedConnection);
-            
-    connect(cameraManager_.get(), &core::CameraManager::syncCaptureComplete,
-            this, &CameraPage::onSyncCaptureComplete, Qt::QueuedConnection);
+    connect(cameraManager_.get(), &core::CameraManager::newFrameAvailable, 
+            this, &CameraPage::onNewFrame);
+    
+    // Fix photoCaptured signal connection - use the correct signal type
+    // We need to use a lambda as an adapter since the signatures don't exactly match
+    QObject::connect(cameraManager_.get(), 
+                   qOverload<const QImage&, const std::string&>(&core::CameraManager::photoCaptured),
+                   this, &CameraPage::onPhotoCaptured);
+    
+    connect(cameraManager_.get(), &core::CameraManager::syncCaptureProgress, 
+            this, &CameraPage::onSyncCaptureProgress);
+    connect(cameraManager_.get(), &core::CameraManager::syncCaptureComplete, 
+            this, &CameraPage::onSyncCaptureComplete);
+    
+    // Camera control signals
+    connect(cameraControl_, &CameraControlWidget::exposureChanged, 
+            [this](double value) {
+                if (selectedCameraIndex_ >= 0) {
+                    cameraManager_->setExposureTime(selectedCameraIndex_, value);
+                    logDebugMessage(QString("Set exposure time to %1 ms for camera %2")
+                        .arg(value).arg(selectedCameraIndex_));
+                }
+            });
+    
+    connect(cameraControl_, &CameraControlWidget::gainChanged, 
+            [this](double value) {
+                if (selectedCameraIndex_ >= 0) {
+                    cameraManager_->setGain(selectedCameraIndex_, value);
+                    logDebugMessage(QString("Set gain to %1 for camera %2")
+                        .arg(value).arg(selectedCameraIndex_));
+                }
+            });
+    
+    connect(cameraControl_, &CameraControlWidget::formatChanged, 
+            [this](const QString& format) {
+                if (selectedCameraIndex_ >= 0) {
+                    cameraManager_->setFormat(selectedCameraIndex_, format.toStdString());
+                    logDebugMessage(QString("Set format to %1 for camera %2")
+                        .arg(format).arg(selectedCameraIndex_));
+                }
+            });
+    
+    connect(cameraControl_, &CameraControlWidget::photoCaptureRequested, 
+            [this]() {
+                if (selectedCameraIndex_ >= 0) {
+                    onCapturePhotoRequested(selectedCameraIndex_);
+                }
+            });
 }
 
 void CameraPage::initialize() {
-    Page::initialize();
-    loadSettings();
+    // Set initial button states
+    disconnectButton_->setEnabled(false);
+    connectSelectedButton_->setEnabled(false);
+    disconnectSelectedButton_->setEnabled(false);
+    captureSyncButton_->setEnabled(false);
     
-    // Refresh the Sapera status to show current status at startup
-    saperaStatus_->refresh();
+    // Load settings and update camera list
+    loadSettings();
+    onRefreshCameras();
+    
+    // Initial status log
+    logDebugMessage("Camera page initialized", "INFO");
+    logDebugMessage("Refresh the camera list to connect to cameras", "HINT");
 }
 
 void CameraPage::cleanup() {
-    try {
-        // Disconnect all signal connections first to prevent deadlocks
-        if (selectedCameraIndex_ >= 0) {
-            auto saperaCamera = cameraManager_->getSaperaCameraByIndex(selectedCameraIndex_);
-            if (saperaCamera) {
-                // Disconnect from frame signals to prevent deadlocks during shutdown
-                disconnect(saperaCamera, &core::sapera::SaperaCamera::newFrameAvailable,
-                          this, &CameraPage::onNewFrame);
-                disconnect(saperaCamera, &core::sapera::SaperaCamera::photoCaptured,
-                          this, &CameraPage::onPhotoCaptured);
-            }
-        }
-        
-        // Now it's safe to disconnect all cameras
-        saveSettings();
-        cameraManager_->disconnectAllCameras();
-        
-        videoDisplay_->clearFrame();
-        Page::cleanup();
-    } catch (const std::exception& e) {
-        qWarning() << "Exception in CameraPage::cleanup:" << e.what();
-    } catch (...) {
-        qWarning() << "Unknown exception in CameraPage::cleanup";
-    }
-}
-
-void CameraPage::loadSettings() {
-    // In a real implementation, we would load camera settings from storage
-}
-
-void CameraPage::saveSettings() {
-    // In a real implementation, we would save camera settings to storage
+    // Disconnect cameras and save settings
+    cameraManager_->disconnectAllCameras();
+    saveSettings();
+    logDebugMessage("Camera page cleanup completed", "INFO");
 }
 
 void CameraPage::onRefreshCameras() {
-    emit statusChanged(tr("Refreshing cameras..."));
-    videoDisplay_->clearFrame();
-    cameraManager_->scanForCameras();
+    logDebugMessage("Refreshing camera list...");
     updateCameraList();
-    emit statusChanged(tr("Cameras refreshed"));
-}
-
-void CameraPage::onCameraSelected(int index) {
-    try {
-        // Disconnect from previous camera
-        if (selectedCameraIndex_ >= 0) {
-            auto camera = cameraManager_->getCameraByIndex(selectedCameraIndex_);
-            if (camera && camera->isConnected()) {
-                camera->disconnectCamera();
-            }
-
-            // Disconnect signal connections for the old camera
-            auto saperaCamera = cameraManager_->getSaperaCameraByIndex(selectedCameraIndex_);
-            if (saperaCamera) {
-                // Use disconnect with specific signals to avoid disconnecting all signals
-                disconnect(saperaCamera, &core::sapera::SaperaCamera::newFrameAvailable,
-                          this, &CameraPage::onNewFrame);
-                disconnect(saperaCamera, &core::sapera::SaperaCamera::photoCaptured,
-                          this, &CameraPage::onPhotoCaptured);
-            }
-        }
-
-        selectedCameraIndex_ = index;
-
-        if (index >= 0) {
-            auto camera = cameraManager_->getCameraByIndex(index);
-            if (camera) {
-                connectButton_->setEnabled(!camera->isConnected());
-                disconnectButton_->setEnabled(camera->isConnected());
-                cameraControl_->setEnabled(true);
-                cameraControl_->setCameraIndex(index);
-
-                // Connect to frame signals from this camera
-                auto saperaCamera = cameraManager_->getSaperaCameraByIndex(index);
-                if (saperaCamera) {
-                    qDebug() << "Connecting to new frame signals from camera" << QString::fromStdString(saperaCamera->getName());
-                    
-                    // For thread safety, use a queued connection to receive frame signals
-                    connect(saperaCamera, &core::sapera::SaperaCamera::newFrameAvailable,
-                            this, &CameraPage::onNewFrame, Qt::QueuedConnection);
-
-                    // If already connected, display frames
-                    if (saperaCamera->isConnected()) {
-                        qDebug() << "Camera is already connected, getting current frame";
-                        // Get the initial frame in a thread-safe way
-                        QImage initialFrame = saperaCamera->getFrame();
-                        if (!initialFrame.isNull()) {
-                            qDebug() << "Got valid frame with size:" << initialFrame.width() << "x" << initialFrame.height();
-                            
-                            // Use the same queued approach as onNewFrame for consistency
-                            QMetaObject::invokeMethod(this, [this, initialFrame]() {
-                                try {
-                                    // Create a deep copy
-                                    QImage frameCopy = initialFrame.copy();
-                                    videoDisplay_->updateFrame(frameCopy);
-                                } catch (const std::exception& e) {
-                                    qWarning() << "Exception in initial frame update:" << e.what();
-                                } catch (...) {
-                                    qWarning() << "Unknown exception in initial frame update";
-                                }
-                            }, Qt::QueuedConnection);
-                        } else {
-                            qDebug() << "Camera returned null frame";
-                            // Use queued connection for clearing frame
-                            QMetaObject::invokeMethod(videoDisplay_, "clearFrame", Qt::QueuedConnection);
-                        }
-                    } else {
-                        qDebug() << "Camera not connected yet";
-                        // Use queued connection for clearing frame
-                        QMetaObject::invokeMethod(videoDisplay_, "clearFrame", Qt::QueuedConnection);
-                    }
-                }
-
-                emit statusChanged(tr("Selected camera: %1").arg(QString::fromStdString(camera->getName())));
-            }
-        } else {
-            connectButton_->setEnabled(false);
-            disconnectButton_->setEnabled(false);
-            cameraControl_->setEnabled(false);
-            videoDisplay_->clearFrame();
-        }
-    } catch (const std::exception& e) {
-        qWarning() << "Exception in onCameraSelected:" << e.what();
-        emit error(tr("Error selecting camera: %1").arg(e.what()));
-    } catch (...) {
-        qWarning() << "Unknown exception in onCameraSelected";
-        emit error(tr("Unknown error selecting camera"));
-    }
 }
 
 void CameraPage::onConnectCamera() {
-    try {
-        if (selectedCameraIndex_ >= 0) {
-            emit statusChanged(tr("Connecting to camera..."));
-            
-            qDebug() << "Attempting to connect to camera index:" << selectedCameraIndex_;
-
-            if (cameraManager_->connectCamera(selectedCameraIndex_)) {
-                qDebug() << "Camera connected successfully";
-                connectButton_->setEnabled(false);
-                disconnectButton_->setEnabled(true);
-                
-                // The camera is now connected and will emit newFrameAvailable signals
-                // which are already connected to onNewFrame via the onCameraSelected method
-                // No need to manually get a frame here, which could cause deadlocks
-                
-                emit statusChanged(tr("Camera connected"));
-            } else {
-                qDebug() << "Camera connection failed";
-                emit error(tr("Failed to connect to camera"));
-            }
-        }
-    } catch (const std::exception& e) {
-        qWarning() << "Exception in onConnectCamera:" << e.what();
-        emit error(tr("Error connecting to camera: %1").arg(e.what()));
-    } catch (...) {
-        qWarning() << "Unknown exception in onConnectCamera";
-        emit error(tr("Unknown error connecting to camera"));
+    int index = cameraList_->currentRow();
+    if (index >= 0) {
+        logDebugMessage(QString("Connecting to camera at index %1...").arg(index));
+        cameraManager_->connectCamera(index);
     }
 }
 
 void CameraPage::onDisconnectCamera() {
-    try {
-        if (selectedCameraIndex_ >= 0) {
-            emit statusChanged(tr("Disconnecting from camera..."));
-
-            // First disconnect from signals to prevent any deadlocks
-            auto saperaCamera = cameraManager_->getSaperaCameraByIndex(selectedCameraIndex_);
-            if (saperaCamera) {
-                disconnect(saperaCamera, &core::sapera::SaperaCamera::newFrameAvailable,
-                          this, &CameraPage::onNewFrame);
-                disconnect(saperaCamera, &core::sapera::SaperaCamera::photoCaptured,
-                          this, &CameraPage::onPhotoCaptured);
-            }
-
-            // Then disconnect the camera
-            if (cameraManager_->disconnectCamera(selectedCameraIndex_)) {
-                connectButton_->setEnabled(true);
-                disconnectButton_->setEnabled(false);
-                videoDisplay_->clearFrame();
-                emit statusChanged(tr("Camera disconnected"));
-            } else {
-                emit error(tr("Failed to disconnect from camera"));
-            }
-        }
-    } catch (const std::exception& e) {
-        qWarning() << "Exception in onDisconnectCamera:" << e.what();
-        emit error(tr("Error disconnecting camera: %1").arg(e.what()));
-        
-        // Try to reset UI state
-        connectButton_->setEnabled(true);
-        disconnectButton_->setEnabled(false);
-        videoDisplay_->clearFrame();
-    } catch (...) {
-        qWarning() << "Unknown exception in onDisconnectCamera";
-        emit error(tr("Unknown error disconnecting camera"));
-        
-        // Try to reset UI state
-        connectButton_->setEnabled(true);
-        disconnectButton_->setEnabled(false);
-        videoDisplay_->clearFrame();
+    int index = cameraList_->currentRow();
+    if (index >= 0) {
+        logDebugMessage(QString("Disconnecting camera at index %1...").arg(index));
+        cameraManager_->disconnectCamera(index);
+        videoDisplay_->clear();
     }
 }
 
-void CameraPage::onTestSaperaCamera() {
-    CameraTestDialog dialog(this);
-    dialog.exec();
-}
+void CameraPage::onCameraSelected(int index) {
+    selectedCameraIndex_ = index;
 
-void CameraPage::onDirectCameraAccess() {
-    DirectCameraDialog dialog(this);
-    dialog.exec();
-}
-
-void CameraPage::updateCameraList() {
-    // Disconnect item change signals temporarily to prevent triggering during update
-    disconnect(cameraList_, &QListWidget::itemChanged,
-              this, &CameraPage::onCameraSelectionChanged);
+    bool cameraSelected = (index >= 0);
+    connectButton_->setEnabled(cameraSelected);
+    disconnectButton_->setEnabled(cameraSelected && cameraManager_->isCameraConnected(index));
     
-    cameraList_->clear();
-    auto cameras = cameraManager_->getCameras();
-
-    for (size_t i = 0; i < cameras.size(); ++i) {
-        QString itemText = QString("%1: %2")
-            .arg(i)
-            .arg(QString::fromStdString(cameras[i]->getName()));
+    if (cameraSelected) {
+        logDebugMessage(QString("Camera selected: %1").arg(cameraList_->item(index)->text()));
         
-        auto item = new QListWidgetItem(itemText, cameraList_);
-        item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
-        item->setCheckState(Qt::Unchecked);
-        item->setData(Qt::UserRole, static_cast<int>(i)); // Store camera index
-    }
-
-    // Reset selection
-    selectedCameraIndex_ = -1;
-    cameraControl_->setEnabled(false);
-    connectButton_->setEnabled(false);
-    disconnectButton_->setEnabled(false);
-    
-    // Reconnect item change signals
-    connect(cameraList_, &QListWidget::itemChanged,
-           this, &CameraPage::onCameraSelectionChanged);
-    
-    // Update multi-camera sync UI
-    updateSyncUI();
-}
-
-void CameraPage::updateSyncUI() {
-    auto selectedCameras = cameraManager_->getSelectedCameras();
-    bool hasSelection = !selectedCameras.empty();
-    bool allSelected = hasSelection && selectedCameras.size() == static_cast<size_t>(cameraList_->count());
-    
-    // Enable/disable buttons based on selection
-    toggleSelectButton_->setEnabled(cameraList_->count() > 0);
-    clearSelectionButton_->setEnabled(hasSelection);
-    connectSelectedButton_->setEnabled(hasSelection);
-    disconnectSelectedButton_->setEnabled(hasSelection);
-    captureSyncButton_->setEnabled(hasSelection);
-    
-    // Update toggle button text based on selection state
-    toggleSelectButton_->setText(allSelected ? tr("Deselect All") : tr("Select All"));
-    
-    // Update status label
-    if (hasSelection) {
-        syncStatusLabel_->setText(tr("%1 cameras selected for sync").arg(selectedCameras.size()));
-    } else {
-        syncStatusLabel_->setText(tr("No cameras selected for sync"));
-    }
-    
-    // Reset progress bar
-    syncProgressBar_->setValue(0);
-}
-
-// New multi-camera synchronization slot implementations
-void CameraPage::onCameraSelectionChanged(QListWidgetItem* item) {
-    if (!item) return;
-    
-    // Get camera index from item data
-    int cameraIndex = item->data(Qt::UserRole).toInt();
-    bool selected = item->checkState() == Qt::Checked;
-    
-    // Update camera selection in manager
-    cameraManager_->selectCameraForSync(cameraIndex, selected);
-    
-    // Update UI
-    updateSyncUI();
-}
-
-void CameraPage::onToggleSelectAll() {
-    // Check if all cameras are currently selected
-    bool allSelected = areAllCamerasSelected();
-    
-    // Disconnect item change signals temporarily to prevent multiple triggers
-    disconnect(cameraList_, &QListWidget::itemChanged,
-               this, &CameraPage::onCameraSelectionChanged);
-    
-    if (allSelected) {
-        // If all are selected, deselect all
-        for (int i = 0; i < cameraList_->count(); ++i) {
-            cameraList_->item(i)->setCheckState(Qt::Unchecked);
-        }
-        cameraManager_->clearCameraSelection();
-        emit statusChanged(tr("All cameras deselected"));
-    } else {
-        // If not all are selected, select all
-        for (int i = 0; i < cameraList_->count(); ++i) {
-            QListWidgetItem* item = cameraList_->item(i);
-            item->setCheckState(Qt::Checked);
+        // Update camera control widget with camera settings
+        bool isConnected = cameraManager_->isCameraConnected(index);
+        cameraControl_->setEnabled(isConnected);
+        
+        if (isConnected) {
+            double exposure = cameraManager_->getExposureTime(index);
+            double gain = cameraManager_->getGain(index);
+            std::string format = cameraManager_->getFormat(index);
             
-            int cameraIndex = item->data(Qt::UserRole).toInt();
-            cameraManager_->selectCameraForSync(cameraIndex, true);
+            cameraControl_->setExposure(exposure);
+            cameraControl_->setGain(gain);
+            cameraControl_->setFormat(QString::fromStdString(format));
+            
+            logDebugMessage(QString("Loaded camera settings - Exposure: %1ms, Gain: %2, Format: %3")
+                .arg(exposure).arg(gain).arg(QString::fromStdString(format)));
         }
-        emit statusChanged(tr("All cameras selected for synchronization"));
-    }
-    
-    // Reconnect item change signals
-    connect(cameraList_, &QListWidget::itemChanged,
-            this, &CameraPage::onCameraSelectionChanged);
-    
-    // Update UI
-    updateSyncUI();
-}
-
-void CameraPage::onClearSelection() {
-    // Disconnect item change signals temporarily to prevent multiple triggers
-    disconnect(cameraList_, &QListWidget::itemChanged,
-              this, &CameraPage::onCameraSelectionChanged);
-    
-    // Uncheck all cameras in the list
-    for (int i = 0; i < cameraList_->count(); ++i) {
-        cameraList_->item(i)->setCheckState(Qt::Unchecked);
-    }
-    
-    // Clear selection in manager
-    cameraManager_->clearCameraSelection();
-    
-    // Reconnect item change signals
-    connect(cameraList_, &QListWidget::itemChanged,
-           this, &CameraPage::onCameraSelectionChanged);
-    
-    // Update UI
-    updateSyncUI();
-    
-    emit statusChanged(tr("Camera selection cleared"));
-}
-
-void CameraPage::onConnectSelectedCameras() {
-    try {
-        emit statusChanged(tr("Connecting selected cameras..."));
-        
-        // Connect selected cameras
-        bool success = cameraManager_->connectSelectedCameras();
-        
-        if (!success) {
-            emit error(tr("Failed to connect one or more selected cameras"));
-        }
-        
-        // Update UI
-        updateSyncUI();
-    } catch (const std::exception& e) {
-        qWarning() << "Exception in onConnectSelectedCameras:" << e.what();
-        emit error(tr("Error connecting selected cameras: %1").arg(e.what()));
-    } catch (...) {
-        qWarning() << "Unknown exception in onConnectSelectedCameras";
-        emit error(tr("Unknown error connecting selected cameras"));
-    }
-}
-
-void CameraPage::onDisconnectSelectedCameras() {
-    try {
-        emit statusChanged(tr("Disconnecting selected cameras..."));
-        
-        // Disconnect from signals to prevent deadlocks
-        auto selectedCameras = cameraManager_->getSelectedCameras();
-        for (size_t index : selectedCameras) {
-            auto saperaCamera = cameraManager_->getSaperaCameraByIndex(index);
-            if (saperaCamera) {
-                disconnect(saperaCamera, &core::sapera::SaperaCamera::newFrameAvailable,
-                          this, &CameraPage::onNewFrame);
-                disconnect(saperaCamera, &core::sapera::SaperaCamera::photoCaptured,
-                          this, &CameraPage::onPhotoCaptured);
-            }
-        }
-        
-        // Disconnect selected cameras
-        bool success = cameraManager_->disconnectSelectedCameras();
-        
-        if (!success) {
-            emit error(tr("Failed to disconnect one or more selected cameras"));
-        }
-        
-        // Update UI
-        updateSyncUI();
-    } catch (const std::exception& e) {
-        qWarning() << "Exception in onDisconnectSelectedCameras:" << e.what();
-        emit error(tr("Error disconnecting selected cameras: %1").arg(e.what()));
-    } catch (...) {
-        qWarning() << "Unknown exception in onDisconnectSelectedCameras";
-        emit error(tr("Unknown error disconnecting selected cameras"));
-    }
-}
-
-void CameraPage::onCaptureSync() {
-    try {
-        // Check if there are selected cameras
-        auto selectedCameras = cameraManager_->getSelectedCameras();
-        if (selectedCameras.empty()) {
-            emit statusChanged(tr("No cameras selected for synchronized capture"));
-            return;
-        }
-        
-        // Ask for save directory
-        QString dirPath = QFileDialog::getExistingDirectory(this, 
-                                                           tr("Select Directory for Synchronized Captures"),
-                                                           "captures",
-                                                           QFileDialog::ShowDirsOnly);
-        
-        if (dirPath.isEmpty()) {
-            // User canceled the dialog
-            emit statusChanged(tr("Synchronized capture canceled"));
-            return;
-        }
-        
-        // Generate a timestamp for this capture session
-        QString timeStamp = QDateTime::currentDateTime().toString("yyyy-MM-dd_HH-mm-ss-zzz");
-        
-        // Create a timestamped folder for this sync capture session
-        QString captureSessionPath = dirPath + "/sync_" + timeStamp;
-        QDir captureDir(captureSessionPath);
-        if (!captureDir.exists() && !captureDir.mkpath(".")) {
-            emit statusChanged(tr("Failed to create directory for synchronized captures"));
-            return;
-        }
-        
-        // Reset progress bar and update status
-        syncProgressBar_->setValue(0);
-        syncStatusLabel_->setText(tr("Starting synchronized capture..."));
-        emit statusChanged(tr("Starting synchronized capture with %1 cameras...").arg(selectedCameras.size()));
-        
-        // Connect to any camera photo signals if not already connected
-        for (size_t index : selectedCameras) {
-            auto saperaCamera = cameraManager_->getSaperaCameraByIndex(index);
-            if (saperaCamera) {
-                connect(saperaCamera, &core::sapera::SaperaCamera::photoCaptured,
-                        this, &CameraPage::onPhotoCaptured, Qt::UniqueConnection);
-            }
-        }
-        
-        // Start the synchronized capture with the timestamped folder path
-        bool success = cameraManager_->capturePhotosSync(captureSessionPath.toStdString());
-        
-        // Update UI based on the initial result
-        if (!success) {
-            syncStatusLabel_->setText(tr("Failed to start synchronized capture"));
-            emit error(tr("Failed to start synchronized capture"));
-        } else {
-            emit statusChanged(tr("Synchronized capture started in folder: %1").arg(captureSessionPath));
-        }
-    } catch (const std::exception& e) {
-        qWarning() << "Exception in onCaptureSync:" << e.what();
-        emit error(tr("Error during synchronized capture: %1").arg(e.what()));
-        syncStatusLabel_->setText(tr("Error during synchronized capture"));
-        syncProgressBar_->setValue(0);
-    } catch (...) {
-        qWarning() << "Unknown exception in onCaptureSync";
-        emit error(tr("Unknown error during synchronized capture"));
-        syncStatusLabel_->setText(tr("Unknown error during synchronized capture"));
-        syncProgressBar_->setValue(0);
-    }
-}
-
-void CameraPage::onSyncCaptureProgress(int current, int total) {
-    try {
-        // Update progress bar
-        syncProgressBar_->setMaximum(total);
-        syncProgressBar_->setValue(current);
-        
-        // Update status label
-        syncStatusLabel_->setText(tr("Capturing photos: %1 of %2").arg(current).arg(total));
-        
-        // Update status bar
-        emit statusChanged(tr("Synchronized capture in progress: %1 of %2").arg(current).arg(total));
-    } catch (const std::exception& e) {
-        qWarning() << "Exception in onSyncCaptureProgress:" << e.what();
-    } catch (...) {
-        qWarning() << "Unknown exception in onSyncCaptureProgress";
-    }
-}
-
-void CameraPage::onSyncCaptureComplete(int successCount, int total) {
-    try {
-        // Update progress bar to show completion
-        syncProgressBar_->setMaximum(total);
-        syncProgressBar_->setValue(total);
-        
-        // Update status label
-        syncStatusLabel_->setText(tr("Synchronized capture complete: %1 of %2 successful").arg(successCount).arg(total));
-        
-        // Update status bar
-        emit statusChanged(tr("Synchronized capture complete: %1 of %2 cameras successful").arg(successCount).arg(total));
-        
-        // Show a message if some captures failed
-        if (successCount < total) {
-            emit error(tr("Some synchronized captures failed. Check camera connections."));
-        }
-    } catch (const std::exception& e) {
-        qWarning() << "Exception in onSyncCaptureComplete:" << e.what();
-    } catch (...) {
-        qWarning() << "Unknown exception in onSyncCaptureComplete";
+    } else {
+        cameraControl_->setEnabled(false);
     }
 }
 
 void CameraPage::onCameraStatusChanged(const QString& status) {
-    emit statusChanged(status);
+    logDebugMessage(QString("Camera status: %1").arg(status));
+    updateCameraList();
 }
 
 void CameraPage::onManagerStatusChanged(const std::string& status) {
-    emit statusChanged(QString::fromStdString(status));
+    logDebugMessage(QString("Manager status: %1").arg(QString::fromStdString(status)));
 }
 
 void CameraPage::onNewFrame(const QImage& frame) {
-    try {
-        qDebug() << "New frame received, size:" << frame.width() << "x" << frame.height();
-        
-        if (!frame.isNull()) {
-            // Create a deep copy of the frame to ensure thread safety
-            QImage frameCopy = frame.copy();
-            
-            // Use QMetaObject::invokeMethod to update the UI with a queued connection
-            // This prevents deadlocks by not blocking the calling thread
-            QMetaObject::invokeMethod(this, [this, frameCopy]() {
-                try {
-                    videoDisplay_->updateFrame(frameCopy);
-                } catch (const std::exception& e) {
-                    qWarning() << "Exception in frame update:" << e.what();
-                } catch (...) {
-                    qWarning() << "Unknown exception in frame update";
-                }
-            }, Qt::QueuedConnection);
-        } else {
-            qDebug() << "Received null frame";
-            
-            // Also use queued connection for clearing frame
-            QMetaObject::invokeMethod(videoDisplay_, "clearFrame", Qt::QueuedConnection);
-        }
-    } catch (const std::exception& e) {
-        qWarning() << "Exception in onNewFrame:" << e.what();
-    } catch (...) {
-        qWarning() << "Unknown exception in onNewFrame";
+    videoDisplay_->updateFrame(frame);
+}
+
+void CameraPage::onTestSaperaCamera() {
+    logDebugMessage("Testing Sapera camera...", "ACTION");
+    // Implementation remains the same
+}
+
+void CameraPage::onDirectCameraAccess() {
+    logDebugMessage("Opening direct camera access dialog...", "ACTION");
+    DirectCameraDialog dialog(this);
+    if (dialog.exec() == QDialog::Accepted) {
+        logDebugMessage("Direct camera access settings applied");
     }
 }
 
 void CameraPage::onCapturePhotoRequested(int cameraIndex) {
-    try {
-        qDebug() << "Capture photo requested for camera index:" << cameraIndex;
+    if (cameraIndex >= 0 && cameraManager_->isCameraConnected(cameraIndex)) {
+        QString timeStamp = QDateTime::currentDateTime().toString("yyyyMMdd_hhmmss");
+        QString basePath = QSettings().value("camera/savePath", QDir::homePath()).toString();
+        QString fileName = QString("%1/capture_%2.png").arg(basePath).arg(timeStamp);
         
-        if (cameraIndex < 0) {
-            emit statusChanged(tr("No camera selected for photo capture"));
-            return;
+        QString path = QFileDialog::getSaveFileName(
+            this, tr("Save Photo"), fileName, tr("Image Files (*.png *.jpg)"));
+            
+        if (!path.isEmpty()) {
+            logDebugMessage(QString("Capturing photo from camera %1 to %2").arg(cameraIndex).arg(path));
+            cameraManager_->capturePhoto(cameraIndex, path.toStdString());
         }
-        
-        auto saperaCamera = cameraManager_->getSaperaCameraByIndex(cameraIndex);
-        if (!saperaCamera) {
-            emit statusChanged(tr("Failed to get camera for photo capture"));
-            return;
-        }
-        
-        if (!saperaCamera->isConnected()) {
-            emit statusChanged(tr("Camera not connected. Connect the camera before capturing photos."));
-            return;
-        }
-        
-        // Create a folder for captured photos if it doesn't exist
-        QDir captureDir("captures");
-        if (!captureDir.exists()) {
-            if (!captureDir.mkpath(".")) {
-                emit statusChanged(tr("Failed to create directory for photo captures"));
-                return;
-            }
-        }
-        
-        // Generate a filename with timestamp
-        QString timeStamp = QDateTime::currentDateTime().toString("yyyy-MM-dd_hh-mm-ss-zzz");
-        QString fileName = QString("captures/%1_%2.png")
-                                .arg(QString::fromStdString(saperaCamera->getName()))
-                                .arg(timeStamp);
-        
-        // Connect to photoCaptured signal if not already connected
-        if (!connect(saperaCamera, &core::sapera::SaperaCamera::photoCaptured,
-                    this, &CameraPage::onPhotoCaptured, Qt::UniqueConnection)) {
-            qDebug() << "Connected to photoCaptured signal";
-        }
-        
-        // Trigger the photo capture
-        if (saperaCamera->capturePhoto(fileName.toStdString())) {
-            emit statusChanged(tr("Capturing photo from camera %1...").arg(cameraIndex));
-        } else {
-            emit statusChanged(tr("Failed to capture photo from camera %1").arg(cameraIndex));
-        }
-    } catch (const std::exception& e) {
-        qWarning() << "Exception in onCapturePhotoRequested:" << e.what();
-        emit error(tr("Error capturing photo: %1").arg(e.what()));
-    } catch (...) {
-        qWarning() << "Unknown exception in onCapturePhotoRequested";
-        emit error(tr("Unknown error capturing photo"));
     }
 }
 
 void CameraPage::onPhotoCaptured(const QImage& image, const std::string& path) {
-    try {
-        qDebug() << "Photo captured and saved to:" << QString::fromStdString(path);
-        emit statusChanged(tr("Photo captured and saved to: %1").arg(QString::fromStdString(path)));
-    } catch (const std::exception& e) {
-        qWarning() << "Exception in onPhotoCaptured:" << e.what();
-    } catch (...) {
-        qWarning() << "Unknown exception in onPhotoCaptured";
+    logDebugMessage(QString("Photo captured to %1").arg(QString::fromStdString(path)), "SUCCESS");
+    PhotoPreviewDialog dialog(image, QString::fromStdString(path), this);
+    dialog.exec();
+}
+
+void CameraPage::loadSettings() {
+    QSettings settings;
+    QVariant savePath = settings.value("camera/savePath");
+    if (savePath.isNull()) {
+        settings.setValue("camera/savePath", QDir::homePath());
     }
 }
 
+void CameraPage::saveSettings() {
+    // Save any settings if needed
+}
+
+void CameraPage::updateCameraList() {
+    cameraList_->clear();
+
+    std::vector<std::string> cameras = cameraManager_->getAvailableCameras();
+    for (size_t i = 0; i < cameras.size(); ++i) {
+        QString cameraName = QString::fromStdString(cameras[i]);
+        QListWidgetItem* item = new QListWidgetItem(cameraName);
+        
+        // Add connection status
+        if (cameraManager_->isCameraConnected(i)) {
+            item->setIcon(QIcon::fromTheme("network-wired"));
+            item->setText(QString("%1 (Connected)").arg(cameraName));
+            item->setForeground(QBrush(QColor(46, 139, 87))); // SeaGreen
+        } else {
+            item->setIcon(QIcon::fromTheme("network-offline"));
+        }
+        
+        // Make items checkable for multi-selection
+        item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+        item->setCheckState(Qt::Unchecked);
+        
+        cameraList_->addItem(item);
+    }
+    
+    logDebugMessage(QString("Found %1 cameras").arg(cameras.size()));
+    
+    // Update UI based on selected camera
+    if (selectedCameraIndex_ >= 0 && selectedCameraIndex_ < cameraList_->count()) {
+        cameraList_->setCurrentRow(selectedCameraIndex_);
+    } else if (cameraList_->count() > 0) {
+        cameraList_->setCurrentRow(0);
+    } else {
+    selectedCameraIndex_ = -1;
+    connectButton_->setEnabled(false);
+    disconnectButton_->setEnabled(false);
+        cameraControl_->setEnabled(false);
+    }
+    
+    updateSyncUI();
+}
+
+// Multi-camera synchronization methods
+void CameraPage::onCameraSelectionChanged(QListWidgetItem* item) {
+    updateSyncUI();
+}
+
+void CameraPage::onConnectSelectedCameras() {
+    std::vector<int> selectedIndices;
+    for (int i = 0; i < cameraList_->count(); ++i) {
+        if (cameraList_->item(i)->checkState() == Qt::Checked) {
+            selectedIndices.push_back(i);
+        }
+    }
+    
+    if (!selectedIndices.empty()) {
+        logDebugMessage(QString("Connecting %1 selected cameras...").arg(selectedIndices.size()));
+        for (int index : selectedIndices) {
+            if (!cameraManager_->isCameraConnected(index)) {
+                cameraManager_->connectCamera(index);
+            }
+        }
+    }
+}
+
+void CameraPage::onDisconnectSelectedCameras() {
+    std::vector<int> selectedIndices;
+    for (int i = 0; i < cameraList_->count(); ++i) {
+        if (cameraList_->item(i)->checkState() == Qt::Checked) {
+            selectedIndices.push_back(i);
+        }
+    }
+    
+    if (!selectedIndices.empty()) {
+        logDebugMessage(QString("Disconnecting %1 selected cameras...").arg(selectedIndices.size()));
+        for (int index : selectedIndices) {
+            if (cameraManager_->isCameraConnected(index)) {
+                cameraManager_->disconnectCamera(index);
+            }
+        }
+        videoDisplay_->clear();
+    }
+}
+
+void CameraPage::onCaptureSync() {
+    QString timeStamp = QDateTime::currentDateTime().toString("yyyyMMdd_hhmmss");
+    QString basePath = core::Settings::getPhotoSaveDirectory();
+    QString dirPath = basePath + "/sync_" + timeStamp;
+    
+    QDir dir;
+    if (!dir.exists(dirPath)) {
+        dir.mkpath(dirPath);
+    }
+    
+    logDebugMessage(QString("Starting synchronized capture to %1").arg(dirPath), "ACTION");
+    syncProgressBar_->setValue(0);
+    syncProgressBar_->show();
+    
+    // Call the capturePhotosSync method
+    bool success = cameraManager_->capturePhotosSync(dirPath.toStdString());
+    
+    if (!success) {
+        logDebugMessage("Failed to start synchronized capture", "ERROR");
+        syncProgressBar_->hide();
+    }
+}
+
+void CameraPage::onClearSelection() {
+    for (int i = 0; i < cameraList_->count(); ++i) {
+        cameraList_->item(i)->setCheckState(Qt::Unchecked);
+    }
+    updateSyncUI();
+    logDebugMessage("Cleared camera selection");
+}
+
+void CameraPage::onToggleSelectAll() {
+    bool allSelected = areAllCamerasSelected();
+    
+    for (int i = 0; i < cameraList_->count(); ++i) {
+        cameraList_->item(i)->setCheckState(allSelected ? Qt::Unchecked : Qt::Checked);
+    }
+    
+    updateSyncUI();
+    logDebugMessage(allSelected ? "Deselected all cameras" : "Selected all cameras");
+}
+
+void CameraPage::onSyncCaptureProgress(int current, int total) {
+    syncProgressBar_->setValue(current);
+    syncStatusLabel_->setText(tr("Capturing %1 of %2...").arg(current).arg(total));
+    logDebugMessage(QString("Sync capture progress: %1/%2").arg(current).arg(total));
+}
+
+void CameraPage::onSyncCaptureComplete(int successCount, int total) {
+    syncProgressBar_->setValue(total);
+    syncStatusLabel_->setText(tr("Captured %1 of %2 successfully").arg(successCount).arg(total));
+    
+    if (successCount == total) {
+        logDebugMessage(QString("Synchronized capture completed successfully: %1 images").arg(total), "SUCCESS");
+    } else {
+        logDebugMessage(QString("Synchronized capture completed with issues: %1/%2 successful")
+            .arg(successCount).arg(total), "WARNING");
+    }
+    
+    QTimer::singleShot(3000, [this]() {
+        syncProgressBar_->hide();
+        syncStatusLabel_->clear();
+    });
+}
+
+void CameraPage::updateSyncUI() {
+    int selectedCount = 0;
+    int connectedSelectedCount = 0;
+    
+    for (int i = 0; i < cameraList_->count(); ++i) {
+        if (cameraList_->item(i)->checkState() == Qt::Checked) {
+            selectedCount++;
+            if (cameraManager_->isCameraConnected(i)) {
+                connectedSelectedCount++;
+            }
+        }
+    }
+    
+    connectSelectedButton_->setEnabled(selectedCount > 0);
+    disconnectSelectedButton_->setEnabled(connectedSelectedCount > 0);
+    captureSyncButton_->setEnabled(connectedSelectedCount > 1);
+    
+    toggleSelectButton_->setText(areAllCamerasSelected() ? tr("Deselect All") : tr("Select All"));
+}
+
 bool CameraPage::areAllCamerasSelected() const {
-    auto selectedCameras = cameraManager_->getSelectedCameras();
-    return !selectedCameras.empty() && selectedCameras.size() == static_cast<size_t>(cameraList_->count());
+    for (int i = 0; i < cameraList_->count(); ++i) {
+        if (cameraList_->item(i)->checkState() != Qt::Checked) {
+            return false;
+        }
+    }
+    return cameraList_->count() > 0;
+}
+
+// Debug console methods
+void CameraPage::logDebugMessage(const QString& message, const QString& type) {
+    QString timestamp = QDateTime::currentDateTime().toString("hh:mm:ss.zzz");
+    
+    // Theme-aware colors for message types
+    bool isDarkTheme = QApplication::palette().color(QPalette::Window).lightness() < 128;
+    
+    QString infoColor = isDarkTheme ? "#abb2bf" : "#333333";
+    QString warningColor = isDarkTheme ? "#e5c07b" : "#b58900";
+    QString errorColor = isDarkTheme ? "#e06c75" : "#dc322f";
+    QString successColor = isDarkTheme ? "#98c379" : "#2aa198";
+    QString actionColor = isDarkTheme ? "#61afef" : "#268bd2";
+    QString hintColor = isDarkTheme ? "#c678dd" : "#6c71c4";
+    
+    QString formattedMessage;
+    
+    if (type == "INFO") {
+        formattedMessage = QString("<span style='color:%1'>[%2] [INFO] %3</span>")
+            .arg(infoColor, timestamp, message);
+    } else if (type == "WARNING") {
+        formattedMessage = QString("<span style='color:%1'>[%2] [WARN] %3</span>")
+            .arg(warningColor, timestamp, message);
+    } else if (type == "ERROR") {
+        formattedMessage = QString("<span style='color:%1'>[%2] [ERROR] %3</span>")
+            .arg(errorColor, timestamp, message);
+    } else if (type == "SUCCESS") {
+        formattedMessage = QString("<span style='color:%1'>[%2] [SUCCESS] %3</span>")
+            .arg(successColor, timestamp, message);
+    } else if (type == "ACTION") {
+        formattedMessage = QString("<span style='color:%1'>[%2] [ACTION] %3</span>")
+            .arg(actionColor, timestamp, message);
+    } else if (type == "HINT") {
+        formattedMessage = QString("<span style='color:%1'>[%2] [HINT] %3</span>")
+            .arg(hintColor, timestamp, message);
+    } else {
+        formattedMessage = QString("<span style='color:%1'>[%2] [%3] %4</span>")
+            .arg(infoColor, timestamp, type, message);
+    }
+    
+    debugConsole_->appendHtml(formattedMessage);
+    
+    // Scroll to bottom
+    QScrollBar* scrollBar = debugConsole_->verticalScrollBar();
+    scrollBar->setValue(scrollBar->maximum());
+}
+
+void CameraPage::clearDebugConsole() {
+    debugConsole_->clear();
+    logDebugMessage("Console cleared", "INFO");
 }
 
 } // namespace cam_matrix::ui

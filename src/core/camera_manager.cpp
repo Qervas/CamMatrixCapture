@@ -99,6 +99,10 @@ bool CameraManager::connectCamera(size_t index)
     if (index < cameras_.size()) {
         bool result = cameras_[index]->connectCamera();
         if (result) {
+            // Connect the camera's newFrameAvailable signal to our own
+            connect(cameras_[index].get(), &Camera::newFrameAvailable,
+                    this, &CameraManager::newFrameAvailable, Qt::QueuedConnection);
+            
             emit cameraConnected(index);
         }
         return result;
@@ -109,6 +113,10 @@ bool CameraManager::connectCamera(size_t index)
 bool CameraManager::disconnectCamera(size_t index)
 {
     if (index < cameras_.size()) {
+        // Disconnect the signal connection before disconnecting the camera
+        disconnect(cameras_[index].get(), &Camera::newFrameAvailable,
+                   this, &CameraManager::newFrameAvailable);
+        
         bool result = cameras_[index]->disconnectCamera();
         if (result) {
             emit cameraDisconnected(index);
@@ -357,6 +365,120 @@ bool CameraManager::capturePhotosSync(const std::string& basePath)
                       " of " + std::to_string(indexesToCapture.size()) + " successful");
     
     return successCount == static_cast<int>(indexesToCapture.size());
+}
+
+// New method implementations
+std::vector<std::string> CameraManager::getAvailableCameras() const {
+    std::vector<std::string> cameraNames;
+    cameraNames.reserve(cameras_.size());
+    
+    for (const auto& camera : cameras_) {
+        cameraNames.push_back(camera->getName());
+    }
+    
+    return cameraNames;
+}
+
+bool CameraManager::isCameraConnected(size_t index) const {
+    if (index < cameras_.size()) {
+        return cameras_[index]->isConnected();
+    }
+    return false;
+}
+
+bool CameraManager::setExposureTime(size_t index, double value) {
+    if (index < cameras_.size()) {
+        bool result = cameras_[index]->setExposureTime(value);
+        if (result) {
+            emit managerStatusChanged("Exposure time set to " + std::to_string(value) + 
+                                     " for camera " + std::to_string(index));
+        }
+        return result;
+    }
+    return false;
+}
+
+bool CameraManager::setGain(size_t index, double value) {
+    if (index < cameras_.size()) {
+        // Assuming Camera class would have a setGain method
+        // This might need to be implemented in the Camera base class
+        auto* saperaCam = dynamic_cast<sapera::SaperaCamera*>(cameras_[index].get());
+        if (saperaCam) {
+            bool result = saperaCam->setGain(value);
+            if (result) {
+                emit managerStatusChanged("Gain set to " + std::to_string(value) + 
+                                         " for camera " + std::to_string(index));
+            }
+            return result;
+        }
+    }
+    return false;
+}
+
+bool CameraManager::setFormat(size_t index, const std::string& format) {
+    if (index < cameras_.size()) {
+        // Assuming Camera class would have a setFormat method
+        // This might need to be implemented in the Camera base class
+        auto* saperaCam = dynamic_cast<sapera::SaperaCamera*>(cameras_[index].get());
+        if (saperaCam) {
+            bool result = saperaCam->setPixelFormat(format);
+            if (result) {
+                emit managerStatusChanged("Format set to " + format + 
+                                         " for camera " + std::to_string(index));
+            }
+            return result;
+        }
+    }
+    return false;
+}
+
+double CameraManager::getExposureTime(size_t index) const {
+    if (index < cameras_.size()) {
+        auto* saperaCam = dynamic_cast<sapera::SaperaCamera*>(cameras_[index].get());
+        if (saperaCam) {
+            return saperaCam->getExposureTime();
+        }
+    }
+    return 0.0;
+}
+
+double CameraManager::getGain(size_t index) const {
+    if (index < cameras_.size()) {
+        auto* saperaCam = dynamic_cast<sapera::SaperaCamera*>(cameras_[index].get());
+        if (saperaCam) {
+            return saperaCam->getGain();
+        }
+    }
+    return 0.0;
+}
+
+std::string CameraManager::getFormat(size_t index) const {
+    if (index < cameras_.size()) {
+        auto* saperaCam = dynamic_cast<sapera::SaperaCamera*>(cameras_[index].get());
+        if (saperaCam) {
+            return saperaCam->getPixelFormat();
+        }
+    }
+    return "Unknown";
+}
+
+bool CameraManager::capturePhoto(size_t index, const std::string& path) {
+    if (index < cameras_.size() && cameras_[index]->isConnected()) {
+        bool result = cameras_[index]->capturePhoto(path);
+        if (result) {
+            // This is a placeholder. In a real implementation, we'd need to get the 
+            // image from the camera and emit it alongside the path
+            emit managerStatusChanged("Photo captured from camera " + std::to_string(index) + 
+                                     " and saved to " + path);
+            
+            // For the signal that camera_page.cpp expects, we would need to emit the actual image
+            // This is just a placeholder as we don't have access to the actual image here
+            QImage dummyImage;
+            emit photoCaptured(dummyImage, path);
+        }
+        return result;
+    }
+    return false;
 }
 
 } // namespace cam_matrix::core

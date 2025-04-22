@@ -55,7 +55,7 @@ void FrameGeneratorWorker::generateFrames()
             
             // Use queued connection to safely emit the signal across thread boundaries
             QMetaObject::invokeMethod(this, [this, frame]() {
-                emit frameGenerated(frame);
+                emit frameReady(frame);
             }, Qt::QueuedConnection);
             
             // Sleep for about 33ms (30fps)
@@ -923,7 +923,7 @@ void SaperaCamera::startFrameThread()
         connect(&frameGeneratorThread_, &QThread::finished, 
                 frameGenerator_, &FrameGeneratorWorker::deleteLater, Qt::QueuedConnection);
         // Use queued connection from worker to camera to avoid deadlocks
-        connect(frameGenerator_, &FrameGeneratorWorker::frameGenerated,
+        connect(frameGenerator_, &FrameGeneratorWorker::frameReady,
                 this, &SaperaCamera::handleNewFrame, Qt::QueuedConnection);
     }
     
@@ -1210,5 +1210,121 @@ bool SaperaCamera::isFeatureAvailable(const char* featureName) const
     return true;
 }
 #endif
+
+// Add implementation for gain methods
+double SaperaCamera::getGain() const
+{
+    // Default implementation - in a real camera this would be from the device
+    return 1.0; // Default gain value
+}
+
+bool SaperaCamera::setGain(double gain)
+{
+    if (!isConnected()) {
+        return false;
+    }
+    
+    bool success = false;
+    std::promise<bool> resultPromise;
+    std::future<bool> resultFuture = resultPromise.get_future();
+    
+    // Queue set gain operation
+    cameraThread_->queueOperation(CameraOpType::Custom, 
+        [this, gain]() {
+            // This runs in the camera thread
+            
+        #ifdef HAS_SAPERA
+            if (!device_ || !isConnected_) {
+                return;
+            }
+            
+            // Set gain in the camera - this is a placeholder
+            // In a real implementation, this would use device_->SetFeatureValue or similar
+            qDebug() << "Setting gain to" << gain << "(placeholder)";
+        #endif
+        },
+        [&resultPromise](bool success) {
+            // Callback - this also runs in the camera thread
+            resultPromise.set_value(success);
+        },
+        "SetGain");
+    
+    // Wait for the operation to complete
+    try {
+        success = resultFuture.get();
+    }
+    catch (const std::exception& e) {
+        qDebug() << "Exception while setting gain:" << e.what();
+        success = false;
+    }
+    
+    // Emit operation completed event
+    QMetaObject::invokeMethod(this, [this, success, gain]() {
+        emit operationCompleted("SetGain", success);
+        if (success) {
+            emit statusChanged("Set gain to " + std::to_string(gain));
+        }
+    }, Qt::QueuedConnection);
+    
+    return success;
+}
+
+// Add implementation for pixel format methods
+std::string SaperaCamera::getPixelFormat() const
+{
+    // Default implementation - in a real camera this would be from the device
+    return "Mono8"; // Default format
+}
+
+bool SaperaCamera::setPixelFormat(const std::string& format)
+{
+    if (!isConnected()) {
+        return false;
+    }
+    
+    bool success = false;
+    std::promise<bool> resultPromise;
+    std::future<bool> resultFuture = resultPromise.get_future();
+    
+    // Queue set pixel format operation
+    cameraThread_->queueOperation(CameraOpType::Custom, 
+        [this, format]() {
+            // This runs in the camera thread
+            
+        #ifdef HAS_SAPERA
+            if (!device_ || !isConnected_) {
+                return;
+            }
+            
+            // Set pixel format in the camera - this is a placeholder
+            // In a real implementation, this would use device_->SetFeatureValue or similar
+            qDebug() << "Setting pixel format to" << QString::fromStdString(format) << "(placeholder)";
+        #endif
+        },
+        [&resultPromise](bool success) {
+            // Callback - this also runs in the camera thread
+            resultPromise.set_value(success);
+        },
+        "SetPixelFormat");
+    
+    // Wait for the operation to complete
+    try {
+        success = resultFuture.get();
+    }
+    catch (const std::exception& e) {
+        qDebug() << "Exception while setting pixel format:" << e.what();
+        success = false;
+    }
+    
+    // Emit operation completed event
+    QMetaObject::invokeMethod(this, [this, success, format]() {
+        emit operationCompleted("SetPixelFormat", success);
+        if (success) {
+            emit statusChanged("Set pixel format to " + format);
+        }
+    }, Qt::QueuedConnection);
+    
+    return success;
+}
 
 } // namespace cam_matrix::core::sapera 

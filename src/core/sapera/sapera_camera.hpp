@@ -30,7 +30,7 @@ public slots:
     void generateFrames();
 
 signals:
-    void frameGenerated(const QImage& frame);
+    void frameReady(const QImage& frame);
     void finished();
 
 private:
@@ -66,6 +66,12 @@ public:
 
     // Camera properties
     double getExposureTime() const;
+    double getGain() const;
+    std::string getPixelFormat() const;
+    
+    // Camera settings
+    bool setGain(double gain);
+    bool setPixelFormat(const std::string& format);
 
     // Get the current frame - non-blocking, may return empty frame
     QImage getFrame() const;

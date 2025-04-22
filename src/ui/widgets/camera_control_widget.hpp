@@ -18,10 +18,19 @@ public:
 
     void setCameraIndex(int index);
 
+    void setExposure(double value);
+    void setGain(double value);
+    void setFormat(const QString& format);
+
 signals:
     void controlValueChanged(const QString& controlName, int value);
     void statusChanged(const QString& message);
     void capturePhotoRequested(int cameraIndex);
+    
+    void exposureChanged(double value);
+    void gainChanged(double value);
+    void formatChanged(const QString& format);
+    void photoCaptureRequested();
 
 private slots:
     void onExposureChanged(int value);

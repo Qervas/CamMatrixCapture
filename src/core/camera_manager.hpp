@@ -25,6 +25,9 @@ public:
 
     // Get list of available cameras
     std::vector<Camera*> getCameras() const;
+    
+    // Get list of available camera names
+    std::vector<std::string> getAvailableCameras() const;
 
     // Camera access
     Camera* getCameraByIndex(size_t index) const;
@@ -34,6 +37,18 @@ public:
     bool connectCamera(size_t index);
     bool disconnectCamera(size_t index);
     bool disconnectAllCameras();
+    bool isCameraConnected(size_t index) const;
+
+    // Camera settings
+    bool setExposureTime(size_t index, double value);
+    bool setGain(size_t index, double value);
+    bool setFormat(size_t index, const std::string& format);
+    double getExposureTime(size_t index) const;
+    double getGain(size_t index) const;
+    std::string getFormat(size_t index) const;
+    
+    // Photo capture
+    bool capturePhoto(size_t index, const std::string& path);
 
     // Multi-camera management
     void selectCameraForSync(size_t index, bool selected);
@@ -57,6 +72,10 @@ signals:
     void syncCaptureComplete(int successCount, int totalCount);
     void syncCaptureProgress(int current, int total);
     void photoCaptured(size_t cameraIndex, const std::string& path);
+    void newFrameAvailable(const QImage& frame);
+    void cameraStatusChanged(const QString& status);
+    void managerStatusChanged(const std::string& status);
+    void photoCaptured(const QImage& image, const std::string& path);
 
 private:
     std::vector<std::unique_ptr<Camera>> cameras_;

@@ -329,7 +329,7 @@
             SapBuffer* m_pBuffer;
             bool m_isLastCamera;
             
-        public:
+public:
             SapAcqDeviceToBuf() : m_pDevice(nullptr), m_pBuffer(nullptr), m_isLastCamera(false) {}
             
             SapAcqDeviceToBuf(SapAcqDevice* pDevice, SapBuffer* pBuffer) 
@@ -434,10 +434,10 @@ public:
         #if defined(HAS_GIGE_VISION) && HAS_GIGE_VISION
             return true;
         #else
-            return false;
+        return false;
         #endif
     }
-    
+
     // Get the Sapera SDK version
     static std::string getSaperaVersion() {
         #if defined(SAPERA_FOUND) && SAPERA_FOUND
