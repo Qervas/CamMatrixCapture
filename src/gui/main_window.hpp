@@ -4,6 +4,7 @@
 #include <QSharedPointer>
 
 class QStatusBar;
+class QStackedWidget;
 
 namespace cam_matrix::ui {
 class Page;
@@ -24,10 +25,13 @@ private slots:
 
 private:
     void setupUi();
+    void createMenuBar();
     void createStatusBar();
+    void addPage(ui::Page* page);
     void connectPageSignals(ui::Page* page);
 
     QStatusBar* statusBar_;
+    QStackedWidget* pagesWidget_;
 };
 
 } // namespace cam_matrix 

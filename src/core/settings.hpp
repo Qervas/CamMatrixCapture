@@ -3,6 +3,7 @@
 #include <QString>
 #include <QVariant>
 #include <QSettings>
+#include <QDir>
 
 namespace cam_matrix::core {
 
