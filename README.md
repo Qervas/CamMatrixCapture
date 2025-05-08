@@ -2,4 +2,8 @@ Todo:
 
 -[x] Single camera capture
 
-![1744715596109](image/README/1744715596109.png)
+-[x] Multi camera capture
+
+-[x] Friendly UI
+
+![1746711569944](image/README/1746711569944.png)
