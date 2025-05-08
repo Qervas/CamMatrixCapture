@@ -5,6 +5,7 @@
 #include <QPushButton>
 #include <QGridLayout>
 #include <QTimer>
+#include <QVBoxLayout>
 #include "core/sapera_defs.hpp"
 
 namespace cam_matrix::ui {
@@ -19,9 +20,12 @@ public:
 public slots:
     void refresh();
     void showStatusDetails();
+    void setExpanded(bool expanded);
+    bool isExpanded() const;
 
 signals:
     void statusChanged(const QString& status);
+    void expandedChanged(bool expanded);
 
 private:
     void setupUi();
@@ -34,9 +38,12 @@ private:
     QLabel* cameraCountLabel_;
     QPushButton* refreshButton_;
     QPushButton* testConnectionButton_;
+    QPushButton* toggleButton_;
+    QWidget* contentContainer_;
     QTimer* autoRefreshTimer_;
     bool isSaperaConnected_;
     bool isGigeConnected_;
+    bool isExpanded_;
 };
 
 } // namespace cam_matrix::ui 

@@ -329,6 +329,22 @@ void CameraPage::setupUi() {
     syncStatusLabel_->setAlignment(Qt::AlignCenter);
     syncLayout->addWidget(syncStatusLabel_);
     
+    // Create a container for debug sections
+    debugSectionsContainer_ = new QWidget();
+    auto debugSectionsLayout = new QVBoxLayout(debugSectionsContainer_);
+    debugSectionsLayout->setContentsMargins(0, 10, 0, 0);
+    debugSectionsLayout->setSpacing(10);
+    
+    // Toggle debug sections button - add it to the main layout
+    toggleDebugSectionsButton_ = new QPushButton("Hide Debug Sections");
+    toggleDebugSectionsButton_->setCheckable(true);
+    toggleDebugSectionsButton_->setStyleSheet(QString(
+        "QPushButton { background-color: %1; color: white; border-radius: 6px; padding: 8px 12px; text-align: center; }"
+        "QPushButton:hover { background-color: %2; }"
+        "QPushButton:pressed { background-color: %3; }"
+        "QPushButton:checked { background-color: %4; }"
+    ).arg(accentColor, accentColorHover, accentColorPressed, warningColor));
+    
     // Status and debug info in collapsible section
     auto statusSection = new QWidget();
     statusSection->setStyleSheet(QString(
@@ -435,14 +451,57 @@ void CameraPage::setupUi() {
         "QWidget { background-color: transparent; }"
     ));
     
-    statusLayout->addWidget(saperaStatus_);
+    // Add debug sections to the container
+    debugSectionsLayout->addWidget(saperaStatus_);
+    
+    // Add statusSection to debugSectionsLayout
+    debugSectionsLayout->addWidget(statusSection);
+    
+    // Storage path widget
+    auto storageWidget = new QWidget();
+    storageWidget->setStyleSheet(QString(
+        "QWidget { background-color: %1; border-radius: 8px; }"
+    ).arg(bgDark));
+    
+    auto storageLayout = new QVBoxLayout(storageWidget);
+    storageLayout->setContentsMargins(15, 15, 15, 15);
+    storageLayout->setSpacing(12);
+    
+    auto storageHeader = new QHBoxLayout();
+    auto storageLabel = new QLabel("Image Storage");
+    storageLabel->setStyleSheet("font-weight: bold; font-size: 15px;");
+    
+    storageHeader->addWidget(storageLabel);
+    storageLayout->addLayout(storageHeader);
+    
+    storagePath_ = new QLabel();
+    storagePath_->setWordWrap(true);
+    storagePath_->setStyleSheet(QString("color: %1; font-size: 11px;").arg(dimTextColor));
+    
+    // Update displayed path
+    QString path = core::Settings::getPhotoSaveDirectory();
+    storagePath_->setText(path);
+    
+    auto browseButton = new QPushButton("Change Storage Location");
+    browseButton->setStyleSheet(QString(
+        "QPushButton { background-color: %1; color: white; border-radius: 6px; padding: 8px 0; }"
+        "QPushButton:hover { background-color: %2; }"
+        "QPushButton:pressed { background-color: %3; }"
+    ).arg(accentColor, accentColorHover, accentColorPressed));
+    
+    connect(browseButton, &QPushButton::clicked, this, &CameraPage::onChangeStorageLocation);
+    
+    storageLayout->addWidget(storagePath_);
+    storageLayout->addWidget(browseButton);
     
     // Add all components to the control panel
     controlLayout->addWidget(modeSelectionWidget);
     controlLayout->addWidget(cameraListCard);
     controlLayout->addWidget(cameraControl_);
     controlLayout->addWidget(syncGroup_);
-    controlLayout->addWidget(statusSection);
+    controlLayout->addWidget(toggleDebugSectionsButton_);
+    controlLayout->addWidget(debugSectionsContainer_);
+    controlLayout->addWidget(storageWidget);
     controlLayout->addStretch();
     
     // Main horizontal layout
@@ -489,6 +548,7 @@ void CameraPage::createConnections() {
     // Additional buttons
     connect(testSaperaButton_, &QPushButton::clicked, this, &CameraPage::onTestSaperaCamera);
     connect(directCameraButton_, &QPushButton::clicked, this, &CameraPage::onDirectCameraAccess);
+    connect(toggleDebugSectionsButton_, &QPushButton::toggled, this, &CameraPage::onToggleDebugSections);
     
     // Camera manager signals
     connect(cameraManager_.get(), &core::CameraManager::cameraStatusChanged, 
@@ -638,6 +698,13 @@ void CameraPage::onConnectCamera() {
             disconnectButton_->setEnabled(true);
             cameraControl_->setEnabled(true);
             
+            // Automatically select this camera for sync operations
+            QListWidgetItem* item = cameraList_->item(index);
+            if (item) {
+                item->setCheckState(Qt::Checked);
+                cameraManager_->selectCameraForSync(index, true);
+            }
+            
             // Get the camera object directly and request an initial frame
             auto* camera = cameraManager_->getSaperaCameraByIndex(index);
             if (camera && camera->isConnected()) {
@@ -651,6 +718,9 @@ void CameraPage::onConnectCamera() {
                 // Make sure to update UI after all changes
                 QApplication::processEvents();
             }
+            
+            // Update sync UI to reflect selection changes
+            updateSyncUI();
         } else {
             logDebugMessage(QString("Failed to connect to camera: %1").arg(cameraName), "ERROR");
         }
@@ -803,7 +873,7 @@ void CameraPage::onDirectCameraAccess() {
 void CameraPage::onCapturePhotoRequested(int cameraIndex) {
     if (cameraIndex >= 0 && cameraManager_->isCameraConnected(cameraIndex)) {
         QString timeStamp = QDateTime::currentDateTime().toString("yyyyMMdd_hhmmss");
-        QString basePath = QSettings().value("camera/savePath", QDir::homePath()).toString();
+        QString basePath = core::Settings::getPhotoSaveDirectory();
         QString fileName = QString("%1/capture_%2.png").arg(basePath).arg(timeStamp);
         
         QString path = QFileDialog::getSaveFileName(
@@ -850,18 +920,27 @@ void CameraPage::updateCameraList() {
         QString cameraName = QString::fromStdString(cameras[i]);
         QListWidgetItem* item = new QListWidgetItem(cameraName);
         
+        // Check if camera is connected
+        bool isConnected = cameraManager_->isCameraConnected(i);
+        
         // Add connection status
-        if (cameraManager_->isCameraConnected(i)) {
+        if (isConnected) {
             item->setIcon(QIcon::fromTheme("network-wired"));
             item->setText(QString("%1 (Connected)").arg(cameraName));
             item->setForeground(QBrush(QColor(46, 139, 87))); // SeaGreen
+            
+            // Auto-select connected cameras for multi-camera operations
+            item->setCheckState(Qt::Checked);
+            // Update camera manager selection state
+            cameraManager_->selectCameraForSync(i, true);
         } else {
             item->setIcon(QIcon::fromTheme("network-offline"));
+            // Make items checkable for multi-selection
+            item->setCheckState(Qt::Unchecked);
         }
         
         // Make items checkable for multi-selection
         item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
-        item->setCheckState(Qt::Unchecked);
         
         cameraList_->addItem(item);
     }
@@ -885,6 +964,17 @@ void CameraPage::updateCameraList() {
 
 // Multi-camera synchronization methods
 void CameraPage::onCameraSelectionChanged(QListWidgetItem* item) {
+    // Find the index of the changed item
+    int itemIndex = cameraList_->row(item);
+    if (itemIndex >= 0) {
+        bool selected = item->checkState() == Qt::Checked;
+        // Update the camera manager's selection state
+        cameraManager_->selectCameraForSync(itemIndex, selected);
+        logDebugMessage(QString("Camera %1 %2 for synchronized capture")
+            .arg(itemIndex)
+            .arg(selected ? "selected" : "deselected"));
+    }
+    
     updateSyncUI();
 }
 
@@ -893,16 +983,20 @@ void CameraPage::onConnectSelectedCameras() {
     for (int i = 0; i < cameraList_->count(); ++i) {
         if (cameraList_->item(i)->checkState() == Qt::Checked) {
             selectedIndices.push_back(i);
+            // Ensure the camera is selected in the manager
+            cameraManager_->selectCameraForSync(i, true);
         }
     }
     
     if (!selectedIndices.empty()) {
         logDebugMessage(QString("Connecting %1 selected cameras...").arg(selectedIndices.size()));
-        for (int index : selectedIndices) {
-            if (!cameraManager_->isCameraConnected(index)) {
-                cameraManager_->connectCamera(index);
-            }
+        // Use the camera manager's functionality to connect selected cameras
+        if (cameraManager_->connectSelectedCameras()) {
+            logDebugMessage("All selected cameras connected successfully", "SUCCESS");
+        } else {
+            logDebugMessage("Some cameras failed to connect", "WARNING");
         }
+        updateCameraList(); // Update UI to reflect new connection status
     }
 }
 
@@ -911,17 +1005,21 @@ void CameraPage::onDisconnectSelectedCameras() {
     for (int i = 0; i < cameraList_->count(); ++i) {
         if (cameraList_->item(i)->checkState() == Qt::Checked) {
             selectedIndices.push_back(i);
+            // Ensure the camera is selected in the manager
+            cameraManager_->selectCameraForSync(i, true);
         }
     }
     
     if (!selectedIndices.empty()) {
         logDebugMessage(QString("Disconnecting %1 selected cameras...").arg(selectedIndices.size()));
-        for (int index : selectedIndices) {
-            if (cameraManager_->isCameraConnected(index)) {
-                cameraManager_->disconnectCamera(index);
-            }
+        // Use the camera manager's functionality to disconnect selected cameras
+        if (cameraManager_->disconnectSelectedCameras()) {
+            logDebugMessage("All selected cameras disconnected successfully", "SUCCESS");
+        } else {
+            logDebugMessage("Some cameras failed to disconnect", "WARNING");
         }
         videoDisplay_->clear();
+        updateCameraList(); // Update UI to reflect new connection status
     }
 }
 
@@ -951,7 +1049,13 @@ void CameraPage::onCaptureSync() {
 void CameraPage::onClearSelection() {
     for (int i = 0; i < cameraList_->count(); ++i) {
         cameraList_->item(i)->setCheckState(Qt::Unchecked);
+        // Make sure to deselect in the camera manager as well
+        cameraManager_->selectCameraForSync(i, false);
     }
+    
+    // Clear all selections in the manager
+    cameraManager_->clearCameraSelection();
+    
     updateSyncUI();
     logDebugMessage("Cleared camera selection");
 }
@@ -959,8 +1063,16 @@ void CameraPage::onClearSelection() {
 void CameraPage::onToggleSelectAll() {
     bool allSelected = areAllCamerasSelected();
     
+    // First clear all selections in the manager if we're toggling all to selected
+    if (!allSelected) {
+        cameraManager_->clearCameraSelection();
+    }
+    
     for (int i = 0; i < cameraList_->count(); ++i) {
-        cameraList_->item(i)->setCheckState(allSelected ? Qt::Unchecked : Qt::Checked);
+        bool newState = !allSelected;
+        cameraList_->item(i)->setCheckState(newState ? Qt::Checked : Qt::Unchecked);
+        // Update selection in camera manager
+        cameraManager_->selectCameraForSync(i, newState);
     }
     
     updateSyncUI();
@@ -1088,6 +1200,33 @@ void CameraPage::refreshCameras() {
     cameraManager_->scanForCameras();
     // Then update the UI
     updateCameraList();
+}
+
+void CameraPage::onChangeStorageLocation() {
+    QString newPath = QFileDialog::getExistingDirectory(this, tr("Select New Storage Location"), 
+                                                       core::Settings::getPhotoSaveDirectory());
+    if (!newPath.isEmpty()) {
+        core::Settings::setPhotoSaveDirectory(newPath);
+        storagePath_->setText(newPath);
+        logDebugMessage(QString("Storage location changed to %1").arg(newPath), "INFO");
+    }
+}
+
+void CameraPage::onToggleDebugSections(bool checked) {
+    areDebugSectionsVisible_ = !checked;
+    
+    if (debugSectionsContainer_) {
+        debugSectionsContainer_->setVisible(areDebugSectionsVisible_);
+    }
+    
+    // Update the button text
+    if (checked) {
+        toggleDebugSectionsButton_->setText("Show Debug Sections");
+    } else {
+        toggleDebugSectionsButton_->setText("Hide Debug Sections");
+    }
+    
+    logDebugMessage(QString("Debug sections %1").arg(areDebugSectionsVisible_ ? "shown" : "hidden"));
 }
 
 } // namespace cam_matrix::ui

@@ -61,6 +61,12 @@ private slots:
     // Debug console slots
     void logDebugMessage(const QString& message, const QString& type = "INFO");
     void clearDebugConsole();
+    
+    // Storage location
+    void onChangeStorageLocation();
+    
+    // Debug sections toggling
+    void onToggleDebugSections(bool checked);
 
 private:
     void loadSettings();
@@ -81,6 +87,7 @@ private:
     QWidget* syncGroup_{nullptr};
     QProgressBar* syncProgressBar_{nullptr};
     QLabel* syncStatusLabel_{nullptr};
+    QLabel* storagePath_{nullptr};
     QPlainTextEdit* debugConsole_{nullptr};
     
     // Buttons
@@ -95,6 +102,11 @@ private:
     QPushButton* clearConsoleButton_{nullptr};
     QPushButton* testSaperaButton_{nullptr};
     QPushButton* directCameraButton_{nullptr};
+    QPushButton* toggleDebugSectionsButton_{nullptr};
+    
+    // Debug sections for toggling
+    QWidget* debugSectionsContainer_{nullptr};
+    bool areDebugSectionsVisible_{true};
 };
 
 } // namespace cam_matrix::ui
