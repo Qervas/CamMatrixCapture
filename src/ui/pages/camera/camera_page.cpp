@@ -407,6 +407,22 @@ void CameraPage::initialize() {
     
     // Automatically refresh camera list after a short delay to ensure all cameras are detected
     QTimer::singleShot(1000, this, &CameraPage::onRefreshCameras);
+    
+    // Set up a timer to request frames from the camera periodically (every 50ms)
+    QTimer* frameTimer = new QTimer(this);
+    connect(frameTimer, &QTimer::timeout, this, [this]() {
+        // If we have a selected camera and it's connected, get its frame
+        if (selectedCameraIndex_ >= 0 && cameraManager_->isCameraConnected(selectedCameraIndex_)) {
+            auto* camera = cameraManager_->getSaperaCameraByIndex(selectedCameraIndex_);
+            if (camera && camera->isConnected()) {
+                QImage currentFrame = camera->getFrame();
+                if (!currentFrame.isNull()) {
+                    videoDisplay_->updateFrame(currentFrame);
+                }
+            }
+        }
+    });
+    frameTimer->start(50); // Poll at 20Hz - this is just a backup in case signal connections fail
 }
 
 void CameraPage::cleanup() {

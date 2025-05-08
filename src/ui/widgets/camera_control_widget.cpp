@@ -5,6 +5,7 @@
 #include <QGroupBox>
 #include <QPushButton>
 #include <QApplication>
+#include <QDebug>
 
 namespace cam_matrix::ui {
 
@@ -243,6 +244,20 @@ void CameraControlWidget::setFormat(const QString& format)
     if (index >= 0 && formatCombo_->currentIndex() != index) {
         formatCombo_->setCurrentIndex(index);
     }
+}
+
+// Override the setEnabled method to ensure proper state of capture button
+void CameraControlWidget::setEnabled(bool enabled)
+{
+    QWidget::setEnabled(enabled);
+    
+    // Make sure the capture button is enabled appropriately
+    captureButton_->setEnabled(enabled && currentCameraIndex_ >= 0);
+    
+    // Debug message
+    qDebug() << "CameraControlWidget::setEnabled(" << enabled 
+             << ") with currentCameraIndex=" << currentCameraIndex_
+             << "- captureButton enabled:" << captureButton_->isEnabled();
 }
 
 } // namespace cam_matrix::ui

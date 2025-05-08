@@ -21,6 +21,9 @@ public:
     void setExposure(double value);
     void setGain(double value);
     void setFormat(const QString& format);
+    
+    // Override the setEnabled method to ensure proper button state
+    void setEnabled(bool enabled);
 
 signals:
     void controlValueChanged(const QString& controlName, int value);

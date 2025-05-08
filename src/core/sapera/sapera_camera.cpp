@@ -73,8 +73,8 @@ void FrameGeneratorWorker::generateFrames()
                          << QString::fromStdString(cameraName_);
             }
             
-            // Sleep for about 33ms (30fps)
-            QThread::msleep(33);
+            // Reduce sleep time for smoother animation (60fps)
+            QThread::msleep(16); // ~60fps
         }
     }
     catch (const std::exception& e) {
@@ -95,39 +95,43 @@ QImage FrameGeneratorWorker::generatePattern(int pattern, qint64 timestamp)
     QImage newFrame(640, 480, QImage::Format_RGB32);
     double exposureValue = (exposureTimePtr_) ? *exposureTimePtr_ : 10000.0;
     
+    // Add visual motion to every frame type - a moving element that's very obvious
+    int cyclePosition = (timestamp / 50) % newFrame.width();
+    
     switch (pattern) {
-        case 0: // Gradient
+        case 0: // Gradient with motion
             for (int y = 0; y < newFrame.height(); y++) {
                 for (int x = 0; x < newFrame.width(); x++) {
-                    int r = (x * 255) / newFrame.width();
-                    int g = (y * 255) / newFrame.height();
-                    int b = 128 + (sin(timestamp * 0.001) * 127);
-                    newFrame.setPixelColor(x, y, QColor(r, g, b));
+                    // Make the gradient shift over time
+                    int r = ((x + cyclePosition) * 255) / newFrame.width();
+                    int g = ((y + cyclePosition) * 255) / newFrame.height();
+                    int b = 128 + (sin(timestamp * 0.002) * 127);
+                    newFrame.setPixelColor(x, y, QColor(r % 256, g % 256, b));
                 }
             }
             break;
             
-        case 1: // Moving lines
+        case 1: // Moving lines - more obvious movement
             newFrame.fill(Qt::black);
             for (int y = 0; y < newFrame.height(); y++) {
-                int offset = (timestamp / 20) % newFrame.width();
-                for (int x = 0; x < newFrame.width(); x += 20) {
+                int offset = cyclePosition;
+                for (int x = 0; x < newFrame.width(); x += 10) { // Smaller spacing
                     int lineX = (x + offset) % newFrame.width();
-                    for (int i = 0; i < 10 && lineX + i < newFrame.width(); i++) {
+                    for (int i = 0; i < 5 && lineX + i < newFrame.width(); i++) {
                         newFrame.setPixelColor(lineX + i, y, QColor(200, 200, 200));
                     }
                 }
             }
             break;
             
-        case 2: // Checkerboard
+        case 2: // Checkerboard with faster movement
             {
-                int squareSize = 40;
-                int offset = (timestamp / 100) % squareSize;
+                int squareSize = 20; // Smaller squares
+                int offset = cyclePosition;
                 for (int y = 0; y < newFrame.height(); y++) {
                     for (int x = 0; x < newFrame.width(); x++) {
                         int adjustedX = (x + offset) / squareSize;
-                        int adjustedY = y / squareSize;
+                        int adjustedY = (y + offset/2) / squareSize; // Also move vertically
                         bool isWhite = (adjustedX + adjustedY) % 2 == 0;
                         newFrame.setPixelColor(x, y, isWhite ? QColor(230, 230, 230) : QColor(30, 30, 30));
                     }
@@ -135,11 +139,13 @@ QImage FrameGeneratorWorker::generatePattern(int pattern, qint64 timestamp)
             }
             break;
             
-        case 3: // Random noise
+        case 3: // Animated pattern (not random static)
             for (int y = 0; y < newFrame.height(); y++) {
                 for (int x = 0; x < newFrame.width(); x++) {
-                    int noise = QRandomGenerator::global()->bounded(256);
-                    newFrame.setPixelColor(x, y, QColor(noise, noise, noise));
+                    // Create a wave pattern that moves
+                    double angle = 0.1 * (x + y + cyclePosition);
+                    int value = 128 + (int)(127 * sin(angle));
+                    newFrame.setPixelColor(x, y, QColor(value, value, value));
                 }
             }
             break;
@@ -153,28 +159,27 @@ QImage FrameGeneratorWorker::generatePattern(int pattern, qint64 timestamp)
     painter.drawRect(2, 2, newFrame.width() - 4, newFrame.height() - 4);
     
     // Draw a moving indicator to show that frames are changing
-    int indicatorX = 20 + (timestamp / 100 % (newFrame.width() - 40));
+    int indicatorX = 20 + (timestamp / 50 % (newFrame.width() - 40));
     painter.setBrush(QColor(0, 255, 0));  // Green indicator
     painter.drawEllipse(QPoint(indicatorX, 20), 10, 10);
     
-    // Add text overlays
+    // Add text overlays with continually updating timestamp
     painter.setPen(Qt::white);
     painter.setFont(QFont("Arial", 16, QFont::Bold));
     painter.drawText(10, 50, QString::fromStdString("Camera: " + cameraName_));
     
     painter.setFont(QFont("Arial", 14));
-    painter.drawText(10, 80, QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss.zzz"));
+    
+    // This will update every millisecond, showing motion
+    QString currentTime = QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss.zzz");
+    painter.drawText(10, 80, currentTime);
+    
     painter.drawText(10, 110, QString("Exposure: %1 μs").arg(exposureValue));
     
-    // Add frame counter
+    // Add frame counter and timestamp to confirm updates
     static int frameCounter = 0;
     frameCounter++;
-    painter.drawText(10, 140, QString("Frame: %1").arg(frameCounter));
-    
-    // Tracking frame generation
-    if (frameCounter % 30 == 0) {
-        qDebug() << "Generated frame" << frameCounter << "for camera" << QString::fromStdString(cameraName_);
-    }
+    painter.drawText(10, 140, QString("Frame: %1 | Time: %2").arg(frameCounter).arg(timestamp));
     
     return newFrame;
 }
