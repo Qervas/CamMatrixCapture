@@ -418,11 +418,43 @@ void CameraPage::initialize() {
                 QImage currentFrame = camera->getFrame();
                 if (!currentFrame.isNull()) {
                     videoDisplay_->updateFrame(currentFrame);
+                    
+                    // Keep track of successful frame updates
+                    static int frameCount = 0;
+                    frameCount++;
+                    
+                    // Log only occasionally
+                    if (frameCount % 60 == 0) {
+                        logDebugMessage(QString("Camera feed active - frame %1 received").arg(frameCount), "DEBUG");
+                    }
                 }
             }
         }
     });
-    frameTimer->start(50); // Poll at 20Hz - this is just a backup in case signal connections fail
+    frameTimer->start(16); // Poll at ~60Hz for smooth animation
+    
+    // Setup a watchdog timer that checks every 2 seconds to ensure the camera is still connected
+    QTimer* watchdogTimer = new QTimer(this);
+    connect(watchdogTimer, &QTimer::timeout, this, [this]() {
+        if (selectedCameraIndex_ >= 0) {
+            // Check if the camera is still connected
+            bool isConnected = cameraManager_->isCameraConnected(selectedCameraIndex_);
+            
+            // If we think it's connected but actually it's not, attempt to reconnect
+            if (!isConnected && disconnectButton_->isEnabled()) {
+                logDebugMessage("Watchdog: Camera connection lost, attempting to reconnect...", "WARNING");
+                onConnectCamera();
+            }
+            
+            // Send a "keepalive" signal to the camera to prevent timeout
+            auto* camera = cameraManager_->getSaperaCameraByIndex(selectedCameraIndex_);
+            if (camera && camera->isConnected()) {
+                // Get a frame to keep the connection active
+                camera->getFrame();
+            }
+        }
+    });
+    watchdogTimer->start(2000); // Check every 2 seconds
 }
 
 void CameraPage::cleanup() {
