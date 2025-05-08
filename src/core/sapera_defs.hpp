@@ -77,7 +77,7 @@
             static int GetServerCount() { return 5; }  // Increased to 5 to match all cameras
             static bool GetServerName(int index, char* serverName, size_t maxLen) {
                 const char* names[] = {
-                    "System_P2",
+                    "Nano-C4020_Main",
                     "Nano-C4020_1",
                     "Nano-C4020_2",
                     "Nano-C4020_3",
@@ -499,7 +499,10 @@ public:
             for (int i = 0; i < serverCount; ++i) {
                 char serverName[CORSERVER_MAX_STRLEN];
                 if (SapManager::GetServerName(i, serverName, sizeof(serverName))) {
-                    cameraNames.push_back(serverName);
+                    // Skip excluded cameras
+                    if (!shouldExcludeCamera(serverName)) {
+                        cameraNames.push_back(serverName);
+                    }
                 }
             }
         #else
@@ -508,12 +511,32 @@ public:
             for (int i = 0; i < serverCount; ++i) {
                 char serverName[CORSERVER_MAX_STRLEN];
                 if (SapManager::GetServerName(i, serverName, sizeof(serverName))) {
-                    cameraNames.push_back(serverName);
+                    // Skip excluded cameras
+                    if (!shouldExcludeCamera(serverName)) {
+                        cameraNames.push_back(serverName);
+                    }
                 }
             }
         #endif
         
         return !cameraNames.empty();
+    }
+
+    // Helper method to determine if a camera should be excluded from the list
+    static bool shouldExcludeCamera(const std::string& cameraName) {
+        // Exclude the System camera
+        if (cameraName == "System") {
+            return true;
+        }
+        
+        // Exclude mock cameras
+        if (cameraName == "Mock Camera" || 
+            cameraName == "Dummy Camera" || 
+            cameraName.find("Mock") != std::string::npos) {
+            return true;
+        }
+        
+        return false;
     }
 };
 

@@ -43,15 +43,11 @@ void CameraManager::scanForCameras()
             // No need to try direct access - it will be handled by the dialog if needed
         } else {
             emit statusChanged("No Sapera cameras found");
-            // Add mock camera if no real cameras found
-            cameras_.push_back(std::make_unique<sapera::SaperaCamera>("Mock Camera"));
-            emit statusChanged("Added mock camera for testing");
+            // No longer adding mock cameras for testing
         }
     } else {
         emit statusChanged("Sapera SDK not initialized properly");
-        // Add mock camera for testing
-        cameras_.push_back(std::make_unique<sapera::SaperaCamera>("Mock Camera"));
-        emit statusChanged("Added mock camera for testing");
+        // No longer adding mock cameras for testing
     }
 #elif HAS_GIGE_VISION
     // Using GigE Vision Interface
@@ -66,16 +62,12 @@ void CameraManager::scanForCameras()
         }
         emit statusChanged("Found " + std::to_string(cameras_.size()) + " GigE Vision cameras");
     } else {
-        // Add at least a mock camera for interface testing
-        cameras_.push_back(std::make_unique<sapera::SaperaCamera>("Mock Camera"));
-        emit statusChanged("No GigE Vision cameras found, added mock camera");
+        // No longer adding mock cameras for interface testing
+        emit statusChanged("No GigE Vision cameras found");
     }
 #else
     emit statusChanged("Camera SDK not available");
-    
-    // Add dummy camera for UI testing
-    cameras_.push_back(std::make_unique<sapera::SaperaCamera>("Dummy Camera"));
-    emit statusChanged("Added dummy camera for testing");
+    // No longer adding dummy cameras for UI testing
 #endif
 
     // Notify the UI that camera list has been updated

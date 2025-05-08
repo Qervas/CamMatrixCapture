@@ -318,14 +318,13 @@ void DirectCameraWidget::refreshCameras() {
         cameraStatusLabel_->setText(tr("No cameras found"));
         emit statusChanged(tr("No Sapera cameras found"));
         
-        // Add a mock camera for testing the interface
-        cameraList_.push_back("Mock Camera");
-        cameraComboBox_->addItem("Mock Camera");
-        emit statusChanged(tr("Added mock camera for testing"));
+        // No longer adding mock cameras for testing
         
-        // Always emit the cameras found signal, even if just mock cameras
+        // Update UI to reflect no cameras found
+        connectButton_->setEnabled(false);
+        
+        // Emit empty camera list
         emit camerasFound(cameraList_);
-        connectButton_->setEnabled(true);
     } else {
         for (const auto& camera : cameraList_) {
             cameraComboBox_->addItem(QString::fromStdString(camera));
@@ -341,13 +340,12 @@ void DirectCameraWidget::refreshCameras() {
         connectButton_->setEnabled(true);
     }
 #else
-    // Even without Sapera, add a mock camera for UI testing
-    cameraList_.push_back("Mock Camera");
-    cameraComboBox_->addItem("Mock Camera");
-    cameraStatusLabel_->setText(tr("Sapera SDK not available - using mock camera"));
-    emit statusChanged(tr("Sapera SDK not available - using mock camera"));
+    // No longer adding mock cameras even without Sapera
+    cameraList_.clear();
+    cameraStatusLabel_->setText(tr("Sapera SDK not available"));
+    emit statusChanged(tr("Sapera SDK not available"));
     emit camerasFound(cameraList_);
-    connectButton_->setEnabled(true);
+    connectButton_->setEnabled(false);
 #endif
 }
 

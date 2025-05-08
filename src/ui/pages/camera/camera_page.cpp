@@ -510,24 +510,6 @@ void CameraPage::createConnections() {
             this, &CameraPage::onSyncCaptureComplete);
     
     // Camera control signals
-    connect(cameraControl_, &CameraControlWidget::exposureChanged, 
-            [this](double value) {
-                if (selectedCameraIndex_ >= 0) {
-                    cameraManager_->setExposureTime(selectedCameraIndex_, value);
-                    logDebugMessage(QString("Set exposure time to %1 ms for camera %2")
-                        .arg(value).arg(selectedCameraIndex_));
-                }
-            });
-    
-    connect(cameraControl_, &CameraControlWidget::gainChanged, 
-            [this](double value) {
-                if (selectedCameraIndex_ >= 0) {
-                    cameraManager_->setGain(selectedCameraIndex_, value);
-                    logDebugMessage(QString("Set gain to %1 for camera %2")
-                        .arg(value).arg(selectedCameraIndex_));
-                }
-            });
-    
     connect(cameraControl_, &CameraControlWidget::formatChanged, 
             [this](const QString& format) {
                 if (selectedCameraIndex_ >= 0) {
@@ -723,19 +705,17 @@ void CameraPage::onCameraSelected(int index) {
             double gain = cameraManager_->getGain(index);
             std::string format = cameraManager_->getFormat(index);
             
-            logDebugMessage(QString("Setting camera controls - Exposure: %1ms, Gain: %2, Format: %3")
-                .arg(exposure).arg(gain).arg(QString::fromStdString(format)));
+            logDebugMessage(QString("Setting camera controls - Format: %1")
+                .arg(QString::fromStdString(format)));
                 
             // Update the control values
-            cameraControl_->setExposure(exposure);
-            cameraControl_->setGain(gain);
             cameraControl_->setFormat(QString::fromStdString(format));
             
             // Force update the UI to ensure controls are enabled
             QApplication::processEvents();
             
-            logDebugMessage(QString("Loaded camera settings - Exposure: %1ms, Gain: %2, Format: %3")
-                .arg(exposure).arg(gain).arg(QString::fromStdString(format)));
+            logDebugMessage(QString("Loaded camera settings - Format: %1")
+                .arg(QString::fromStdString(format)));
                 
             // Get a current frame to show in the video display
             auto* camera = cameraManager_->getSaperaCameraByIndex(index);
