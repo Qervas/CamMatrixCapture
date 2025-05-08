@@ -5,6 +5,7 @@
 
 class QStatusBar;
 class QStackedWidget;
+class QTabWidget;
 
 namespace cam_matrix::ui {
 class Page;
@@ -28,14 +29,14 @@ private slots:
     void onAbout();
 
 private:
+    void loadFonts();
     void setupUi();
-    void createMenuBar();
     void createStatusBar();
-    void addPage(ui::Page* page);
+    void addPage(ui::Page* page, const QString& title, const QString& iconName);
     void connectPageSignals(ui::Page* page);
 
     QStatusBar* statusBar_;
-    QStackedWidget* pagesWidget_;
+    QTabWidget* tabWidget_;
 };
 
 } // namespace cam_matrix 

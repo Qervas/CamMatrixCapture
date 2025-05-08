@@ -15,6 +15,12 @@
 #include <QStackedWidget>
 #include <QApplication>
 #include <QMetaObject>
+#include <QTabWidget>
+#include <QIcon>
+#include <QTabBar>
+#include <QStyleOption>
+#include <QPainter>
+#include <QFontDatabase>
 
 namespace cam_matrix {
 
@@ -23,86 +29,110 @@ MainWindow::MainWindow(QWidget* parent)
     , statusBar_(nullptr)
 {
     setupUi();
-    createMenuBar();
     createStatusBar();
     
-    // Set up the stacked widget for pages
-    pagesWidget_ = new QStackedWidget(this);
-    setCentralWidget(pagesWidget_);
+    // Set up the tabbed widget for pages
+    tabWidget_ = new QTabWidget(this);
+    tabWidget_->setTabPosition(QTabWidget::North);
+    tabWidget_->setDocumentMode(true);
+    tabWidget_->setMovable(false);
+    tabWidget_->setTabsClosable(false);
+    
+    // Apply modern styling to tabs
+    QString tabStyle = QString(
+        "QTabWidget::pane { border: none; background: transparent; }"
+        "QTabWidget::tab-bar { alignment: center; }"
+        "QTabBar::tab { padding: 12px 20px; margin: 0px; }"
+        "QTabBar::tab:selected { border-bottom: 2px solid #007AFF; }"
+        "QTabBar::tab:hover:!selected { background-color: rgba(0, 122, 255, 0.1); }"
+    );
+    tabWidget_->setStyleSheet(tabStyle);
+    setCentralWidget(tabWidget_);
     
     // Add pages
-    addPage(new ui::CameraPage(this));
-    addPage(new ui::ImageProcessingPage(this));
+    addPage(new ui::CameraPage(this), "Camera", "camera");
+    addPage(new ui::ImageProcessingPage(this), "Processing", "image");
     
-    // Select the first page (Camera)
-    pagesWidget_->setCurrentIndex(0);
-    
+    // Set window properties
     setWindowTitle(tr("Camera Matrix Capture"));
-    resize(1024, 768);
+    resize(1280, 800);
+    setMinimumSize(960, 640);
+}
+
+void MainWindow::loadFonts()
+{
+    // Set application font to a sleek, modern system font
+    QFont appFont("-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Helvetica, Arial", 10);
+    QApplication::setFont(appFont);
 }
 
 void MainWindow::setupUi()
 {
-    // Set theme-aware styles for the main window
+    // Load modern system fonts
+    loadFonts();
+    
+    // Get system palette to determine if we're in dark or light mode
     QPalette systemPalette = QApplication::palette();
     bool isDarkTheme = systemPalette.color(QPalette::Window).lightness() < 128;
     
-    // Set application style
-    QString appStyle = QString(
-        "QMainWindow { background-color: %1; color: %2; }"
-    ).arg(
-        isDarkTheme ? "#222222" : "#f5f5f5",
-        isDarkTheme ? "#e0e0e0" : "#202020"
-    );
+    // Modern color palette
+    QString bgColor = isDarkTheme ? "#1C1C1E" : "#F2F2F7";
+    QString textColor = isDarkTheme ? "#FFFFFF" : "#000000";
+    QString accentColor = "#007AFF"; // Apple blue
     
-    setStyleSheet(appStyle);
-}
-
-void MainWindow::createMenuBar()
-{
-    QMenuBar* menuBar = this->menuBar();
+    // Create a clean, modern style
+    setStyleSheet(QString(
+        "QMainWindow { background: %1; color: %2; }"
+        "QStatusBar { background: %1; color: %2; border-top: 1px solid rgba(60, 60, 60, 0.3); }"
+        "QMenuBar { background: %1; color: %2; border-bottom: 1px solid rgba(60, 60, 60, 0.3); }"
+        "QMenuBar::item { padding: 6px 12px; }"
+        "QMenuBar::item:selected { background: rgba(0, 122, 255, 0.1); border-radius: 4px; }"
+        "QMenu { background: %1; color: %2; border: 1px solid rgba(60, 60, 60, 0.3); border-radius: 5px; }"
+        "QMenu::item { padding: 6px 24px 6px 12px; }"
+        "QMenu::item:selected { background: rgba(0, 122, 255, 0.1); }"
+        "QPushButton { background: %3; color: white; border: none; border-radius: 6px; padding: 8px 16px; font-weight: medium; }"
+        "QPushButton:hover { background: #0069D9; }"
+        "QPushButton:pressed { background: #0062CC; }"
+        "QPushButton:disabled { background: #A0A0A0; }"
+        "QGroupBox { font-weight: bold; border: 1px solid rgba(60, 60, 60, 0.3); border-radius: 5px; margin-top: 10px; padding-top: 10px; color: %2; }"
+        "QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; }"
+    ).arg(bgColor, textColor, accentColor));
     
-    // Pages menu
-    QMenu* pagesMenu = menuBar->addMenu(tr("&Pages"));
+    // Create a modern toolbar instead of menu
+    QToolBar* toolbar = new QToolBar(this);
+    toolbar->setMovable(false);
+    toolbar->setFloatable(false);
+    toolbar->setIconSize(QSize(22, 22));
+    toolbar->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
     
-    // Camera page action
-    QAction* cameraPageAction = new QAction(tr("&Camera"), this);
-    cameraPageAction->setStatusTip(tr("Switch to camera control page"));
-    connect(cameraPageAction, &QAction::triggered, this, [this]() {
-        pagesWidget_->setCurrentIndex(0);
-    });
-    pagesMenu->addAction(cameraPageAction);
+    // Create actions with modern icons
+    QAction* refreshAction = toolbar->addAction(QIcon::fromTheme("view-refresh"), tr("Refresh"));
+    connect(refreshAction, &QAction::triggered, this, &MainWindow::refreshCameras);
     
-    // Image processing page action
-    QAction* imageProcessingPageAction = new QAction(tr("&Image Processing"), this);
-    imageProcessingPageAction->setStatusTip(tr("Switch to image processing page"));
-    connect(imageProcessingPageAction, &QAction::triggered, this, [this]() {
-        pagesWidget_->setCurrentIndex(1);
-    });
-    pagesMenu->addAction(imageProcessingPageAction);
-    
-    // Help menu
-    QMenu* helpMenu = menuBar->addMenu(tr("&Help"));
-    
-    // About action
-    QAction* aboutAction = new QAction(tr("&About"), this);
+    QAction* aboutAction = toolbar->addAction(QIcon::fromTheme("help-about"), tr("About"));
     connect(aboutAction, &QAction::triggered, this, &MainWindow::onAbout);
-    helpMenu->addAction(aboutAction);
+    
+    toolbar->addSeparator();
+    
+    // Add the toolbar to the top of the window
+    addToolBar(Qt::TopToolBarArea, toolbar);
 }
 
 void MainWindow::createStatusBar()
 {
     statusBar_ = new QStatusBar(this);
+    statusBar_->setSizeGripEnabled(false);
     setStatusBar(statusBar_);
     statusBar_->showMessage(tr("Ready"));
 }
 
-void MainWindow::addPage(ui::Page* page)
+void MainWindow::addPage(ui::Page* page, const QString& title, const QString& iconName)
 {
     if (!page) return;
     
-    // Add to the stacked widget
-    pagesWidget_->addWidget(page);
+    // Add to the tabbed widget with icon
+    QIcon icon = QIcon::fromTheme(iconName);
+    tabWidget_->addTab(page, icon, title);
     
     // Connect signals
     connectPageSignals(page);
@@ -142,8 +172,8 @@ void MainWindow::onAbout()
 void MainWindow::refreshCameras()
 {
     // Find the camera page and refresh cameras
-    for (int i = 0; i < pagesWidget_->count(); ++i) {
-        auto* page = qobject_cast<ui::Page*>(pagesWidget_->widget(i));
+    for (int i = 0; i < tabWidget_->count(); ++i) {
+        auto* page = qobject_cast<ui::Page*>(tabWidget_->widget(i));
         if (page && page->title() == "Cameras") {
             // Use meta object to invoke the method by name
             QMetaObject::invokeMethod(page, "refreshCameras", Qt::QueuedConnection);

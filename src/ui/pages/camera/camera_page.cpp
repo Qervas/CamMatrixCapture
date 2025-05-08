@@ -93,355 +93,379 @@ void CameraPage::setupUi() {
     QString textColor = isDarkTheme ? "#FFFFFF" : "#000000";
     QString dimTextColor = isDarkTheme ? "#8E8E93" : "#8E8E93";
     
-    // Set application-wide font
-    QFont appFont("SF Pro Text, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Helvetica, Arial, sans-serif", 10);
-    QApplication::setFont(appFont);
-    
-    // Main layout with a modern aesthetic
-    auto mainLayout = new QVBoxLayout(this);
+    // Main layout with a clean aesthetic
+    auto mainLayout = new QHBoxLayout(this);
     mainLayout->setContentsMargins(0, 0, 0, 0);
     mainLayout->setSpacing(0);
     
-    // Create a header bar with app title and controls
-    auto headerBar = new QWidget();
-    headerBar->setFixedHeight(50);
-    headerBar->setStyleSheet(QString("background-color: %1; border-bottom: 1px solid %2;")
-                            .arg(bgDark, borderColor));
+    // Left panel for camera feed - takes 70% of the width
+    auto feedPanel = new QWidget();
+    feedPanel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     
-    auto headerLayout = new QHBoxLayout(headerBar);
-    headerLayout->setContentsMargins(20, 0, 20, 0);
+    auto feedLayout = new QVBoxLayout(feedPanel);
+    feedLayout->setContentsMargins(20, 20, 20, 20);
     
-    auto titleLabel = new QLabel("Camera Matrix Capture");
-    titleLabel->setStyleSheet(QString("color: %1; font-size: 16px; font-weight: bold;").arg(textColor));
-    
-    // Camera tools in header
-    auto headerButtonsLayout = new QHBoxLayout();
-    headerButtonsLayout->setSpacing(12);
-    
-    refreshButton_ = new QPushButton(QIcon::fromTheme("view-refresh"), "");
-    refreshButton_->setToolTip(tr("Refresh Camera List"));
-    refreshButton_->setFixedSize(32, 32);
-    refreshButton_->setCursor(Qt::PointingHandCursor);
-    
-    directCameraButton_ = new QPushButton(QIcon::fromTheme("preferences-system"), "");
-    directCameraButton_->setToolTip(tr("Direct Camera Access"));
-    directCameraButton_->setFixedSize(32, 32);
-    directCameraButton_->setCursor(Qt::PointingHandCursor);
-    
-    headerButtonsLayout->addWidget(refreshButton_);
-    headerButtonsLayout->addWidget(directCameraButton_);
-    
-    headerLayout->addWidget(titleLabel);
-    headerLayout->addStretch();
-    headerLayout->addLayout(headerButtonsLayout);
-    
-    // Create a modern content area with main splitter
-    auto contentWidget = new QWidget();
-    contentWidget->setStyleSheet(QString("background-color: %1;").arg(bgMedium));
-    
-    auto contentLayout = new QHBoxLayout(contentWidget);
-    contentLayout->setContentsMargins(0, 0, 0, 0);
-    contentLayout->setSpacing(0);
-    
-    // Create a beautiful camera feed area
     videoDisplay_ = new VideoDisplayWidget();
     videoDisplay_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-    videoDisplay_->setStyleSheet(QString("border: none; background-color: %1;").arg(bgDark));
+    videoDisplay_->setStyleSheet("background-color: black; border-radius: 8px;");
+    feedLayout->addWidget(videoDisplay_);
     
-    // Create a sleek sidebar for controls
-    auto sidebarWidget = new QWidget();
-    sidebarWidget->setFixedWidth(320);
-    sidebarWidget->setStyleSheet(QString(
-        "QWidget { background-color: %1; border-left: 1px solid %2; }"
-    ).arg(bgLight, borderColor));
+    // Right sidebar for camera controls - takes 30% of the width
+    auto controlPanel = new QWidget();
+    controlPanel->setFixedWidth(350);
+    controlPanel->setStyleSheet(QString("background-color: %1;").arg(bgMedium));
     
-    auto sidebarLayout = new QVBoxLayout(sidebarWidget);
-    sidebarLayout->setContentsMargins(20, 20, 20, 20);
-    sidebarLayout->setSpacing(20);
+    auto controlLayout = new QVBoxLayout(controlPanel);
+    controlLayout->setContentsMargins(20, 20, 20, 20);
+    controlLayout->setSpacing(16);
     
-    // Camera selection with modern styling
-    auto cameraSelectionWidget = new QWidget();
-    cameraSelectionWidget->setStyleSheet(QString(
-        "QWidget { background-color: %1; border-radius: 10px; }"
+    // Mode selection segmented control
+    auto modeSelectionWidget = new QWidget();
+    auto modeSelectionLayout = new QHBoxLayout(modeSelectionWidget);
+    modeSelectionLayout->setContentsMargins(0, 0, 0, 0);
+    modeSelectionLayout->setSpacing(0);
+    
+    QPushButton* singleCamMode = new QPushButton("Single Camera");
+    singleCamMode->setCheckable(true);
+    singleCamMode->setChecked(true);
+    singleCamMode->setStyleSheet(QString(
+        "QPushButton { background: %1; color: white; border: none; border-top-left-radius: 6px; border-bottom-left-radius: 6px; padding: 10px; }"
+        "QPushButton:checked { background: %2; }"
+        "QPushButton:hover:!checked { background: %3; }"
+    ).arg(bgDark, accentColor, accentColorHover));
+    
+    QPushButton* multiCamMode = new QPushButton("Multi Camera");
+    multiCamMode->setCheckable(true);
+    multiCamMode->setStyleSheet(QString(
+        "QPushButton { background: %1; color: white; border: none; border-top-right-radius: 6px; border-bottom-right-radius: 6px; padding: 10px; }"
+        "QPushButton:checked { background: %2; }"
+        "QPushButton:hover:!checked { background: %3; }"
+    ).arg(bgDark, accentColor, accentColorHover));
+    
+    modeSelectionLayout->addWidget(singleCamMode);
+    modeSelectionLayout->addWidget(multiCamMode);
+    
+    // Connect mode buttons
+    connect(singleCamMode, &QPushButton::clicked, [this, multiCamMode]() {
+        // Show single camera view
+        if (syncGroup_) syncGroup_->setVisible(false);
+        if (cameraControl_) cameraControl_->setVisible(true);
+        multiCamMode->setChecked(false);
+    });
+    
+    connect(multiCamMode, &QPushButton::clicked, [this, singleCamMode]() {
+        // Show multi camera view
+        if (syncGroup_) syncGroup_->setVisible(true);
+        if (cameraControl_) cameraControl_->setVisible(false);
+        singleCamMode->setChecked(false);
+    });
+    
+    // Camera list in a clean card
+    auto cameraListCard = new QWidget();
+    cameraListCard->setStyleSheet(QString(
+        "QWidget { background-color: %1; border-radius: 8px; }"
     ).arg(bgDark));
     
-    auto cameraSelectionLayout = new QVBoxLayout(cameraSelectionWidget);
-    cameraSelectionLayout->setContentsMargins(15, 15, 15, 15);
-    cameraSelectionLayout->setSpacing(12);
+    auto cameraListLayout = new QVBoxLayout(cameraListCard);
+    cameraListLayout->setContentsMargins(15, 15, 15, 15);
+    cameraListLayout->setSpacing(12);
     
-    auto cameraHeaderLayout = new QHBoxLayout();
-    auto cameraLabel = new QLabel(tr("Cameras"));
-    cameraLabel->setStyleSheet(QString("color: %1; font-weight: bold; font-size: 14px;").arg(textColor));
+    // Camera list with refresh button
+    auto cameraListHeader = new QHBoxLayout();
+    auto cameraLabel = new QLabel("Cameras");
+    cameraLabel->setStyleSheet("font-weight: bold; font-size: 15px;");
     
-    cameraHeaderLayout->addWidget(cameraLabel);
-    cameraHeaderLayout->addStretch();
+    refreshButton_ = new QPushButton();
+    refreshButton_->setIcon(QIcon::fromTheme("view-refresh"));
+    refreshButton_->setIconSize(QSize(16, 16));
+    refreshButton_->setToolTip("Refresh Camera List");
+    refreshButton_->setFixedSize(28, 28);
+    refreshButton_->setStyleSheet(QString(
+        "QPushButton { background-color: %1; border-radius: 14px; }"
+        "QPushButton:hover { background-color: %2; }"
+        "QPushButton:pressed { background-color: %3; }"
+    ).arg(accentColor, accentColorHover, accentColorPressed));
     
+    cameraListHeader->addWidget(cameraLabel);
+    cameraListHeader->addStretch();
+    cameraListHeader->addWidget(refreshButton_);
+    
+    cameraListLayout->addLayout(cameraListHeader);
+    
+    // Camera list
     cameraList_ = new QListWidget();
     cameraList_->setSelectionMode(QAbstractItemView::ExtendedSelection);
     cameraList_->setItemDelegate(new CameraItemDelegate(cameraList_));
     cameraList_->setStyleSheet(QString(
-        "QListWidget { background-color: %1; border: none; border-radius: 8px; color: %2; }"
-        "QListWidget::item { padding: 8px; margin-bottom: 4px; border-radius: 6px; }"
-        "QListWidget::item:selected { background-color: %3; color: white; }"
-        "QListWidget::item:hover:!selected { background-color: %4; }"
-    ).arg(bgMedium, textColor, accentColor, bgLight));
+        "QListWidget { background-color: transparent; border: none; }"
+        "QListWidget::item { padding: 8px; border-radius: 6px; margin-bottom: 4px; }"
+        "QListWidget::item:selected { background-color: %1; color: white; }"
+        "QListWidget::item:hover:!selected { background-color: rgba(60, 60, 67, 0.1); }"
+    ).arg(accentColor));
     
-    QScroller::grabGesture(cameraList_, QScroller::TouchGesture);
+    cameraListLayout->addWidget(cameraList_);
     
-    // Camera action buttons with modern styling
-    auto cameraActionLayout = new QHBoxLayout();
-    cameraActionLayout->setSpacing(8);
+    // Connection buttons
+    auto connectionLayout = new QHBoxLayout();
+    connectionLayout->setSpacing(8);
     
-    connectButton_ = new QPushButton(tr("Connect"));
+    connectButton_ = new QPushButton("Connect");
     connectButton_->setCursor(Qt::PointingHandCursor);
-    
-    disconnectButton_ = new QPushButton(tr("Disconnect"));
-    disconnectButton_->setCursor(Qt::PointingHandCursor);
-    
-    cameraActionLayout->addWidget(connectButton_);
-    cameraActionLayout->addWidget(disconnectButton_);
-    
-    cameraSelectionLayout->addLayout(cameraHeaderLayout);
-    cameraSelectionLayout->addWidget(cameraList_);
-    cameraSelectionLayout->addLayout(cameraActionLayout);
-    
-    // Camera controls with elegant styling
-    cameraControl_ = new CameraControlWidget();
-    cameraControl_->setEnabled(false);
-    cameraControl_->setStyleSheet(QString(
-        "QWidget { background-color: %1; border-radius: 10px; padding: 0px; }"
-    ).arg(bgDark));
-    
-    // Multi-camera operations with elegant styling
-    syncGroup_ = new QGroupBox(tr("Multi-Camera"));
-    syncGroup_->setStyleSheet(QString(
-        "QGroupBox { background-color: %1; border-radius: 10px; padding-top: 12px; color: %2; font-weight: bold; }"
-        "QGroupBox::title { subcontrol-origin: margin; left: 15px; padding: 0 8px; }"
-    ).arg(bgDark, textColor));
-    
-    auto syncLayout = new QVBoxLayout(syncGroup_);
-    syncLayout->setContentsMargins(15, 20, 15, 15);
-    syncLayout->setSpacing(12);
-    
-    // Selection controls with modern styling
-    auto selectionControlsLayout = new QHBoxLayout();
-    selectionControlsLayout->setSpacing(8);
-    
-    toggleSelectButton_ = new QPushButton(tr("Select All"));
-    toggleSelectButton_->setCursor(Qt::PointingHandCursor);
-    
-    clearSelectionButton_ = new QPushButton(tr("Clear"));
-    clearSelectionButton_->setCursor(Qt::PointingHandCursor);
-    
-    selectionControlsLayout->addWidget(toggleSelectButton_);
-    selectionControlsLayout->addWidget(clearSelectionButton_);
-    
-    // Connection controls with modern styling
-    auto connectionControlsLayout = new QHBoxLayout();
-    connectionControlsLayout->setSpacing(8);
-    
-    connectSelectedButton_ = new QPushButton(tr("Connect Selected"));
-    connectSelectedButton_->setCursor(Qt::PointingHandCursor);
-    
-    disconnectSelectedButton_ = new QPushButton(tr("Disconnect Selected"));
-    disconnectSelectedButton_->setCursor(Qt::PointingHandCursor);
-    
-    connectionControlsLayout->addWidget(connectSelectedButton_);
-    connectionControlsLayout->addWidget(disconnectSelectedButton_);
-    
-    // Capture button with prominent styling
-    captureSyncButton_ = new QPushButton(tr("Synchronized Capture"));
-    captureSyncButton_->setCursor(Qt::PointingHandCursor);
-    captureSyncButton_->setStyleSheet(QString(
-        "QPushButton { background-color: %1; color: white; font-weight: bold; padding: 10px; }"
+    connectButton_->setStyleSheet(QString(
+        "QPushButton { background-color: %1; color: white; border-radius: 6px; padding: 8px 0; }"
         "QPushButton:hover { background-color: %2; }"
         "QPushButton:pressed { background-color: %3; }"
-        "QPushButton:disabled { background-color: %4; color: rgba(255,255,255,0.5); }"
-    ).arg(successColor, "#2EAF4F", "#27994A", "#BBE5C9"));
+        "QPushButton:disabled { background-color: #A0A0A0; }"
+    ).arg(accentColor, accentColorHover, accentColorPressed));
     
+    disconnectButton_ = new QPushButton("Disconnect");
+    disconnectButton_->setCursor(Qt::PointingHandCursor);
+    disconnectButton_->setStyleSheet(QString(
+        "QPushButton { background-color: %1; color: white; border-radius: 6px; padding: 8px 0; }"
+        "QPushButton:hover { background-color: %2; }"
+        "QPushButton:pressed { background-color: %3; }"
+        "QPushButton:disabled { background-color: #A0A0A0; }"
+    ).arg(errorColor, "#FF5144", "#FF6259"));
+    
+    connectionLayout->addWidget(connectButton_);
+    connectionLayout->addWidget(disconnectButton_);
+    
+    cameraListLayout->addLayout(connectionLayout);
+    
+    // Camera control widget
+    cameraControl_ = new CameraControlWidget();
+    cameraControl_->setStyleSheet(QString(
+        "QWidget { background-color: %1; border-radius: 8px; padding: 4px; }"
+    ).arg(bgDark));
+    
+    // Multi-camera sync group
+    syncGroup_ = new QWidget();
+    syncGroup_->setVisible(false); // Hidden by default
+    syncGroup_->setStyleSheet(QString(
+        "QWidget { background-color: %1; border-radius: 8px; }"
+    ).arg(bgDark));
+    
+    auto syncLayout = new QVBoxLayout(syncGroup_);
+    syncLayout->setContentsMargins(15, 15, 15, 15);
+    syncLayout->setSpacing(12);
+    
+    auto syncHeader = new QHBoxLayout();
+    auto syncLabel = new QLabel("Multi-Camera Control");
+    syncLabel->setStyleSheet("font-weight: bold; font-size: 15px;");
+    
+    syncHeader->addWidget(syncLabel);
+    syncLayout->addLayout(syncHeader);
+    
+    // Sync controls
+    auto syncButtonsLayout = new QHBoxLayout();
+    
+    toggleSelectButton_ = new QPushButton("Select All");
+    toggleSelectButton_->setStyleSheet(QString(
+        "QPushButton { background-color: %1; color: white; border-radius: 6px; padding: 8px 0; }"
+        "QPushButton:hover { background-color: %2; }"
+        "QPushButton:pressed { background-color: %3; }"
+    ).arg(accentColor, accentColorHover, accentColorPressed));
+    
+    clearSelectionButton_ = new QPushButton("Clear");
+    clearSelectionButton_->setStyleSheet(QString(
+        "QPushButton { background-color: #8E8E93; color: white; border-radius: 6px; padding: 8px 0; }"
+        "QPushButton:hover { background-color: #7A7A81; }"
+        "QPushButton:pressed { background-color: #68686E; }"
+    ));
+    
+    syncButtonsLayout->addWidget(toggleSelectButton_);
+    syncButtonsLayout->addWidget(clearSelectionButton_);
+    
+    syncLayout->addLayout(syncButtonsLayout);
+    
+    // Connect/disconnect selected
+    auto syncConnectionLayout = new QHBoxLayout();
+    
+    connectSelectedButton_ = new QPushButton("Connect Selected");
+    connectSelectedButton_->setStyleSheet(QString(
+        "QPushButton { background-color: %1; color: white; border-radius: 6px; padding: 8px 0; }"
+        "QPushButton:hover { background-color: %2; }"
+        "QPushButton:pressed { background-color: %3; }"
+        "QPushButton:disabled { background-color: #A0A0A0; }"
+    ).arg(accentColor, accentColorHover, accentColorPressed));
+    
+    disconnectSelectedButton_ = new QPushButton("Disconnect Selected");
+    disconnectSelectedButton_->setStyleSheet(QString(
+        "QPushButton { background-color: %1; color: white; border-radius: 6px; padding: 8px 0; }"
+        "QPushButton:hover { background-color: %2; }"
+        "QPushButton:pressed { background-color: %3; }"
+        "QPushButton:disabled { background-color: #A0A0A0; }"
+    ).arg(errorColor, "#FF5144", "#FF6259"));
+    
+    syncConnectionLayout->addWidget(connectSelectedButton_);
+    syncConnectionLayout->addWidget(disconnectSelectedButton_);
+    
+    syncLayout->addLayout(syncConnectionLayout);
+    
+    // Capture sync button
+    captureSyncButton_ = new QPushButton("Capture Synchronized Photos");
+    captureSyncButton_->setStyleSheet(QString(
+        "QPushButton { background-color: %1; color: white; border-radius: 6px; padding: 12px 0; font-size: 13px; font-weight: bold; }"
+        "QPushButton:hover { background-color: %2; }"
+        "QPushButton:pressed { background-color: %3; }"
+        "QPushButton:disabled { background-color: #A0A0A0; }"
+    ).arg(successColor, "#2EB250", "#29A147"));
+    
+    syncLayout->addWidget(captureSyncButton_);
+    
+    // Progress bar for sync operations
     syncProgressBar_ = new QProgressBar();
     syncProgressBar_->setRange(0, 100);
     syncProgressBar_->setValue(0);
-    syncProgressBar_->setTextVisible(true);
-    syncProgressBar_->setFormat("%v/%m");
-    syncProgressBar_->hide();
+    syncProgressBar_->setTextVisible(false);
     syncProgressBar_->setStyleSheet(QString(
-        "QProgressBar { background-color: %1; border-radius: 3px; text-align: center; }"
-        "QProgressBar::chunk { background-color: %2; border-radius: 3px; }"
-    ).arg(bgMedium, accentColor));
+        "QProgressBar { background-color: %1; border-radius: 4px; height: 8px; }"
+        "QProgressBar::chunk { background-color: %2; border-radius: 4px; }"
+    ).arg(bgMedium, successColor));
     
-    syncStatusLabel_ = new QLabel();
-    syncStatusLabel_->setAlignment(Qt::AlignCenter);
-    syncStatusLabel_->setStyleSheet(QString("color: %1; font-size: 12px;").arg(textColor));
-    
-    syncLayout->addLayout(selectionControlsLayout);
-    syncLayout->addLayout(connectionControlsLayout);
-    syncLayout->addWidget(captureSyncButton_);
     syncLayout->addWidget(syncProgressBar_);
+    
+    syncStatusLabel_ = new QLabel("");
+    syncStatusLabel_->setAlignment(Qt::AlignCenter);
     syncLayout->addWidget(syncStatusLabel_);
     
-    // Debug console accessible from sidebar
-    auto consoleExpanderButton = new QPushButton(tr("Debug Console"));
-    consoleExpanderButton->setCheckable(true);
-    consoleExpanderButton->setStyleSheet(QString(
-        "QPushButton { text-align: left; padding: 8px 12px; background-color: %1; border-radius: 6px; }"
-        "QPushButton:checked { background-color: %2; color: white; }"
-    ).arg(bgDark, accentColor));
+    // Status and debug info in collapsible section
+    auto statusSection = new QWidget();
+    statusSection->setStyleSheet(QString(
+        "QWidget { background-color: %1; border-radius: 8px; }"
+    ).arg(bgDark));
     
-    auto debugWidget = new QWidget();
-    debugWidget->setVisible(false);
+    auto statusLayout = new QVBoxLayout(statusSection);
+    statusLayout->setContentsMargins(15, 15, 15, 15);
+    statusLayout->setSpacing(12);
     
-    auto debugLayout = new QVBoxLayout(debugWidget);
-    debugLayout->setContentsMargins(0, 12, 0, 0);
+    // Collapsible debug console header
+    auto debugHeader = new QHBoxLayout();
+    auto debugLabel = new QLabel("Debug Console");
+    debugLabel->setStyleSheet("font-weight: bold; font-size: 15px;");
     
-    debugConsole_ = new QPlainTextEdit();
-    debugConsole_->setReadOnly(true);
-    debugConsole_->setLineWrapMode(QPlainTextEdit::NoWrap);
-    debugConsole_->setFixedHeight(200);
-    
-    QString consoleBackgroundColor = isDarkTheme ? "#272729" : "#F0F0F2";
-    QString consoleTextColor = isDarkTheme ? "#DEDEDE" : "#333333";
-    QString consoleStyle = QString(
-        "QPlainTextEdit { font-family: Menlo, Monaco, 'Courier New', monospace; font-size: 12px; "
-        "background-color: %1; color: %2; border: none; border-radius: 6px; padding: 8px; }"
-    ).arg(consoleBackgroundColor, consoleTextColor);
-    
-    debugConsole_->setStyleSheet(consoleStyle);
-    
-    auto consoleToolbar = new QHBoxLayout();
-    clearConsoleButton_ = new QPushButton(tr("Clear"));
-    clearConsoleButton_->setCursor(Qt::PointingHandCursor);
-    consoleToolbar->addStretch();
-    consoleToolbar->addWidget(clearConsoleButton_);
-    
-    debugLayout->addWidget(debugConsole_);
-    debugLayout->addLayout(consoleToolbar);
-    
-    connect(consoleExpanderButton, &QPushButton::toggled, debugWidget, &QWidget::setVisible);
-    
-    // Status indicator at the bottom
-    auto statusWidget = new QWidget();
-    statusWidget->setFixedHeight(30);
-    statusWidget->setStyleSheet(QString("background-color: %1; border-top: 1px solid %2;")
-                              .arg(bgDark, borderColor));
-    
-    auto statusLayout = new QHBoxLayout(statusWidget);
-    statusLayout->setContentsMargins(20, 0, 20, 0);
-    
-    auto statusLabel = new QLabel(tr("Ready"));
-    statusLabel->setStyleSheet(QString("color: %1;").arg(dimTextColor));
-    
-    // Add SDK status to the status bar
-    testSaperaButton_ = new QPushButton(tr("Test SDK"));
-    testSaperaButton_->setStyleSheet(QString(
-        "QPushButton { background: none; border: none; color: %1; }"
-        "QPushButton:hover { color: %2; text-decoration: underline; }"
-    ).arg(accentColor, accentColorHover));
-    
-    statusLayout->addWidget(statusLabel);
-    statusLayout->addStretch();
-    statusLayout->addWidget(testSaperaButton_);
-    
-    // Add widgets to the sidebar
-    sidebarLayout->addWidget(cameraSelectionWidget);
-    sidebarLayout->addWidget(cameraControl_);
-    sidebarLayout->addWidget(syncGroup_);
-    sidebarLayout->addWidget(consoleExpanderButton);
-    sidebarLayout->addWidget(debugWidget);
-    sidebarLayout->addStretch();
-    
-    // Create a modern hidden drawer for SDK status
-    saperaStatus_ = new SaperaStatusWidget();
-    saperaStatus_->setVisible(false);
-    saperaStatus_->setStyleSheet(QString("background-color: %1; border-left: 1px solid %2;")
-                              .arg(bgLight, borderColor));
-    
-    // Add main components to content area
-    contentLayout->addWidget(videoDisplay_);
-    contentLayout->addWidget(sidebarWidget);
-    contentLayout->addWidget(saperaStatus_);
-    
-    // Set main layout
-    mainLayout->addWidget(headerBar);
-    mainLayout->addWidget(contentWidget, 1);
-    mainLayout->addWidget(statusWidget);
-    
-    // Set unified button styling
-    QString buttonStyle = QString(
-        "QPushButton { background-color: %1; color: white; border: none; border-radius: 6px; padding: 8px 12px; font-weight: medium; }"
+    // Toggle button for debug console
+    QPushButton* toggleDebugButton = new QPushButton();
+    toggleDebugButton->setIcon(QIcon::fromTheme("go-down"));
+    toggleDebugButton->setIconSize(QSize(16, 16));
+    toggleDebugButton->setFixedSize(28, 28);
+    toggleDebugButton->setCheckable(true);
+    toggleDebugButton->setStyleSheet(QString(
+        "QPushButton { background-color: %1; border-radius: 14px; }"
         "QPushButton:hover { background-color: %2; }"
         "QPushButton:pressed { background-color: %3; }"
-        "QPushButton:disabled { background-color: %4; color: rgba(255,255,255,0.5); }"
-    ).arg(accentColor, accentColorHover, accentColorPressed, isDarkTheme ? "#353538" : "#D8D8DD");
+    ).arg(accentColor, accentColorHover, accentColorPressed));
     
-    QString secondaryButtonStyle = QString(
-        "QPushButton { background-color: %1; color: %2; border: none; border-radius: 6px; padding: 8px 12px; font-weight: medium; }"
-        "QPushButton:hover { background-color: %3; }"
-        "QPushButton:pressed { background-color: %4; }"
-        "QPushButton:disabled { background-color: %5; color: rgba(%6, 0.5); }"
-    ).arg(bgMedium, textColor, bgLight, bgDark, isDarkTheme ? "#252527" : "#EAEAED", isDarkTheme ? "255,255,255" : "0,0,0");
+    debugHeader->addWidget(debugLabel);
+    debugHeader->addStretch();
+    debugHeader->addWidget(toggleDebugButton);
     
-    // Apply button styles contextually
-    connectButton_->setStyleSheet(buttonStyle);
-    disconnectButton_->setStyleSheet(secondaryButtonStyle);
+    statusLayout->addLayout(debugHeader);
     
-    toggleSelectButton_->setStyleSheet(secondaryButtonStyle);
-    clearSelectionButton_->setStyleSheet(secondaryButtonStyle);
+    // Debug console
+    debugConsole_ = new QPlainTextEdit();
+    debugConsole_->setReadOnly(true);
+    debugConsole_->setMaximumHeight(150);
+    debugConsole_->setStyleSheet(QString(
+        "QPlainTextEdit { background-color: %1; border: none; border-radius: 6px; color: %2; font-family: 'SF Mono', Consolas, 'Liberation Mono', Menlo, monospace; font-size: 11px; padding: 8px; }"
+    ).arg(bgMedium, textColor));
     
-    connectSelectedButton_->setStyleSheet(buttonStyle);
-    disconnectSelectedButton_->setStyleSheet(secondaryButtonStyle);
+    // Container for debug console to control visibility
+    QWidget* debugContainer = new QWidget();
+    auto debugContainerLayout = new QVBoxLayout(debugContainer);
+    debugContainerLayout->setContentsMargins(0, 0, 0, 0);
+    debugContainerLayout->addWidget(debugConsole_);
     
-    refreshButton_->setStyleSheet(QString(
-        "QPushButton { background-color: transparent; border-radius: 16px; }"
-        "QPushButton:hover { background-color: rgba(128, 128, 128, 0.2); }"
-        "QPushButton:pressed { background-color: rgba(128, 128, 128, 0.3); }"
-    ));
+    // Clear console button
+    clearConsoleButton_ = new QPushButton("Clear Console");
+    clearConsoleButton_->setStyleSheet(QString(
+        "QPushButton { background-color: %1; color: white; border-radius: 6px; padding: 6px 0; font-size: 12px; }"
+        "QPushButton:hover { background-color: %2; }"
+        "QPushButton:pressed { background-color: %3; }"
+    ).arg(bgLight, QString::number(bgLight.mid(1).toInt(nullptr, 16) + 0x101010, 16), 
+          QString::number(bgLight.mid(1).toInt(nullptr, 16) + 0x202020, 16)));
     
-    directCameraButton_->setStyleSheet(QString(
-        "QPushButton { background-color: transparent; border-radius: 16px; }"
-        "QPushButton:hover { background-color: rgba(128, 128, 128, 0.2); }"
-        "QPushButton:pressed { background-color: rgba(128, 128, 128, 0.3); }"
-    ));
+    debugContainerLayout->addWidget(clearConsoleButton_);
     
-    clearConsoleButton_->setStyleSheet(secondaryButtonStyle);
-    testSaperaButton_->setStyleSheet(buttonStyle);
+    // Hide debug console by default
+    debugContainer->setVisible(false);
     
-    // Connect SDK drawer toggle
-    connect(testSaperaButton_, &QPushButton::clicked, [this]() {
-        bool isVisible = saperaStatus_->isVisible();
-        saperaStatus_->setVisible(!isVisible);
-        // Only show when needed
-        if (!isVisible) {
-            saperaStatus_->setFixedWidth(300);
-        }
+    // Connect toggle button
+    connect(toggleDebugButton, &QPushButton::toggled, [debugContainer, toggleDebugButton](bool checked) {
+        debugContainer->setVisible(checked);
+        toggleDebugButton->setIcon(checked ? QIcon::fromTheme("go-up") : 
+                                          QIcon::fromTheme("go-down"));
     });
     
-    // Add loading indicator overlay
-    auto loadingOverlay = new QWidget(videoDisplay_);
-    loadingOverlay->setObjectName("loadingOverlay");
-    loadingOverlay->setStyleSheet("background-color: rgba(0, 0, 0, 0.7); border-radius: 10px;");
-    loadingOverlay->hide();
+    statusLayout->addWidget(debugContainer);
     
-    // Store reference to loading overlay for later use
-    loadingOverlay_ = loadingOverlay;
+    // Action buttons for direct camera access and testing
+    auto actionButtonsLayout = new QHBoxLayout();
     
-    auto overlayLayout = new QVBoxLayout(loadingOverlay);
+    directCameraButton_ = new QPushButton();
+    directCameraButton_->setIcon(QIcon::fromTheme("camera-photo"));
+    directCameraButton_->setText("Direct Camera Access");
+    directCameraButton_->setIconSize(QSize(16, 16));
+    directCameraButton_->setStyleSheet(QString(
+        "QPushButton { background-color: %1; color: white; border-radius: 6px; padding: 8px 12px; text-align: left; }"
+        "QPushButton:hover { background-color: %2; }"
+        "QPushButton:pressed { background-color: %3; }"
+    ).arg(bgLight, QString::number(bgLight.mid(1).toInt(nullptr, 16) + 0x101010, 16), 
+          QString::number(bgLight.mid(1).toInt(nullptr, 16) + 0x202020, 16)));
     
-    auto spinnerLabel = new QLabel();
-    // Use a loading animation GIF or progress indicator here
+    testSaperaButton_ = new QPushButton();
+    testSaperaButton_->setIcon(QIcon::fromTheme("tools-check-spelling"));
+    testSaperaButton_->setText("Test Sapera");
+    testSaperaButton_->setIconSize(QSize(16, 16));
+    testSaperaButton_->setStyleSheet(QString(
+        "QPushButton { background-color: %1; color: white; border-radius: 6px; padding: 8px 12px; text-align: left; }"
+        "QPushButton:hover { background-color: %2; }"
+        "QPushButton:pressed { background-color: %3; }"
+    ).arg(bgLight, QString::number(bgLight.mid(1).toInt(nullptr, 16) + 0x101010, 16), 
+          QString::number(bgLight.mid(1).toInt(nullptr, 16) + 0x202020, 16)));
     
-    auto loadingLabel = new QLabel("Connecting to camera...");
-    loadingLabel->setStyleSheet("color: white; font-size: 16px;");
-    loadingLabel->setAlignment(Qt::AlignCenter);
+    actionButtonsLayout->addWidget(directCameraButton_);
+    actionButtonsLayout->addWidget(testSaperaButton_);
     
-    overlayLayout->addStretch();
-    overlayLayout->addWidget(spinnerLabel, 0, Qt::AlignCenter);
-    overlayLayout->addWidget(loadingLabel, 0, Qt::AlignCenter);
-    overlayLayout->addStretch();
+    statusLayout->addLayout(actionButtonsLayout);
     
-    // Ensure overlay resizes with video display
-    videoDisplay_->installEventFilter(this);
-    loadingOverlay->setGeometry(videoDisplay_->rect());
+    // Sapera SDK status
+    saperaStatus_ = new SaperaStatusWidget();
+    saperaStatus_->setStyleSheet(QString(
+        "QWidget { background-color: transparent; }"
+    ));
+    
+    statusLayout->addWidget(saperaStatus_);
+    
+    // Add all components to the control panel
+    controlLayout->addWidget(modeSelectionWidget);
+    controlLayout->addWidget(cameraListCard);
+    controlLayout->addWidget(cameraControl_);
+    controlLayout->addWidget(syncGroup_);
+    controlLayout->addWidget(statusSection);
+    controlLayout->addStretch();
+    
+    // Main horizontal layout
+    mainLayout->addWidget(feedPanel, 7);  // 70% width
+    mainLayout->addWidget(controlPanel, 3); // 30% width
+    
+    // Initially disable buttons
+    disconnectButton_->setEnabled(false);
+    connectSelectedButton_->setEnabled(false);
+    disconnectSelectedButton_->setEnabled(false);
+    captureSyncButton_->setEnabled(false);
+    
+    // Create loading overlay
+    loadingOverlay_ = new QWidget(this);
+    loadingOverlay_->setStyleSheet("background-color: rgba(0, 0, 0, 0.7);");
+    loadingOverlay_->setVisible(false);
+    
+    auto overlayLayout = new QVBoxLayout(loadingOverlay_);
+    overlayLayout->setAlignment(Qt::AlignCenter);
+    
+    auto loadingLabel = new QLabel("Loading...");
+    loadingLabel->setStyleSheet("color: white; font-size: 18px; font-weight: bold;");
+    overlayLayout->addWidget(loadingLabel);
 }
 
 void CameraPage::createConnections() {
@@ -841,7 +865,7 @@ void CameraPage::updateCameraList() {
         cameraManager_->scanForCameras();
         cameras = cameraManager_->getAvailableCameras();
     }
-    
+
     for (size_t i = 0; i < cameras.size(); ++i) {
         QString cameraName = QString::fromStdString(cameras[i]);
         QListWidgetItem* item = new QListWidgetItem(cameraName);
@@ -870,9 +894,9 @@ void CameraPage::updateCameraList() {
     } else if (cameraList_->count() > 0) {
         cameraList_->setCurrentRow(0);
     } else {
-        selectedCameraIndex_ = -1;
-        connectButton_->setEnabled(false);
-        disconnectButton_->setEnabled(false);
+    selectedCameraIndex_ = -1;
+    connectButton_->setEnabled(false);
+    disconnectButton_->setEnabled(false);
         cameraControl_->setEnabled(false);
     }
     

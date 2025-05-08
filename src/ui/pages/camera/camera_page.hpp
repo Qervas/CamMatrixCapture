@@ -78,7 +78,7 @@ private:
     VideoDisplayWidget* videoDisplay_{nullptr};
     CameraControlWidget* cameraControl_{nullptr};
     SaperaStatusWidget* saperaStatus_{nullptr};
-    QGroupBox* syncGroup_{nullptr};
+    QWidget* syncGroup_{nullptr};
     QProgressBar* syncProgressBar_{nullptr};
     QLabel* syncStatusLabel_{nullptr};
     QPlainTextEdit* debugConsole_{nullptr};

@@ -84,11 +84,10 @@ void ImageProcessingPage::setupUi() {
     
     // Filter category and list
     filtersGroupBox_ = new QGroupBox(tr("Image Filters"));
-    QString groupBoxStyle = QString(
-        "QGroupBox { font-weight: bold; border: 1px solid %1; border-radius: 5px; margin-top: 10px; padding-top: 10px; color: %3; } "
+    filtersGroupBox_->setStyleSheet(QString(
+        "QGroupBox { font-weight: bold; border: 1px solid %1; border-radius: 5px; margin-top: 10px; padding-top: 10px; color: %2; } "
         "QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; }"
-    ).arg(borderColor, bgLight, textColor);
-    filtersGroupBox_->setStyleSheet(groupBoxStyle);
+    ).arg(borderColor, textColor));
     
     auto filtersLayout = new QVBoxLayout(filtersGroupBox_);
     filtersLayout->setContentsMargins(10, 15, 10, 10);
@@ -203,7 +202,10 @@ void ImageProcessingPage::setupUi() {
     rightLayout->setSpacing(10);
     
     batchGroupBox_ = new QGroupBox(tr("Batch Processing"));
-    batchGroupBox_->setStyleSheet(groupBoxStyle);
+    batchGroupBox_->setStyleSheet(QString(
+        "QGroupBox { font-weight: bold; border: 1px solid %1; border-radius: 5px; margin-top: 10px; padding-top: 10px; color: %2; } "
+        "QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; }"
+    ).arg(borderColor, textColor));
     
     auto batchLayout = new QVBoxLayout(batchGroupBox_);
     batchLayout->setContentsMargins(10, 15, 10, 10);

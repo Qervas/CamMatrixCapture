@@ -3,6 +3,8 @@
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QMessageBox>
+#include <QIcon>
+#include <QFile>
 
 namespace cam_matrix::ui {
 
@@ -12,9 +14,10 @@ DirectCameraDialog::DirectCameraDialog(QWidget* parent)
     , closeButton_(nullptr)
     , statusBar_(nullptr)
 {
-    // Set window properties
-    setWindowTitle(tr("Sapera Direct Camera Access"));
-    resize(800, 700);
+    // Set dialog properties
+    setWindowTitle(tr("Direct Camera Access"));
+    setWindowIcon(QIcon::fromTheme("camera-photo"));
+    resize(800, 600);
     
     // Create layout
     auto* mainLayout = new QVBoxLayout(this);
@@ -61,11 +64,13 @@ DirectCameraDialog::DirectCameraDialog(QWidget* parent)
 
 void DirectCameraDialog::onStatusChanged(const QString& status) {
     statusBar_->showMessage(status, 5000);
+    setWindowTitle(tr("Direct Camera Access - %1").arg(status));
 }
 
 void DirectCameraDialog::onError(const QString& error) {
     statusBar_->showMessage(error, 5000);
     QMessageBox::warning(this, tr("Camera Error"), error);
+    setWindowTitle(tr("Direct Camera Access - Error: %1").arg(error));
 }
 
 void DirectCameraDialog::refreshCameras() {
