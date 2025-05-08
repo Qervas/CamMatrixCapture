@@ -14,6 +14,8 @@ namespace cam_matrix::core {
 CameraManager::CameraManager(QObject* parent)
     : QObject(parent)
 {
+    // Automatically scan for cameras on initialization
+    QMetaObject::invokeMethod(this, "scanForCameras", Qt::QueuedConnection);
 }
 
 CameraManager::~CameraManager() = default;
@@ -21,6 +23,7 @@ CameraManager::~CameraManager() = default;
 void CameraManager::scanForCameras()
 {
     cameras_.clear();
+    emit managerStatusChanged("Scanning for cameras...");
 
 #if HAS_SAPERA
     // Check if Sapera SDK is available
@@ -36,11 +39,19 @@ void CameraManager::scanForCameras()
                 cameras_.push_back(std::make_unique<sapera::SaperaCamera>(name));
             }
             emit statusChanged("Found " + std::to_string(cameras_.size()) + " Sapera cameras");
+            
+            // No need to try direct access - it will be handled by the dialog if needed
         } else {
             emit statusChanged("No Sapera cameras found");
+            // Add mock camera if no real cameras found
+            cameras_.push_back(std::make_unique<sapera::SaperaCamera>("Mock Camera"));
+            emit statusChanged("Added mock camera for testing");
         }
     } else {
         emit statusChanged("Sapera SDK not initialized properly");
+        // Add mock camera for testing
+        cameras_.push_back(std::make_unique<sapera::SaperaCamera>("Mock Camera"));
+        emit statusChanged("Added mock camera for testing");
     }
 #elif HAS_GIGE_VISION
     // Using GigE Vision Interface
@@ -66,6 +77,9 @@ void CameraManager::scanForCameras()
     cameras_.push_back(std::make_unique<sapera::SaperaCamera>("Dummy Camera"));
     emit statusChanged("Added dummy camera for testing");
 #endif
+
+    // Notify the UI that camera list has been updated
+    emit cameraStatusChanged("Camera list updated");
 }
 
 std::vector<Camera*> CameraManager::getCameras() const
@@ -97,13 +111,38 @@ sapera::SaperaCamera* CameraManager::getSaperaCameraByIndex(size_t index) const
 bool CameraManager::connectCamera(size_t index)
 {
     if (index < cameras_.size()) {
+        qDebug() << "Connecting camera at index" << index << "..." << QString::fromStdString(cameras_[index]->getName());
+        
+        // First disconnect any existing connections to prevent duplicates
+        disconnect(cameras_[index].get(), nullptr, this, nullptr);
+        
         bool result = cameras_[index]->connectCamera();
         if (result) {
+            qDebug() << "Camera connected successfully, setting up signal/slot connections";
+            
             // Connect the camera's newFrameAvailable signal to our own
+            // Important: Use Qt::QueuedConnection to ensure thread safety
             connect(cameras_[index].get(), &Camera::newFrameAvailable,
                     this, &CameraManager::newFrameAvailable, Qt::QueuedConnection);
             
+            // Debug: Check if the camera can provide frames
+            auto* saperaCam = dynamic_cast<sapera::SaperaCamera*>(cameras_[index].get());
+            if (saperaCam) {
+                QImage currentFrame = saperaCam->getFrame();
+                if (!currentFrame.isNull()) {
+                    qDebug() << "Initial frame received from camera, size:" << currentFrame.size();
+                    // Forward this initial frame
+                    emit newFrameAvailable(currentFrame);
+                } else {
+                    qDebug() << "Initial frame is null";
+                }
+            }
+            
             emit cameraConnected(index);
+            emit cameraStatusChanged(QString("Camera %1 connected").arg(QString::fromStdString(cameras_[index]->getName())));
+        } else {
+            qDebug() << "Failed to connect camera at index" << index;
+            emit cameraStatusChanged(QString("Failed to connect camera %1").arg(QString::fromStdString(cameras_[index]->getName())));
         }
         return result;
     }
@@ -479,6 +518,48 @@ bool CameraManager::capturePhoto(size_t index, const std::string& path) {
         return result;
     }
     return false;
+}
+
+void CameraManager::updateCamerasFromDirectAccess(const std::vector<std::string>& cameraNames) {
+    if (cameraNames.empty()) {
+        emit managerStatusChanged("No cameras found from direct access");
+        return;
+    }
+    
+    bool cameraAdded = false;
+    
+    // Check which cameras are not already in our list
+    std::vector<std::string> existingNames = getAvailableCameras();
+    
+    // Track indices where we find matches
+    std::set<size_t> existingIndices;
+    
+    // Check each camera from direct access against existing cameras
+    for (const auto& directName : cameraNames) {
+        bool found = false;
+        
+        // See if this camera name already exists in our list
+        for (size_t i = 0; i < existingNames.size(); ++i) {
+            if (existingNames[i] == directName) {
+                found = true;
+                existingIndices.insert(i);
+                break;
+            }
+        }
+        
+        // If not found, add it to our camera list
+        if (!found) {
+            cameras_.push_back(std::make_unique<sapera::SaperaCamera>(directName));
+            emit managerStatusChanged("Added camera from direct access: " + directName);
+            cameraAdded = true;
+        }
+    }
+    
+    if (cameraAdded) {
+        emit cameraStatusChanged("Cameras updated from direct access");
+    } else {
+        emit managerStatusChanged("No new cameras found from direct access");
+    }
 }
 
 } // namespace cam_matrix::core

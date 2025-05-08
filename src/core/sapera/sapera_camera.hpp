@@ -104,6 +104,7 @@ private:
     std::string name_;
     std::atomic<bool> isConnected_{false};
     std::atomic<double> exposureTime_{10000.0};
+    double exposureTimeValue_{10000.0}; // Current exposure time value for the frame generator
 
     // Thread safety
     mutable std::mutex frameMutex_;

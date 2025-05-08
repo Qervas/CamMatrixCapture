@@ -18,6 +18,10 @@ class MainWindow : public QMainWindow {
 public:
     explicit MainWindow(QWidget* parent = nullptr);
 
+public slots:
+    void refreshCameras();
+    void showStatusMessage(const QString& message, int timeout = 3000);
+
 private slots:
     void onPageStatusChanged(const QString& message);
     void onPageError(const QString& message);

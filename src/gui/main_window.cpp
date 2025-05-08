@@ -14,6 +14,7 @@
 #include <QToolBar>
 #include <QStackedWidget>
 #include <QApplication>
+#include <QMetaObject>
 
 namespace cam_matrix {
 
@@ -136,6 +137,25 @@ void MainWindow::onAbout()
                       tr("Camera Matrix Capture v1.0.0\n"
                          "A professional tool for synchronized "
                          "multi-camera capture and calibration."));
+}
+
+void MainWindow::refreshCameras()
+{
+    // Find the camera page and refresh cameras
+    for (int i = 0; i < pagesWidget_->count(); ++i) {
+        auto* page = qobject_cast<ui::Page*>(pagesWidget_->widget(i));
+        if (page && page->title() == "Cameras") {
+            // Use meta object to invoke the method by name
+            QMetaObject::invokeMethod(page, "refreshCameras", Qt::QueuedConnection);
+            showStatusMessage("Refreshing camera list...");
+            return;
+        }
+    }
+}
+
+void MainWindow::showStatusMessage(const QString& message, int timeout)
+{
+    statusBar_->showMessage(message, timeout);
 }
 
 } // namespace cam_matrix 

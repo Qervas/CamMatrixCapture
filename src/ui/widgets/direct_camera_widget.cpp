@@ -189,6 +189,15 @@ void DirectCameraWidget::refreshCameras() {
     if (cameraList_.empty()) {
         cameraStatusLabel_->setText(tr("No cameras found"));
         emit statusChanged(tr("No Sapera cameras found"));
+        
+        // Add a mock camera for testing the interface
+        cameraList_.push_back("Mock Camera");
+        cameraComboBox_->addItem("Mock Camera");
+        emit statusChanged(tr("Added mock camera for testing"));
+        
+        // Always emit the cameras found signal, even if just mock cameras
+        emit camerasFound(cameraList_);
+        connectButton_->setEnabled(true);
     } else {
         for (const auto& camera : cameraList_) {
             cameraComboBox_->addItem(QString::fromStdString(camera));
@@ -197,9 +206,20 @@ void DirectCameraWidget::refreshCameras() {
         cameraStatusLabel_->setText(tr("Found %1 cameras").arg(cameraList_.size()));
         emit statusChanged(tr("Found %1 Sapera cameras").arg(cameraList_.size()));
         
+        // Emit the cameras found signal so main view can update
+        emit camerasFound(cameraList_);
+        
         // Enable connect button if a camera is selected
         connectButton_->setEnabled(true);
     }
+#else
+    // Even without Sapera, add a mock camera for UI testing
+    cameraList_.push_back("Mock Camera");
+    cameraComboBox_->addItem("Mock Camera");
+    cameraStatusLabel_->setText(tr("Sapera SDK not available - using mock camera"));
+    emit statusChanged(tr("Sapera SDK not available - using mock camera"));
+    emit camerasFound(cameraList_);
+    connectButton_->setEnabled(true);
 #endif
 }
 
@@ -212,6 +232,9 @@ void DirectCameraWidget::onConnectClicked() {
         if (camera_->initialize(serverName)) {
             isConnected_ = true;
             updateControls();
+            
+            // Emit signal that this camera is connected and detected
+            emit cameraDetected(serverName);
             
             // Update exposure slider to match camera value
             double exposureTime = camera_->getExposureTime();

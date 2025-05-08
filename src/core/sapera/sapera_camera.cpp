@@ -40,23 +40,38 @@ void FrameGeneratorWorker::stop()
 
 void FrameGeneratorWorker::generateFrames() 
 {
+    qDebug() << "Frame generator starting for camera:" << QString::fromStdString(cameraName_);
     running_ = true;
     
     try {
+        // Send an initial frame immediately to show we're working
+        qint64 timestamp = QDateTime::currentMSecsSinceEpoch();
+        QImage initialFrame = generatePattern(0, timestamp).copy();
+        emit frameReady(initialFrame);
+        
+        qDebug() << "Initial test frame generated for" << QString::fromStdString(cameraName_);
+        
+        // Main frame generation loop
+        int frameCount = 0;
         while (running_) {
             if (!running_) break;  // Check again in case it changed during processing
             
             // Get current timestamp for animation
-            qint64 timestamp = QDateTime::currentMSecsSinceEpoch();
+            timestamp = QDateTime::currentMSecsSinceEpoch();
             int pattern = (timestamp / 1000) % 4; // Change pattern every second
             
             // Generate the frame based on the pattern and make a copy to avoid any threading issues
             QImage frame = generatePattern(pattern, timestamp).copy();
             
-            // Use queued connection to safely emit the signal across thread boundaries
-            QMetaObject::invokeMethod(this, [this, frame]() {
-                emit frameReady(frame);
-            }, Qt::QueuedConnection);
+            // Emit the frame directly - safer in this context than using invokeMethod
+            emit frameReady(frame);
+            
+            // Log occasionally to track progress
+            frameCount++;
+            if (frameCount % 30 == 0) {
+                qDebug() << "Generated" << frameCount << "frames for camera" 
+                         << QString::fromStdString(cameraName_);
+            }
             
             // Sleep for about 33ms (30fps)
             QThread::msleep(33);
@@ -69,11 +84,10 @@ void FrameGeneratorWorker::generateFrames()
         qDebug() << "Unknown exception in frame generator";
     }
     
+    qDebug() << "Frame generator stopping for camera:" << QString::fromStdString(cameraName_);
+    
     // Always emit finished even if we exit due to an exception
-    // Make sure this is queued too
-    QMetaObject::invokeMethod(this, [this]() {
-        emit finished();
-    }, Qt::QueuedConnection);
+    emit finished();
 }
 
 QImage FrameGeneratorWorker::generatePattern(int pattern, qint64 timestamp) 
@@ -157,7 +171,10 @@ QImage FrameGeneratorWorker::generatePattern(int pattern, qint64 timestamp)
     frameCounter++;
     painter.drawText(10, 140, QString("Frame: %1").arg(frameCounter));
     
-    qDebug() << "Generated frame" << frameCounter << "for camera" << QString::fromStdString(cameraName_);
+    // Tracking frame generation
+    if (frameCounter % 30 == 0) {
+        qDebug() << "Generated frame" << frameCounter << "for camera" << QString::fromStdString(cameraName_);
+    }
     
     return newFrame;
 }
@@ -406,6 +423,7 @@ bool SaperaCamera::disconnectCamera()
 bool SaperaCamera::capturePhoto(const std::string& savePath)
 {
     if (!isConnected()) {
+        qWarning() << "Cannot capture photo: Camera not connected";
         return false;
     }
 
@@ -428,34 +446,9 @@ bool SaperaCamera::capturePhoto(const std::string& savePath)
     // Queue capture operation
     cameraThread_->queueOperation(CameraOpType::CapturePhoto, 
         [this, finalPath]() {
-            // This runs in the camera thread
+            qDebug() << "Capturing photo to" << QString::fromStdString(finalPath);
             
-        #ifdef HAS_SAPERA
-            // Try to get the current frame from Sapera
-            QImage capturedFrame;
-            
-            // Update the frame buffer
-            updateFrameFromBuffer();
-            
-            // Get a copy of the current frame
-            {
-                std::lock_guard<std::mutex> lock(frameMutex_);
-                capturedFrame = currentFrame_.copy();
-            }
-            
-            // Save the frame to file
-            bool saved = saveImageToFile(capturedFrame, finalPath);
-            
-            if (saved) {
-                // Emit the signal using queued connection to avoid deadlocks
-                QMetaObject::invokeMethod(this, [this, capturedFrame, finalPath]() {
-                    emit photoCaptured(capturedFrame, finalPath);
-                }, Qt::QueuedConnection);
-            }
-            
-            return saved;
-        #else
-            // In mock mode, just use the current generated frame
+            // Get a copy of the current frame - whether real or simulated
             QImage capturedFrame;
             
             {
@@ -463,18 +456,34 @@ bool SaperaCamera::capturePhoto(const std::string& savePath)
                 capturedFrame = currentFrame_.copy();
             }
             
+            // Mark the captured frame with a timestamp and camera name
+            QPainter painter(&capturedFrame);
+            painter.setPen(Qt::white);
+            painter.setFont(QFont("Arial", 10));
+            
+            QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss.zzz");
+            painter.drawText(10, capturedFrame.height() - 40, 
+                           QString("Camera: %1").arg(QString::fromStdString(name_)));
+            painter.drawText(10, capturedFrame.height() - 20, 
+                           QString("Captured: %1").arg(timestamp));
+            painter.end();
+            
             // Save the frame to file
             bool saved = saveImageToFile(capturedFrame, finalPath);
             
             if (saved) {
+                qDebug() << "Successfully saved photo to" << QString::fromStdString(finalPath);
+                
                 // Emit signal using queued connection to avoid deadlocks
                 QMetaObject::invokeMethod(this, [this, capturedFrame, finalPath]() {
                     emit photoCaptured(capturedFrame, finalPath);
                 }, Qt::QueuedConnection);
+                
+                return true;
+            } else {
+                qWarning() << "Failed to save photo to" << QString::fromStdString(finalPath);
+                return false;
             }
-            
-            return saved;
-        #endif
         },
         [&resultPromise](bool success) {
             // Callback - this also runs in the camera thread
@@ -814,20 +823,20 @@ QImage SaperaCamera::getFrame() const
 
 bool SaperaCamera::saveImageToFile(const QImage& image, const std::string& filePath)
 {
-    if (image.isNull()) {
-        return false;
-    }
-
-    // Ensure the directory exists
+    qDebug() << "Saving image to file:" << QString::fromStdString(filePath);
+    
+    // Create directories if they don't exist
     QFileInfo fileInfo(QString::fromStdString(filePath));
     QDir dir = fileInfo.dir();
+    
     if (!dir.exists()) {
+        qDebug() << "Creating directory:" << dir.path();
         if (!dir.mkpath(".")) {
-            qDebug() << "Failed to create directory for saving image:" << dir.path();
+            qWarning() << "Failed to create directory:" << dir.path();
             return false;
         }
     }
-
+    
     // Save the image to file
     bool success = image.save(QString::fromStdString(filePath));
     qDebug() << "Saved image to" << QString::fromStdString(filePath) << ":" << (success ? "Success" : "Failed");
@@ -844,6 +853,16 @@ void SaperaCamera::handleNewFrame(const QImage& frame)
         {
             std::lock_guard<std::mutex> lock(frameMutex_);
             currentFrame_ = frameCopy;
+        }
+        
+        // Update exposure time value that's passed to the frame generator
+        exposureTimeValue_ = exposureTime_.load();
+        
+        // Debug frame reception periodically
+        static int frameCount = 0;
+        frameCount++;
+        if (frameCount % 30 == 0) {  // Log every 30 frames
+            qDebug() << "Received frame" << frameCount << "from camera" << QString::fromStdString(name_);
         }
         
         // Emit the signal in a non-blocking way using a queued connection
@@ -903,33 +922,81 @@ bool SaperaCamera::configureCamera()
 // Camera thread management - available in both compilation modes
 void SaperaCamera::startFrameThread()
 {
+    qDebug() << "Starting frame generator thread for" << QString::fromStdString(name_);
+    
     if (frameGeneratorThread_.isRunning()) {
-        return;
+        qDebug() << "Frame generator thread already running, stopping first";
+        stopFrameThread();
     }
     
-    // Create the frame generator if it doesn't exist
-    if (!frameGenerator_) {
-        frameGenerator_ = new FrameGeneratorWorker();
-        // Use a double* that's updated from the atomic value
-        static double exposureTimeValue = exposureTime_.load();
-        frameGenerator_->setCamera(name_, &exposureTimeValue);
-        frameGenerator_->moveToThread(&frameGeneratorThread_);
+    try {
+        // Create the frame generator if it doesn't exist
+        if (!frameGenerator_) {
+            frameGenerator_ = new FrameGeneratorWorker();
+            // Make sure to pass a reference to the most current exposure time
+            exposureTimeValue_ = exposureTime_.load();
+            frameGenerator_->setCamera(name_, &exposureTimeValue_);
+            frameGenerator_->moveToThread(&frameGeneratorThread_);
+            
+            // Connect signals and slots with proper connection types
+            connect(&frameGeneratorThread_, &QThread::started, 
+                    frameGenerator_, &FrameGeneratorWorker::generateFrames, 
+                    Qt::QueuedConnection);
+            connect(frameGenerator_, &FrameGeneratorWorker::finished, 
+                    &frameGeneratorThread_, &QThread::quit, 
+                    Qt::QueuedConnection);
+            connect(&frameGeneratorThread_, &QThread::finished, 
+                    frameGenerator_, &FrameGeneratorWorker::deleteLater, 
+                    Qt::QueuedConnection);
+            // Use queued connection from worker to camera to avoid deadlocks
+            connect(frameGenerator_, &FrameGeneratorWorker::frameReady,
+                    this, &SaperaCamera::handleNewFrame, 
+                    Qt::QueuedConnection);
+                    
+            qDebug() << "Frame generator worker created for" << QString::fromStdString(name_);
+        }
         
-        // Connect signals and slots with proper connection types
-        connect(&frameGeneratorThread_, &QThread::started, 
-                frameGenerator_, &FrameGeneratorWorker::generateFrames);
-        connect(frameGenerator_, &FrameGeneratorWorker::finished, 
-                &frameGeneratorThread_, &QThread::quit, Qt::QueuedConnection);
-        connect(&frameGeneratorThread_, &QThread::finished, 
-                frameGenerator_, &FrameGeneratorWorker::deleteLater, Qt::QueuedConnection);
-        // Use queued connection from worker to camera to avoid deadlocks
-        connect(frameGenerator_, &FrameGeneratorWorker::frameReady,
-                this, &SaperaCamera::handleNewFrame, Qt::QueuedConnection);
+        // Start the thread
+        frameGeneratorThread_.start();
+        qDebug() << "Frame generation thread started for" << QString::fromStdString(name_);
+        
+        // Send an initial frame to show camera is connected
+        QImage initialFrame(640, 480, QImage::Format_RGB32);
+        initialFrame.fill(Qt::black);
+        
+        // Draw initialization text on the frame
+        QPainter painter(&initialFrame);
+        painter.setPen(Qt::white);
+        painter.setFont(QFont("Arial", 16, QFont::Bold));
+        painter.drawText(initialFrame.rect(), Qt::AlignCenter, 
+                        QString::fromStdString(name_) + "\nConnected - Starting Feed...");
+        
+        // Add a border to make it obvious
+        painter.setPen(QPen(QColor(0, 255, 0), 4));  // Green border
+        painter.drawRect(2, 2, initialFrame.width() - 4, initialFrame.height() - 4);
+        
+        painter.end();
+        
+        // Emit this initial frame to show we're connected
+        QMetaObject::invokeMethod(this, [this, initialFrame]() {
+            emit newFrameAvailable(initialFrame);
+        }, Qt::QueuedConnection);
     }
-    
-    // Start the thread
-    frameGeneratorThread_.start();
-    qDebug() << "Frame generation thread started";
+    catch (const std::exception& e) {
+        qWarning() << "Exception in startFrameThread:" << e.what();
+        
+        // Clean up if there was an error
+        frameGeneratorThread_.quit();
+        frameGeneratorThread_.wait(1000);
+        if (frameGenerator_) {
+            frameGenerator_->disconnect();
+            frameGenerator_->deleteLater();
+            frameGenerator_ = nullptr;
+        }
+    }
+    catch (...) {
+        qWarning() << "Unknown exception in startFrameThread";
+    }
 }
 
 void SaperaCamera::stopFrameThread()

@@ -8,6 +8,8 @@ Page::Page(QWidget* parent)
 {
 }
 
+Page::~Page() = default;
+
 void Page::initialize()
 {
     setupUi();

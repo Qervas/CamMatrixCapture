@@ -26,6 +26,9 @@ public:
     QString title() const override { return tr("Cameras"); }
     void initialize() override;
 
+public slots:
+    void refreshCameras() override;
+
 protected:
     void setupUi() override;
     void createConnections() override;

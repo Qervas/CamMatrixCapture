@@ -26,6 +26,8 @@ DirectCameraDialog::DirectCameraDialog(QWidget* parent)
     // Create button layout
     auto* buttonLayout = new QHBoxLayout();
     closeButton_ = new QPushButton(tr("Close"), this);
+    auto* refreshMainButton = new QPushButton(tr("Send to Main View"), this);
+    buttonLayout->addWidget(refreshMainButton);
     buttonLayout->addStretch();
     buttonLayout->addWidget(closeButton_);
     
@@ -37,12 +39,24 @@ DirectCameraDialog::DirectCameraDialog(QWidget* parent)
     
     // Connect signals
     connect(closeButton_, &QPushButton::clicked, this, &QDialog::accept);
+    connect(refreshMainButton, &QPushButton::clicked, this, [this]() {
+        emit refreshMainCameraView();
+        statusBar_->showMessage(tr("Camera information sent to main view"), 3000);
+    });
     
     connect(cameraWidget_, &DirectCameraWidget::statusChanged,
             this, &DirectCameraDialog::onStatusChanged);
     
     connect(cameraWidget_, &DirectCameraWidget::error,
             this, &DirectCameraDialog::onError);
+            
+    // Connect camera detected signal
+    connect(cameraWidget_, &DirectCameraWidget::cameraDetected,
+            this, &DirectCameraDialog::cameraDetected);
+    
+    // Automatically emit a signal when cameras are found during initialization
+    connect(cameraWidget_, &DirectCameraWidget::camerasFound,
+            this, &DirectCameraDialog::camerasFound);
 }
 
 void DirectCameraDialog::onStatusChanged(const QString& status) {
@@ -52,6 +66,12 @@ void DirectCameraDialog::onStatusChanged(const QString& status) {
 void DirectCameraDialog::onError(const QString& error) {
     statusBar_->showMessage(error, 5000);
     QMessageBox::warning(this, tr("Camera Error"), error);
+}
+
+void DirectCameraDialog::refreshCameras() {
+    if (cameraWidget_) {
+        cameraWidget_->refreshCameras();
+    }
 }
 
 } // namespace cam_matrix::ui 

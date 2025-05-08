@@ -2,7 +2,6 @@
 
 #include <QWidget>
 #include <QString>
-#include <memory>
 
 namespace cam_matrix::ui {
 
@@ -11,19 +10,26 @@ class Page : public QWidget {
 
 public:
     explicit Page(QWidget* parent = nullptr);
-    virtual ~Page() = default;
+    ~Page() override;
 
+    // Title of the page
     virtual QString title() const = 0;
+    
+    // Initialize the page
     virtual void initialize();
-    virtual void cleanup();
+
+public slots:
+    // Public slot for refreshing cameras (override in derived classes if needed)
+    virtual void refreshCameras() {}
+
+signals:
+    void statusChanged(const QString& status);
+    void error(const QString& error);
 
 protected:
     virtual void setupUi() = 0;
     virtual void createConnections() = 0;
-
-signals:
-    void statusChanged(const QString& message);
-    void error(const QString& message);
+    virtual void cleanup();
 };
 
 } // namespace cam_matrix::ui

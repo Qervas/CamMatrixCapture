@@ -17,6 +17,7 @@
 #include <QStyledItemDelegate>
 #include <QScroller>
 #include <QApplication>
+#include <QTimer>
 
 namespace cam_matrix::ui {
 
@@ -396,11 +397,16 @@ void CameraPage::initialize() {
     
     // Load settings and update camera list
     loadSettings();
-    onRefreshCameras();
+    
+    // Scan for cameras immediately upon initialization
+    cameraManager_->scanForCameras();
+    updateCameraList();
     
     // Initial status log
     logDebugMessage("Camera page initialized", "INFO");
-    logDebugMessage("Refresh the camera list to connect to cameras", "HINT");
+    
+    // Automatically refresh camera list after a short delay to ensure all cameras are detected
+    QTimer::singleShot(1000, this, &CameraPage::onRefreshCameras);
 }
 
 void CameraPage::cleanup() {
@@ -419,7 +425,37 @@ void CameraPage::onConnectCamera() {
     int index = cameraList_->currentRow();
     if (index >= 0) {
         logDebugMessage(QString("Connecting to camera at index %1...").arg(index));
-        cameraManager_->connectCamera(index);
+        
+        // Get the name of the camera for better logging
+        QString cameraName = cameraList_->item(index)->text();
+        logDebugMessage(QString("Connecting to camera: %1").arg(cameraName));
+        
+        // Connect the camera
+        bool success = cameraManager_->connectCamera(index);
+        
+        if (success) {
+            logDebugMessage(QString("Successfully connected to camera: %1").arg(cameraName), "SUCCESS");
+            
+            // Update UI state immediately
+            disconnectButton_->setEnabled(true);
+            cameraControl_->setEnabled(true);
+            
+            // Get the camera object directly and request an initial frame
+            auto* camera = cameraManager_->getSaperaCameraByIndex(index);
+            if (camera && camera->isConnected()) {
+                // Try to get a current frame
+                QImage currentFrame = camera->getFrame();
+                if (!currentFrame.isNull()) {
+                    videoDisplay_->updateFrame(currentFrame);
+                    logDebugMessage("Updated video display with initial frame");
+                }
+                
+                // Make sure to update UI after all changes
+                QApplication::processEvents();
+            }
+        } else {
+            logDebugMessage(QString("Failed to connect to camera: %1").arg(cameraName), "ERROR");
+        }
     }
 }
 
@@ -444,22 +480,51 @@ void CameraPage::onCameraSelected(int index) {
         
         // Update camera control widget with camera settings
         bool isConnected = cameraManager_->isCameraConnected(index);
+        
+        // Force set enabled state for all controls
         cameraControl_->setEnabled(isConnected);
+        
+        // IMPORTANT: Set the camera index to enable the capture button
+        cameraControl_->setCameraIndex(isConnected ? index : -1);
+        
+        // Log the connection status
+        logDebugMessage(QString("Camera connected status: %1").arg(isConnected ? "Connected" : "Not Connected"));
         
         if (isConnected) {
             double exposure = cameraManager_->getExposureTime(index);
             double gain = cameraManager_->getGain(index);
             std::string format = cameraManager_->getFormat(index);
             
+            logDebugMessage(QString("Setting camera controls - Exposure: %1ms, Gain: %2, Format: %3")
+                .arg(exposure).arg(gain).arg(QString::fromStdString(format)));
+                
+            // Update the control values
             cameraControl_->setExposure(exposure);
             cameraControl_->setGain(gain);
             cameraControl_->setFormat(QString::fromStdString(format));
             
+            // Force update the UI to ensure controls are enabled
+            QApplication::processEvents();
+            
             logDebugMessage(QString("Loaded camera settings - Exposure: %1ms, Gain: %2, Format: %3")
                 .arg(exposure).arg(gain).arg(QString::fromStdString(format)));
+                
+            // Get a current frame to show in the video display
+            auto* camera = cameraManager_->getSaperaCameraByIndex(index);
+            if (camera) {
+                QImage currentFrame = camera->getFrame();
+                if (!currentFrame.isNull()) {
+                    videoDisplay_->updateFrame(currentFrame);
+                    logDebugMessage("Updated video display with current frame");
+                }
+            }
+        } else {
+            logDebugMessage("Camera not connected - controls disabled");
+            cameraControl_->setEnabled(false);
         }
     } else {
         cameraControl_->setEnabled(false);
+        cameraControl_->setCameraIndex(-1); // Disable capture button
     }
 }
 
@@ -473,7 +538,19 @@ void CameraPage::onManagerStatusChanged(const std::string& status) {
 }
 
 void CameraPage::onNewFrame(const QImage& frame) {
+    // Update the video display with the new frame
     videoDisplay_->updateFrame(frame);
+    
+    // Debug: log frame updates periodically
+    static int frameCount = 0;
+    frameCount++;
+    
+    if (frameCount % 30 == 0) {  // Log every 30 frames to avoid flooding
+        logDebugMessage(QString("Received frame %1 (%2x%3)")
+            .arg(frameCount)
+            .arg(frame.width())
+            .arg(frame.height()), "DEBUG");
+    }
 }
 
 void CameraPage::onTestSaperaCamera() {
@@ -484,8 +561,34 @@ void CameraPage::onTestSaperaCamera() {
 void CameraPage::onDirectCameraAccess() {
     logDebugMessage("Opening direct camera access dialog...", "ACTION");
     DirectCameraDialog dialog(this);
+    
+    // Connect signals from dialog to update our camera list
+    connect(&dialog, &DirectCameraDialog::camerasFound, 
+            [this](const std::vector<std::string>& cameraNames) {
+                logDebugMessage(QString("Direct access found %1 cameras").arg(cameraNames.size()), "INFO");
+                // Signal to CameraManager to update its camera list
+                cameraManager_->updateCamerasFromDirectAccess(cameraNames);
+                // Update our UI
+                updateCameraList();
+            });
+            
+    connect(&dialog, &DirectCameraDialog::cameraDetected,
+            [this](const std::string& cameraName) {
+                logDebugMessage(QString("Direct access connected to camera: %1")
+                    .arg(QString::fromStdString(cameraName)), "INFO");
+            });
+            
+    connect(&dialog, &DirectCameraDialog::refreshMainCameraView,
+            [this]() {
+                logDebugMessage("Refreshing main camera view...", "ACTION");
+                onRefreshCameras();
+            });
+    
     if (dialog.exec() == QDialog::Accepted) {
         logDebugMessage("Direct camera access settings applied");
+        
+        // Refresh our camera list to show any newly detected cameras
+        onRefreshCameras();
     }
 }
 
@@ -527,6 +630,14 @@ void CameraPage::updateCameraList() {
     cameraList_->clear();
 
     std::vector<std::string> cameras = cameraManager_->getAvailableCameras();
+    
+    // If no cameras found, try to scan for cameras again
+    if (cameras.empty()) {
+        logDebugMessage("No cameras found, trying to scan again...", "WARNING");
+        cameraManager_->scanForCameras();
+        cameras = cameraManager_->getAvailableCameras();
+    }
+    
     for (size_t i = 0; i < cameras.size(); ++i) {
         QString cameraName = QString::fromStdString(cameras[i]);
         QListWidgetItem* item = new QListWidgetItem(cameraName);
@@ -555,9 +666,9 @@ void CameraPage::updateCameraList() {
     } else if (cameraList_->count() > 0) {
         cameraList_->setCurrentRow(0);
     } else {
-    selectedCameraIndex_ = -1;
-    connectButton_->setEnabled(false);
-    disconnectButton_->setEnabled(false);
+        selectedCameraIndex_ = -1;
+        connectButton_->setEnabled(false);
+        disconnectButton_->setEnabled(false);
         cameraControl_->setEnabled(false);
     }
     
@@ -749,6 +860,14 @@ void CameraPage::logDebugMessage(const QString& message, const QString& type) {
 void CameraPage::clearDebugConsole() {
     debugConsole_->clear();
     logDebugMessage("Console cleared", "INFO");
+}
+
+void CameraPage::refreshCameras() {
+    logDebugMessage("Refreshing cameras from external request...", "ACTION");
+    // Scan for cameras
+    cameraManager_->scanForCameras();
+    // Then update the UI
+    updateCameraList();
 }
 
 } // namespace cam_matrix::ui

@@ -437,6 +437,30 @@ public:
         return false;
         #endif
     }
+    
+    // Check if direct camera access is available
+    static bool isDirectAccessAvailable() {
+        #if defined(SAPERA_FOUND) && SAPERA_FOUND
+            return true;
+        #else
+            return false;
+        #endif
+    }
+    
+    // Get cameras available for direct access
+    static std::vector<std::string> getDirectAccessCameras() {
+        std::vector<std::string> cameraNames;
+        
+        #if defined(SAPERA_FOUND) && SAPERA_FOUND
+            // In a real implementation, we'd query the cameras with direct access
+            // Here we'll just return all cameras
+            getAvailableCameras(cameraNames);
+        #else
+            // Return an empty list
+        #endif
+        
+        return cameraNames;
+    }
 
     // Get the Sapera SDK version
     static std::string getSaperaVersion() {

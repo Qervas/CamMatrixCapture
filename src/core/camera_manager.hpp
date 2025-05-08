@@ -20,8 +20,8 @@ public:
     explicit CameraManager(QObject* parent = nullptr);
     ~CameraManager();
 
-    // Scan for available cameras
-    void scanForCameras();
+    // Update cameras from direct access detection
+    void updateCamerasFromDirectAccess(const std::vector<std::string>& cameraNames);
 
     // Get list of available cameras
     std::vector<Camera*> getCameras() const;
@@ -62,6 +62,10 @@ public:
     
     // Check if camera is selected for sync
     bool isCameraSelected(size_t index) const;
+
+public slots:
+    // Scan for available cameras - moved to slots section for Qt meta-object system
+    void scanForCameras();
 
 signals:
     void statusChanged(const std::string& status);
