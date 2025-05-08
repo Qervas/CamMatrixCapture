@@ -33,6 +33,7 @@ protected:
     void setupUi() override;
     void createConnections() override;
     void cleanup() override;
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 private slots:
     void onRefreshCameras();
@@ -69,35 +70,31 @@ private:
     bool areAllCamerasSelected() const;
 
     std::unique_ptr<core::CameraManager> cameraManager_;
-    QListWidget* cameraList_;
-    CameraControlWidget* cameraControl_;
-    QPushButton* refreshButton_;
-    QPushButton* connectButton_;
-    QPushButton* disconnectButton_;
-    QPushButton* testSaperaButton_;
-    QPushButton* directCameraButton_;
-    
-    // Multi-camera sync widgets
-    QGroupBox* syncGroup_;
-    QPushButton* clearSelectionButton_;
-    QPushButton* toggleSelectButton_;
-    QPushButton* connectSelectedButton_;
-    QPushButton* disconnectSelectedButton_;
-    QPushButton* captureSyncButton_;
-    QProgressBar* syncProgressBar_;
-    QLabel* syncStatusLabel_;
-    
-    // Video display
-    VideoDisplayWidget* videoDisplay_;
-    
-    // Sapera status widget
-    SaperaStatusWidget* saperaStatus_;
-    
-    // Debug console
-    QPlainTextEdit* debugConsole_;
-    QPushButton* clearConsoleButton_;
-    
     int selectedCameraIndex_;
+    
+    // UI Components
+    QListWidget* cameraList_{nullptr};
+    QWidget* loadingOverlay_{nullptr};
+    VideoDisplayWidget* videoDisplay_{nullptr};
+    CameraControlWidget* cameraControl_{nullptr};
+    SaperaStatusWidget* saperaStatus_{nullptr};
+    QGroupBox* syncGroup_{nullptr};
+    QProgressBar* syncProgressBar_{nullptr};
+    QLabel* syncStatusLabel_{nullptr};
+    QPlainTextEdit* debugConsole_{nullptr};
+    
+    // Buttons
+    QPushButton* refreshButton_{nullptr};
+    QPushButton* connectButton_{nullptr};
+    QPushButton* disconnectButton_{nullptr};
+    QPushButton* toggleSelectButton_{nullptr};
+    QPushButton* clearSelectionButton_{nullptr};
+    QPushButton* connectSelectedButton_{nullptr};
+    QPushButton* disconnectSelectedButton_{nullptr};
+    QPushButton* captureSyncButton_{nullptr};
+    QPushButton* clearConsoleButton_{nullptr};
+    QPushButton* testSaperaButton_{nullptr};
+    QPushButton* directCameraButton_{nullptr};
 };
 
 } // namespace cam_matrix::ui
