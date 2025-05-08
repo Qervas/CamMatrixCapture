@@ -136,8 +136,11 @@ file(GLOB_RECURSE SOURCES
     "src/*.hpp"
 )
 
+# Add resources
+set(RESOURCES src/resources/resources.qrc)
+
 # Create executable
-add_executable(${PROJECT_NAME} ${SOURCES})
+add_executable(${PROJECT_NAME} ${SOURCES} ${RESOURCES})
 
 # Include directories
 target_include_directories(${PROJECT_NAME} PRIVATE

@@ -2,6 +2,8 @@
 #include <string>
 #include <vector>
 #include <cstring> // For strncpy
+#include <atomic>  // For tracking device instances
+#include <QDebug>  // For qDebug
 
 // Let CMake decide if we should use the real Sapera SDK or our mock implementation
 #if defined(SAPERA_FOUND) && SAPERA_FOUND && defined(HAS_SAPERA) && HAS_SAPERA
@@ -72,11 +74,18 @@
         // Stub base SapManager class
         class SapManager {
         public:
-            static int GetServerCount() { return 1; }
+            static int GetServerCount() { return 5; }  // Increased to 5 to match all cameras
             static bool GetServerName(int index, char* serverName, size_t maxLen) {
-                if (index == 0) {
-                    const char* name = "Nano-C4020 (Mock)";
-                    strncpy(serverName, name, maxLen);
+                const char* names[] = {
+                    "Nano-C4020_Main",
+                    "Nano-C4020_1",
+                    "Nano-C4020_2",
+                    "Nano-C4020_3",
+                    "Nano-C4020_4"
+                };
+                
+                if (index >= 0 && index < 5) {
+                    strncpy(serverName, names[index], maxLen);
                     return true;
                 }
                 return false;
@@ -137,13 +146,58 @@
         
         // Device class
         class SapAcqDevice {
-        public:
-            SapAcqDevice() {}
-            SapAcqDevice(const char* serverName) {}
-            ~SapAcqDevice() {}
+        private:
+            // Static counter to track the number of device instances
+            static std::atomic<int> s_deviceCount;
+            static constexpr int MAX_DEVICES = 4;  // Maximum supported devices
             
-            bool Create() { return true; }
-            bool Destroy() { return true; }
+            bool m_isConnected;
+            std::string m_serverName;
+            
+        public:
+            SapAcqDevice() : m_isConnected(false) {}
+            
+            SapAcqDevice(const char* serverName) : m_isConnected(false) {
+                if (serverName) {
+                    m_serverName = serverName;
+                }
+            }
+            
+            ~SapAcqDevice() {
+                if (m_isConnected) {
+                    Destroy();
+                }
+            }
+            
+            bool Create() {
+                // Check if we're already at the maximum number of devices
+                int currentCount = s_deviceCount.load();
+                if (currentCount >= MAX_DEVICES) {
+                    // Too many devices already connected
+                    return false;
+                }
+                
+                // Simulate different behavior for the fourth camera (Nano-C4020_4)
+                if (m_serverName == "Nano-C4020_4" && currentCount == 3) {
+                    // Allow this camera to connect but with limited resources
+                    s_deviceCount++;
+                    m_isConnected = true;
+                    return true;
+                }
+                
+                // Increment counter and connect
+                s_deviceCount++;
+                m_isConnected = true;
+                return true;
+            }
+            
+            bool Destroy() {
+                if (m_isConnected) {
+                    s_deviceCount--;
+                    m_isConnected = false;
+                }
+                return true;
+            }
             
             SapLocation GetLocation() { return SapLocation(); }
             
@@ -158,7 +212,11 @@
             
             bool GetFeatureValue(const char* featureName, char* valueStr, size_t maxLen) {
                 if (strcmp(featureName, "DeviceModelName") == 0) {
-                    strncpy(valueStr, "Nano-C4020 Mock Camera", maxLen);
+                    if (!m_serverName.empty()) {
+                        strncpy(valueStr, m_serverName.c_str(), maxLen);
+                    } else {
+                        strncpy(valueStr, "Nano-C4020 Mock Camera", maxLen);
+                    }
                 } else if (strcmp(featureName, "DeviceSerialNumber") == 0) {
                     strncpy(valueStr, "SN12345678", maxLen);
                 } else if (strcmp(featureName, "DeviceFirmwareVersion") == 0) {
@@ -186,6 +244,9 @@
                 return true;
             }
         };
+        
+        // Initialize the static device counter
+        std::atomic<int> SapAcqDevice::s_deviceCount(0);
         
         // Buffer classes
         class SapBuffer {
@@ -263,9 +324,64 @@
         };
         
         class SapAcqDeviceToBuf : public SapTransfer {
-        public:
-            SapAcqDeviceToBuf() {}
-            SapAcqDeviceToBuf(SapAcqDevice* pDevice, SapBuffer* pBuffer) {}
+        private:
+            SapAcqDevice* m_pDevice;
+            SapBuffer* m_pBuffer;
+            bool m_isLastCamera;
+            
+public:
+            SapAcqDeviceToBuf() : m_pDevice(nullptr), m_pBuffer(nullptr), m_isLastCamera(false) {}
+            
+            SapAcqDeviceToBuf(SapAcqDevice* pDevice, SapBuffer* pBuffer) 
+                : m_pDevice(pDevice), m_pBuffer(pBuffer), m_isLastCamera(false) 
+            {
+                // Check if this is the 4th Nano camera which has special handling
+                if (pDevice) {
+                    // Get the device name
+                    char deviceName[256] = {0};
+                    SapFeature feature(pDevice->GetLocation());
+                    if (feature.Create()) {
+                        pDevice->GetFeatureValue("DeviceModelName", deviceName, sizeof(deviceName));
+                        feature.Destroy();
+                        
+                        if (strcmp(deviceName, "Nano-C4020_4") == 0) {
+                            m_isLastCamera = true;
+                        }
+                    }
+                }
+            }
+            
+            // Override base methods to handle the special case of the 4th camera
+            bool Create() override {
+                // Normal camera - use base implementation
+                if (!m_isLastCamera) {
+                    return SapTransfer::Create();
+                }
+                
+                // Special handling for the 4th camera
+                // Still return true so the app thinks it worked, but log a warning
+                qDebug() << "WARNING: Creating SapAcqDeviceToBuf for camera 4 - limited functionality";
+                return true;
+            }
+            
+            bool Grab() override {
+                // Normal camera - use base implementation
+                if (!m_isLastCamera) {
+                    return SapTransfer::Grab();
+                }
+                
+                // Special handling for the 4th camera - can grab frames but not in sync
+                // Return true to avoid errors, but the capture won't be synchronized
+                qDebug() << "WARNING: Grabbing frame for camera 4 - not synchronized with others";
+                
+                // Invoke the callback directly to simulate a frame being ready
+                if (m_pCallback && m_pContext) {
+                    SapXferCallbackInfo info(m_pContext);
+                    m_pCallback(&info);
+                }
+                
+                return true;
+            }
         };
         
         class SapView {
@@ -318,10 +434,34 @@ public:
         #if defined(HAS_GIGE_VISION) && HAS_GIGE_VISION
             return true;
         #else
+        return false;
+        #endif
+    }
+    
+    // Check if direct camera access is available
+    static bool isDirectAccessAvailable() {
+        #if defined(SAPERA_FOUND) && SAPERA_FOUND
+            return true;
+        #else
             return false;
         #endif
     }
     
+    // Get cameras available for direct access
+    static std::vector<std::string> getDirectAccessCameras() {
+        std::vector<std::string> cameraNames;
+        
+        #if defined(SAPERA_FOUND) && SAPERA_FOUND
+            // In a real implementation, we'd query the cameras with direct access
+            // Here we'll just return all cameras
+            getAvailableCameras(cameraNames);
+        #else
+            // Return an empty list
+        #endif
+        
+        return cameraNames;
+    }
+
     // Get the Sapera SDK version
     static std::string getSaperaVersion() {
         #if defined(SAPERA_FOUND) && SAPERA_FOUND
@@ -359,17 +499,44 @@ public:
             for (int i = 0; i < serverCount; ++i) {
                 char serverName[CORSERVER_MAX_STRLEN];
                 if (SapManager::GetServerName(i, serverName, sizeof(serverName))) {
-                    cameraNames.push_back(serverName);
+                    // Skip excluded cameras
+                    if (!shouldExcludeCamera(serverName)) {
+                        cameraNames.push_back(serverName);
+                    }
                 }
             }
         #else
-            // Return some simulated cameras
-            cameraNames.push_back("Nano-C4020 (Mock)");
-            cameraNames.push_back("GigE-1800 (Mock)");
-            cameraNames.push_back("FiberCam-6K (Mock)");
+            // Return all cameras in our mock system
+            int serverCount = SapManager::GetServerCount();
+            for (int i = 0; i < serverCount; ++i) {
+                char serverName[CORSERVER_MAX_STRLEN];
+                if (SapManager::GetServerName(i, serverName, sizeof(serverName))) {
+                    // Skip excluded cameras
+                    if (!shouldExcludeCamera(serverName)) {
+                        cameraNames.push_back(serverName);
+                    }
+                }
+            }
         #endif
         
         return !cameraNames.empty();
+    }
+
+    // Helper method to determine if a camera should be excluded from the list
+    static bool shouldExcludeCamera(const std::string& cameraName) {
+        // Exclude the System camera
+        if (cameraName == "System") {
+            return true;
+        }
+        
+        // Exclude mock cameras
+        if (cameraName == "Mock Camera" || 
+            cameraName == "Dummy Camera" || 
+            cameraName.find("Mock") != std::string::npos) {
+            return true;
+        }
+        
+        return false;
     }
 };
 

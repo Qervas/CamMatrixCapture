@@ -40,6 +40,8 @@ public slots:
 signals:
     void statusChanged(const QString& status);
     void error(const QString& error);
+    void camerasFound(const std::vector<std::string>& cameraNames);
+    void cameraDetected(const std::string& cameraName);
 
 private:
     void setupUi();

@@ -30,7 +30,7 @@ public slots:
     void generateFrames();
 
 signals:
-    void frameGenerated(const QImage& frame);
+    void frameReady(const QImage& frame);
     void finished();
 
 private:
@@ -66,6 +66,12 @@ public:
 
     // Camera properties
     double getExposureTime() const;
+    double getGain() const;
+    std::string getPixelFormat() const;
+    
+    // Camera settings
+    bool setGain(double gain);
+    bool setPixelFormat(const std::string& format);
 
     // Get the current frame - non-blocking, may return empty frame
     QImage getFrame() const;
@@ -98,6 +104,7 @@ private:
     std::string name_;
     std::atomic<bool> isConnected_{false};
     std::atomic<double> exposureTime_{10000.0};
+    double exposureTimeValue_{10000.0}; // Current exposure time value for the frame generator
 
     // Thread safety
     mutable std::mutex frameMutex_;
@@ -110,6 +117,14 @@ private:
     bool saveImageToFile(const QImage& image, const std::string& filePath);
     void updateFrameFromBuffer();
     void createCameraThread();
+    
+    // Frame generator thread and worker - available in both compilation modes
+    QThread frameGeneratorThread_;
+    FrameGeneratorWorker* frameGenerator_{nullptr};
+    
+    // Thread management methods - available in both compilation modes
+    void startFrameThread();
+    void stopFrameThread();
     
 #ifdef HAS_SAPERA
     // Sapera-specific implementation
@@ -127,14 +142,6 @@ private:
     std::unique_ptr<SapBufferWithTrash> buffer_;
     std::unique_ptr<SapAcqDeviceToBuf> transfer_;
     std::unique_ptr<SapView> view_;
-#else
-    // For non-Sapera implementations
-    QThread frameGeneratorThread_;
-    FrameGeneratorWorker* frameGenerator_{nullptr};
-    
-    // Thread management
-    void startFrameThread();
-    void stopFrameThread();
 #endif
 };
 

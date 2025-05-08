@@ -17,7 +17,7 @@ public:
 
 public slots:
     void updateFrame(const QImage& frame);
-    void clearFrame();
+    void clear();
 
 protected:
     void paintEvent(QPaintEvent* event) override;

@@ -8,7 +8,8 @@ VideoDisplayWidget::VideoDisplayWidget(QWidget* parent)
     : QWidget(parent)
     , frameUpdated_(false)
 {
-    // Set black background
+    // Use theme-aware background (dark for video display regardless of theme)
+    // A dark background is better for viewing video content in both themes
     setAutoFillBackground(true);
     QPalette pal = palette();
     pal.setColor(QPalette::Window, Qt::black);
@@ -49,7 +50,7 @@ void VideoDisplayWidget::updateFrame(const QImage& frame) {
     }
 }
 
-void VideoDisplayWidget::clearFrame() {
+void VideoDisplayWidget::clear() {
     try {
         std::lock_guard<std::mutex> lock(frameMutex_);
         currentFrame_ = QImage();
@@ -60,10 +61,10 @@ void VideoDisplayWidget::clearFrame() {
         QMetaObject::invokeMethod(this, "update", Qt::QueuedConnection);
     }
     catch (const std::exception& e) {
-        qWarning() << "Exception in VideoDisplayWidget::clearFrame:" << e.what();
+        qWarning() << "Exception in VideoDisplayWidget::clear:" << e.what();
     }
     catch (...) {
-        qWarning() << "Unknown exception in VideoDisplayWidget::clearFrame";
+        qWarning() << "Unknown exception in VideoDisplayWidget::clear";
     }
 }
 
@@ -86,9 +87,18 @@ void VideoDisplayWidget::paintEvent(QPaintEvent* event) {
             int y = (height() - frameToDraw.height()) / 2;
             painter.drawImage(x, y, frameToDraw);
         } else {
-            // Draw "No Signal" text
+            // Draw "No Signal" text with high contrast for visibility
+            // White text is always good against black background
+            painter.setPen(Qt::white);  
+            QFont noSignalFont("Arial", 20);
+            noSignalFont.setBold(true);
+            painter.setFont(noSignalFont);
+            
+            // Add a subtle shadow for better readability
+            painter.setPen(QColor(0, 0, 0, 100));
+            painter.drawText(rect().adjusted(2, 2, 2, 2), Qt::AlignCenter, tr("No Signal"));
+            
             painter.setPen(Qt::white);
-            painter.setFont(QFont("Arial", 20));
             painter.drawText(rect(), Qt::AlignCenter, tr("No Signal"));
         }
     }

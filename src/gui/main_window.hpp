@@ -1,28 +1,27 @@
 #pragma once
 
-#include "ui/pages/page.hpp"
 #include <QMainWindow>
-#include <QHash>
 #include <QSharedPointer>
-#include <QString>
 
-class QTabWidget;
 class QStatusBar;
-class QToolBar;
-class QMenu;
+class QStackedWidget;
+class QTabWidget;
+
+namespace cam_matrix::ui {
+class Page;
+}
 
 namespace cam_matrix {
-
-namespace ui {
-class Page;  // Forward declaration
-}
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
 
 public:
     explicit MainWindow(QWidget* parent = nullptr);
-    ~MainWindow() override = default;
+
+public slots:
+    void refreshCameras();
+    void showStatusMessage(const QString& message, int timeout = 3000);
 
 private slots:
     void onPageStatusChanged(const QString& message);
@@ -30,25 +29,14 @@ private slots:
     void onAbout();
 
 private:
+    void loadFonts();
     void setupUi();
-    void createMenus();
-    void createToolBar();
     void createStatusBar();
-    void registerPages();
+    void addPage(ui::Page* page, const QString& title, const QString& iconName);
     void connectPageSignals(ui::Page* page);
 
-    // Core UI elements
-    QTabWidget* tabWidget_;
     QStatusBar* statusBar_;
-    QToolBar* mainToolBar_;
-    
-    // Menus
-    QMenu* fileMenu_;
-    QMenu* editMenu_;
-    QMenu* helpMenu_;
-
-    // Page management
-    QHash<QString, QSharedPointer<ui::Page>> pages_;
+    QTabWidget* tabWidget_;
 };
 
 } // namespace cam_matrix 

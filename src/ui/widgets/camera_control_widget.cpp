@@ -4,18 +4,15 @@
 #include <QLabel>
 #include <QGroupBox>
 #include <QPushButton>
+#include <QApplication>
+#include <QDebug>
 
 namespace cam_matrix::ui {
 
 CameraControlWidget::CameraControlWidget(QWidget* parent)
     : QWidget(parent)
-    , exposureGroup_(nullptr)
-    , exposureSlider_(nullptr)
-    , gainGroup_(nullptr)
-    , gainSlider_(nullptr)
     , formatGroup_(nullptr)
     , formatCombo_(nullptr)
-    , autoExposureCheck_(nullptr)
     , captureGroup_(nullptr)
     , captureButton_(nullptr)
     , currentCameraIndex_(-1)
@@ -26,44 +23,33 @@ CameraControlWidget::CameraControlWidget(QWidget* parent)
 
 void CameraControlWidget::setupUi()
 {
+    // Get system palette for theme-aware colors
+    QPalette systemPalette = QApplication::palette();
+    bool isDarkTheme = systemPalette.color(QPalette::Window).lightness() < 128;
+    
+    // Theme-aware colors
+    QString borderColor = isDarkTheme ? "#555555" : "#cccccc";
+    QString textColor = isDarkTheme ? "#e0e0e0" : "#202020";
+    
     auto* mainLayout = new QVBoxLayout(this);
 
-    // Exposure control
-    exposureGroup_ = new QGroupBox(tr("Exposure"), this);
-    auto* exposureLayout = new QVBoxLayout(exposureGroup_);
-
-    autoExposureCheck_ = new QCheckBox(tr("Auto Exposure"), this);
-    exposureLayout->addWidget(autoExposureCheck_);
-
-    exposureSlider_ = new QSlider(Qt::Horizontal, this);
-    exposureSlider_->setRange(1, 1000);
-    exposureSlider_->setValue(100);
-    exposureLayout->addWidget(exposureSlider_);
-
-    auto* exposureLabel = new QLabel(tr("Value: 100 ms"), this);
-    exposureLayout->addWidget(exposureLabel);
-
-    mainLayout->addWidget(exposureGroup_);
-
-    // Gain control
-    gainGroup_ = new QGroupBox(tr("Gain"), this);
-    auto* gainLayout = new QVBoxLayout(gainGroup_);
-
-    gainSlider_ = new QSlider(Qt::Horizontal, this);
-    gainSlider_->setRange(0, 100);
-    gainSlider_->setValue(50);
-    gainLayout->addWidget(gainSlider_);
-
-    auto* gainLabel = new QLabel(tr("Value: 50%"), this);
-    gainLayout->addWidget(gainLabel);
-
-    mainLayout->addWidget(gainGroup_);
-
+    // Create theme-aware group box style
+    QString groupBoxStyle = QString(
+        "QGroupBox { font-weight: bold; border: 1px solid %1; border-radius: 5px; margin-top: 10px; padding-top: 10px; color: %2; } "
+        "QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; }"
+    ).arg(borderColor, textColor);
+    
     // Format control
     formatGroup_ = new QGroupBox(tr("Format"), this);
+    formatGroup_->setStyleSheet(groupBoxStyle);
     auto* formatLayout = new QVBoxLayout(formatGroup_);
 
     formatCombo_ = new QComboBox(this);
+    QString comboStyle = QString(
+        "QComboBox { border: 1px solid %1; border-radius: 3px; padding: 3px; color: %2; background: transparent; }"
+    ).arg(borderColor, textColor);
+    formatCombo_->setStyleSheet(comboStyle);
+    
     formatCombo_->addItems({
         "1920x1080 (MJPEG)",
         "1280x720 (MJPEG)",
@@ -78,9 +64,17 @@ void CameraControlWidget::setupUi()
     
     // Capture photo control
     captureGroup_ = new QGroupBox(tr("Photo Capture"), this);
+    captureGroup_->setStyleSheet(groupBoxStyle);
     auto* captureLayout = new QVBoxLayout(captureGroup_);
     
+    // Theme-aware button style
+    QString buttonBgColor = isDarkTheme ? "#444444" : "#f0f0f0";
+    QString buttonStyle = QString(
+        "QPushButton { background-color: %1; border: 1px solid %2; border-radius: 4px; padding: 6px 12px; color: %3; }"
+    ).arg(buttonBgColor, borderColor, textColor);
+    
     captureButton_ = new QPushButton(tr("Capture Photo"), this);
+    captureButton_->setStyleSheet(buttonStyle);
     captureButton_->setEnabled(false); // Initially disabled until camera connected
     captureLayout->addWidget(captureButton_);
     
@@ -92,20 +86,8 @@ void CameraControlWidget::setupUi()
 
 void CameraControlWidget::createConnections()
 {
-    connect(exposureSlider_, &QSlider::valueChanged,
-            this, &CameraControlWidget::onExposureChanged);
-
-    connect(gainSlider_, &QSlider::valueChanged,
-            this, &CameraControlWidget::onGainChanged);
-
     connect(formatCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &CameraControlWidget::onFormatChanged);
-
-    connect(autoExposureCheck_, &QCheckBox::toggled,
-            [this](bool checked) {
-                exposureSlider_->setEnabled(!checked);
-                emit statusChanged(tr("Auto exposure %1").arg(checked ? "enabled" : "disabled"));
-            });
             
     connect(captureButton_, &QPushButton::clicked,
             this, &CameraControlWidget::onCapturePhotoClicked);
@@ -126,24 +108,6 @@ void CameraControlWidget::setCameraIndex(int index)
     emit statusChanged(tr("Camera %1 selected").arg(index));
 }
 
-void CameraControlWidget::onExposureChanged(int value)
-{
-    if (currentCameraIndex_ < 0)
-        return;
-
-    emit controlValueChanged("exposure", value);
-    emit statusChanged(tr("Exposure set to %1 ms").arg(value));
-}
-
-void CameraControlWidget::onGainChanged(int value)
-{
-    if (currentCameraIndex_ < 0)
-        return;
-
-    emit controlValueChanged("gain", value);
-    emit statusChanged(tr("Gain set to %1%").arg(value));
-}
-
 void CameraControlWidget::onFormatChanged(int index)
 {
     if (currentCameraIndex_ < 0)
@@ -152,6 +116,9 @@ void CameraControlWidget::onFormatChanged(int index)
     QString format = formatCombo_->itemText(index);
     emit controlValueChanged("format", index);
     emit statusChanged(tr("Format changed to %1").arg(format));
+    
+    // Add new signal emission
+    emit formatChanged(format);
 }
 
 void CameraControlWidget::onCapturePhotoClicked()
@@ -161,6 +128,29 @@ void CameraControlWidget::onCapturePhotoClicked()
         
     emit statusChanged(tr("Capturing photo from camera %1...").arg(currentCameraIndex_));
     emit capturePhotoRequested(currentCameraIndex_);
+    emit photoCaptureRequested();
+}
+
+void CameraControlWidget::setFormat(const QString& format)
+{
+    int index = formatCombo_->findText(format);
+    if (index >= 0 && formatCombo_->currentIndex() != index) {
+        formatCombo_->setCurrentIndex(index);
+    }
+}
+
+// Override the setEnabled method to ensure proper state of capture button
+void CameraControlWidget::setEnabled(bool enabled)
+{
+    QWidget::setEnabled(enabled);
+    
+    // Make sure the capture button is enabled appropriately
+    captureButton_->setEnabled(enabled && currentCameraIndex_ >= 0);
+    
+    // Debug message
+    qDebug() << "CameraControlWidget::setEnabled(" << enabled 
+             << ") with currentCameraIndex=" << currentCameraIndex_
+             << "- captureButton enabled:" << captureButton_->isEnabled();
 }
 
 } // namespace cam_matrix::ui
