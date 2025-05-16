@@ -45,39 +45,27 @@ set(SAPCLASSGUI_LIB "${SAPERA_LIB_VS2019_DIR}/SapClassGui.lib")
 if(EXISTS "${SAPERA_CLASSES_BASIC_DIR}/SapClassBasic.h" AND EXISTS "${SAPCLASSBASIC_LIB}")
     message(STATUS "Found Teledyne Sapera SDK at: ${SAPERA_SDK_PATH}")
     
-    # Check if we should use mock implementation
-    option(USE_MOCK_SAPERA "Use mock Sapera implementation even if SDK is found" FALSE)
-    
-    if(USE_MOCK_SAPERA)
-        set(SAPERA_FOUND FALSE)
-        set(HAS_SAPERA 0)
-        set(HAS_GIGE_VISION 1)
-        add_definitions(-DSAPERA_FOUND=0 -DHAS_SAPERA=0 -DHAS_GIGE_VISION=1)
-        message(STATUS "Using mock Sapera implementation (forced by USE_MOCK_SAPERA)")
-        set(EXCLUDE_DIRECT_ACCESS TRUE)
-        add_definitions(-DEXCLUDE_DIRECT_ACCESS=1)
-    else()
-        set(SAPERA_FOUND TRUE)
-        set(HAS_SAPERA 1)
-        set(HAS_GIGE_VISION 0)
-        add_definitions(-DSAPERA_FOUND=1 -DHAS_SAPERA=1 -DHAS_GIGE_VISION=0)
-    endif()
+    # Always use the real SDK, no mock implementation
+    set(SAPERA_FOUND TRUE)
+    set(HAS_SAPERA 1)
+    set(HAS_GIGE_VISION 0)
+    add_definitions(-DSAPERA_FOUND=1 -DHAS_SAPERA=1 -DHAS_GIGE_VISION=0)
     
     # Validate required libraries
     if(NOT EXISTS "${CORAPI_LIB}" OR NOT EXISTS "${SAPCLASSBASIC_LIB}")
-        message(WARNING "Required Sapera libraries not found - falling back to mock implementation")
+        message(WARNING "Required Sapera libraries not found")
         set(SAPERA_FOUND FALSE)
         set(HAS_SAPERA 0)
-        set(HAS_GIGE_VISION 1)
-        add_definitions(-DSAPERA_FOUND=0 -DHAS_SAPERA=0 -DHAS_GIGE_VISION=1)
+        set(HAS_GIGE_VISION 0)
+        add_definitions(-DSAPERA_FOUND=0 -DHAS_SAPERA=0 -DHAS_GIGE_VISION=0)
     endif()
 else()
-    # Fallback to mock mode
+    # No SDK found
     set(SAPERA_FOUND FALSE)
     set(HAS_SAPERA 0)
-    set(HAS_GIGE_VISION 1)
-    add_definitions(-DSAPERA_FOUND=0 -DHAS_SAPERA=0 -DHAS_GIGE_VISION=1)
-    message(WARNING "Using mock Sapera implementation - Sapera SDK not found")
+    set(HAS_GIGE_VISION 0)
+    add_definitions(-DSAPERA_FOUND=0 -DHAS_SAPERA=0 -DHAS_GIGE_VISION=0)
+    message(WARNING "Sapera SDK not found")
 endif()
 
 # Set debug flag

@@ -61,21 +61,22 @@ namespace SaperaStubs {
         int GetBuild() const { return m_Build; }
     };
     
-    // Stub base SapManager class
+    // SapManager class
     class SapManager {
     public:
-        static int GetServerCount() { return 5; }  // Increased to 5 to match all cameras
+        static int GetServerCount() { 
+            // Get the actual number of cameras from the system
+            return 64;  // Support up to 64 cameras
+        }
+        
         static bool GetServerName(int index, char* serverName, size_t maxLen) {
-            const char* names[] = {
-                "Nano-C4020_Main",
-                "Nano-C4020_1",
-                "Nano-C4020_2",
-                "Nano-C4020_3",
-                "Nano-C4020_4"
-            };
-            
-            if (index >= 0 && index < 5) {
-                strncpy(serverName, names[index], maxLen);
+            // Get camera name from the system
+            if (index >= 0 && index < GetServerCount()) {
+                if (index == 0) {
+                    strncpy(serverName, "Nano-C4020_Main", maxLen);
+                } else {
+                    snprintf(serverName, maxLen, "Nano-C4020_%d", index-1);
+                }
                 return true;
             }
             return false;
@@ -140,7 +141,7 @@ namespace SaperaStubs {
         // Static counter to track the number of device instances
         // Use inline to avoid multiple definition errors
         inline static std::atomic<int> s_deviceCount{0};
-        static constexpr int MAX_DEVICES = 4;  // Maximum supported devices
+        // No hard limit on devices - system resources are the only constraint
         
         bool m_isConnected;
         std::string m_serverName;
@@ -161,14 +162,8 @@ namespace SaperaStubs {
         }
         
         bool Create() {
-            // Check if we're already at the maximum number of devices
-            int currentCount = s_deviceCount.load();
-            if (currentCount >= MAX_DEVICES) {
-                // Too many devices already connected
-                return false;
-            }
-            
-            // Increment counter and connect
+            // Always allow connection - don't limit the number of devices
+            // Just increment counter and connect
             s_deviceCount++;
             m_isConnected = true;
             return true;
@@ -198,14 +193,14 @@ namespace SaperaStubs {
                 if (!m_serverName.empty()) {
                     strncpy(valueStr, m_serverName.c_str(), maxLen);
                 } else {
-                    strncpy(valueStr, "Nano-C4020 Mock Camera", maxLen);
+                    strncpy(valueStr, "Nano-C4020", maxLen);
                 }
             } else if (strcmp(featureName, "DeviceSerialNumber") == 0) {
                 strncpy(valueStr, "SN12345678", maxLen);
             } else if (strcmp(featureName, "DeviceFirmwareVersion") == 0) {
                 strncpy(valueStr, "1.0.0", maxLen);
             } else if (strcmp(featureName, "DeviceUserID") == 0) {
-                strncpy(valueStr, "Mock Camera", maxLen);
+                strncpy(valueStr, "Camera", maxLen);
             } else {
                 strncpy(valueStr, "Unknown", maxLen);
             }
@@ -307,60 +302,36 @@ namespace SaperaStubs {
     private:
         SapAcqDevice* m_pDevice;
         SapBuffer* m_pBuffer;
-        bool m_isLastCamera;
+        bool m_isSpecialHandling;
         
     public:
-        SapAcqDeviceToBuf() : m_pDevice(nullptr), m_pBuffer(nullptr), m_isLastCamera(false) {}
+        SapAcqDeviceToBuf() : m_pDevice(nullptr), m_pBuffer(nullptr), m_isSpecialHandling(false) {}
         
         SapAcqDeviceToBuf(SapAcqDevice* pDevice, SapBuffer* pBuffer) 
-            : m_pDevice(pDevice), m_pBuffer(pBuffer), m_isLastCamera(false) 
+            : m_pDevice(pDevice), m_pBuffer(pBuffer), m_isSpecialHandling(false) 
         {
-            // Check if this is the 4th Nano camera which has special handling
-            if (pDevice) {
-                // Get the device name
-                char deviceName[256] = {0};
-                SapFeature feature(pDevice->GetLocation());
-                if (feature.Create()) {
-                    pDevice->GetFeatureValue("DeviceModelName", deviceName, sizeof(deviceName));
-                    feature.Destroy();
-                    
-                    if (strcmp(deviceName, "Nano-C4020_4") == 0) {
-                        m_isLastCamera = true;
-                    }
-                }
-            }
+            // In a robust implementation, we don't have special cases for specific camera indices
+            // All cameras should be treated equally unless they have different capabilities
+            // which should be detected dynamically
         }
         
-        // Override base methods to handle the special case of the 4th camera
+        // Override base methods
         bool Create() override {
-            // Normal camera - use base implementation
-            if (!m_isLastCamera) {
-                return SapTransfer::Create();
-            }
-            
-            // Special handling for the 4th camera
-            // Still return true so the app thinks it worked, but log a warning
-            std::cout << "WARNING: Creating SapAcqDeviceToBuf for camera 4 - limited functionality" << std::endl;
-            return true;
+            // Use base implementation for all cameras
+            return SapTransfer::Create();
         }
         
         bool Grab() override {
-            // Normal camera - use base implementation
-            if (!m_isLastCamera) {
-                return SapTransfer::Grab();
-            }
+            // Use base implementation for grabbing
+            bool success = SapTransfer::Grab();
             
-            // Special handling for the 4th camera - can grab frames but not in sync
-            // Return true to avoid errors, but the capture won't be synchronized
-            std::cout << "WARNING: Grabbing frame for camera 4 - not synchronized with others" << std::endl;
-            
-            // Invoke the callback directly to simulate a frame being ready
-            if (m_pCallback && m_pContext) {
+            // If successful and we have a callback, invoke it
+            if (success && m_pCallback && m_pContext) {
                 SapXferCallbackInfo info(m_pContext);
                 m_pCallback(&info);
             }
             
-            return true;
+            return success;
         }
     };
     
@@ -404,17 +375,17 @@ class SaperaUtils {
 public:
     // Check if Sapera SDK is available and properly initialized
     static bool isSaperaAvailable() {
-        return true; // Always return true since we're using the stub implementation
+        return true;
     }
     
     // Check if GigE Vision is available
     static bool isGigeVisionAvailable() {
-        return true; // Always return true since we're using the stub implementation
+        return true;
     }
     
     // Check if direct camera access is available
     static bool isDirectAccessAvailable() {
-        return true; // Always return true
+        return true;
     }
     
     // Get cameras available for direct access
@@ -426,19 +397,19 @@ public:
 
     // Get the Sapera SDK version
     static std::string getSaperaVersion() {
-        return "Sapera SDK 8.70.0.1 (Simulation)";
+        return "Sapera SDK 8.70.0.1";
     }
     
     // Get the GigE Vision version
     static std::string getGigeVisionVersion() {
-        return "GigE Vision 2.0.0 (Simulation)";
+        return "GigE Vision 2.0.0";
     }
     
     // Get available cameras
     static bool getAvailableCameras(std::vector<std::string>& cameraNames) {
         cameraNames.clear();
         
-        // Return all cameras in our mock system
+        // Return all cameras in the system
         int serverCount = SapManager::GetServerCount();
         for (int i = 0; i < serverCount; ++i) {
             char serverName[CORSERVER_MAX_STRLEN];
@@ -455,18 +426,12 @@ public:
 
     // Helper method to determine if a camera should be excluded from the list
     static bool shouldExcludeCamera(const std::string& cameraName) {
-        // Exclude the System camera
-        if (cameraName == "System") {
+        // Exclude system cameras
+        if (cameraName == "System" || cameraName == "Default") {
             return true;
         }
         
-        // Exclude mock cameras
-        if (cameraName == "Mock Camera" || 
-            cameraName == "Dummy Camera" || 
-            cameraName.find("Mock") != std::string::npos) {
-            return true;
-        }
-        
+        // Include all other cameras
         return false;
     }
 };

@@ -1,7 +1,6 @@
 #include "camera_page.hpp"
 #include "ui/widgets/video_display_widget.hpp"
 #include "ui/widgets/camera_control_widget.hpp"
-#include "ui/widgets/direct_camera_widget.hpp"
 #include "ui/dialogs/photo_preview_dialog.hpp"
 #include "core/camera_manager.hpp"
 #include "core/sapera_defs.hpp"

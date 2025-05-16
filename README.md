@@ -1,9 +1,15 @@
-Todo:
+# Camera Matrix Capture
 
--[x] Single camera capture
+A multi-camera capture application for industrial computer vision applications. Built with Qt and the Sapera SDK.
 
--[x] Multi camera capture
+## Features
 
--[x] Friendly UI
+- Single and multi-camera capture for taking pictures
+- Friendly and intuitive UI
+- Support for industrial cameras via Sapera SDK
 
-![1746711569944](image/README/1746711569944.png)
+![Application UI](image/README/1746711569944.png)
+
+## Building
+
+This project uses CMake to manage the build process. See CMakeLists.txt for details.
