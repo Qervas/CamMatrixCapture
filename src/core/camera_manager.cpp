@@ -25,50 +25,20 @@ void CameraManager::scanForCameras()
     cameras_.clear();
     emit managerStatusChanged("Scanning for cameras...");
 
-#if HAS_SAPERA
-    // Check if Sapera SDK is available
-    if (SaperaUtils::isSaperaAvailable()) {
-        // Get the Sapera version
-        std::string version = SaperaUtils::getSaperaVersion();
-        emit statusChanged("Sapera SDK version: " + version);
-        
-        // Scan for Sapera cameras
-        std::vector<std::string> cameraNames;
-        if (SaperaUtils::getAvailableCameras(cameraNames)) {
-            for (const auto& name : cameraNames) {
-                cameras_.push_back(std::make_unique<sapera::SaperaCamera>(name));
-            }
-            emit statusChanged("Found " + std::to_string(cameras_.size()) + " Sapera cameras");
-            
-            // No need to try direct access - it will be handled by the dialog if needed
-        } else {
-            emit statusChanged("No Sapera cameras found");
-            // No longer adding mock cameras for testing
-        }
-    } else {
-        emit statusChanged("Sapera SDK not initialized properly");
-        // No longer adding mock cameras for testing
-    }
-#elif HAS_GIGE_VISION
-    // Using GigE Vision Interface
-    std::string version = SaperaUtils::getGigeVisionVersion();
-    emit statusChanged("GigE Vision Interface: " + version);
+    // Get the Sapera version
+    std::string version = SaperaUtils::getSaperaVersion();
+    emit statusChanged("Sapera SDK version: " + version);
     
-    // Scan for GigE Vision cameras
+    // Scan for Sapera cameras
     std::vector<std::string> cameraNames;
     if (SaperaUtils::getAvailableCameras(cameraNames)) {
         for (const auto& name : cameraNames) {
             cameras_.push_back(std::make_unique<sapera::SaperaCamera>(name));
         }
-        emit statusChanged("Found " + std::to_string(cameras_.size()) + " GigE Vision cameras");
+        emit statusChanged("Found " + std::to_string(cameras_.size()) + " cameras");
     } else {
-        // No longer adding mock cameras for interface testing
-        emit statusChanged("No GigE Vision cameras found");
+        emit statusChanged("No cameras found");
     }
-#else
-    emit statusChanged("Camera SDK not available");
-    // No longer adding dummy cameras for UI testing
-#endif
 
     // Notify the UI that camera list has been updated
     emit cameraStatusChanged("Camera list updated");

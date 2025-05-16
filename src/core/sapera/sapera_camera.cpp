@@ -271,7 +271,6 @@ bool SaperaCamera::connectCamera()
         [this]() {
             // This runs in the camera thread
             
-        #ifdef HAS_SAPERA
             // Create Sapera objects
             bool objectsCreated = createSaperaObjects();
             if (!objectsCreated) {
@@ -279,12 +278,11 @@ bool SaperaCamera::connectCamera()
                 return;
             }
             
+            // Apply optimal camera settings for best quality
+            applyCameraQualitySettings();
+            
             // Start frame acquisition
             startFrameAcquisition();
-        #else
-            // Start the frame thread for mock implementation
-            startFrameThread();
-        #endif
             
             // Set state to connected
             isConnected_ = true;
@@ -335,17 +333,9 @@ bool SaperaCamera::disconnectCamera()
                 try {
                     // This runs in the camera thread
                     
-                #ifdef HAS_SAPERA
-                    // Special handling for 4th Nano camera which uses the frame generator
-                    if (name_ == "Nano-C4020_4") {
-                        stopFrameThread();
-                    } else {
-                        stopFrameAcquisition();
-                        destroySaperaObjects();
-                    }
-                #else
-                    stopFrameThread();
-                #endif
+                    // Stop frame acquisition and destroy Sapera objects for all cameras
+                    stopFrameAcquisition();
+                    destroySaperaObjects();
                 
                     // Create a disconnected image to show
                     QImage disconnectedImage(640, 480, QImage::Format_RGB32);
@@ -523,12 +513,6 @@ bool SaperaCamera::setExposureTime(double microseconds)
         [this, microseconds]() {
             // This runs in the camera thread
             
-        #ifdef HAS_SAPERA
-            // Set the exposure time in the Sapera camera
-            // This is a placeholder - in a real implementation, you would
-            // set the actual exposure time on the camera
-        #endif
-            
             // Store the new exposure time
             exposureTime_ = microseconds;
             
@@ -562,21 +546,20 @@ void SaperaCamera::connectCameraAsync(const std::function<void(bool)>& callback)
         [this]() {
             // This runs in the camera thread
             
-        #ifdef HAS_SAPERA
-            qDebug() << "Using real Sapera SDK implementation";
-            if (!createSaperaObjects()) {
+            // Create Sapera objects
+            bool objectsCreated = createSaperaObjects();
+            if (!objectsCreated) {
                 QMetaObject::invokeMethod(this, [this]() {
                     emit error("Failed to create Sapera objects");
                 }, Qt::QueuedConnection);
                 return;
             }
             
+            // Apply optimal camera settings for best quality
+            applyCameraQualitySettings();
+            
             // Start frame acquisition
             startFrameAcquisition();
-        #else
-            // Start the frame generation
-            startFrameThread();
-        #endif
             
             isConnected_ = true;
             
@@ -601,15 +584,10 @@ void SaperaCamera::disconnectCameraAsync(const std::function<void(bool)>& callba
         [this]() {
             // This runs in the camera thread
             
-        #ifdef HAS_SAPERA
             // Stop frame acquisition
             stopFrameAcquisition();
             // Destroy Sapera objects
             destroySaperaObjects();
-        #else
-            // Stop the frame thread
-            stopFrameThread();
-        #endif
             
             isConnected_ = false;
             
@@ -903,14 +881,8 @@ bool SaperaCamera::configureCamera()
         [this]() {
             // This runs in the camera thread
             
-        #ifdef HAS_SAPERA
-            if (!device_ || !isConnected_) {
-                return;
-            }
-            
             // Configure camera settings - this is a placeholder
             printCameraInfo();
-        #endif
         },
         [&resultPromise](bool success) {
             // Callback - this also runs in the camera thread
@@ -1116,28 +1088,6 @@ bool SaperaCamera::createSaperaObjects()
     qDebug() << "Creating Sapera objects for camera:" << QString::fromStdString(name_);
     
     try {
-        // Special handling for the 4th Nano camera which tends to fail
-        if (name_ == "Nano-C4020_4") {
-            qDebug() << "Using special handling for 4th Nano camera";
-            
-            #ifdef HAS_SAPERA
-                // For the real Sapera implementation, use the mock implementation
-                // since this camera has issues
-                qDebug() << "Switching to mock implementation for Nano-C4020_4";
-                
-                // Instead of creating real Sapera objects, start a frame generator thread
-                startFrameThread();
-                
-                // Return success so the camera appears to be working
-                return true;
-            #else
-                // Already using mock implementation
-                return true;
-            #endif
-        }
-        
-        // For all other cameras, proceed with normal Sapera object creation
-        
         // Create a Sapera acquisition device
         device_ = std::make_unique<SapAcqDevice>(name_.c_str());
         if (!device_->Create()) {
@@ -1280,6 +1230,56 @@ bool SaperaCamera::isFeatureAvailable(const char* featureName) const
     // This is a placeholder - in a real implementation, you would
     // check if the feature exists on the camera
     return true;
+}
+
+void SaperaCamera::applyCameraQualitySettings()
+{
+#ifdef HAS_SAPERA
+    if (!device_ || !isConnected_) {
+        return;
+    }
+    
+    qDebug() << "Applying optimal quality settings to camera:" << QString::fromStdString(name_);
+    
+    try {
+        // Set optimal exposure time for better image quality (adjust as needed)
+        constexpr double optimalExposure = 15000.0; // 15ms exposure time
+        if (exposureTime_ != optimalExposure) {
+            char exposureStr[32];
+            sprintf(exposureStr, "%.1f", optimalExposure);
+            device_->SetFeatureValue("ExposureTime", exposureStr);
+            qDebug() << "Set exposure time to" << optimalExposure << "microseconds";
+            exposureTime_ = optimalExposure;
+        }
+        
+        // Set gain to improve low-light performance without saturating
+        constexpr double optimalGain = 1.0; // Adjust as needed
+        char gainStr[32];
+        sprintf(gainStr, "%.1f", optimalGain);
+        device_->SetFeatureValue("Gain", gainStr);
+        qDebug() << "Set gain to" << optimalGain;
+        
+        // Set pixel format for best quality - typically full bit depth is better
+        device_->SetFeatureValue("PixelFormat", "Mono12"); // Adjust for your camera model
+        qDebug() << "Set pixel format to Mono12 for higher bit depth";
+        
+        // Disable any automatic features that could cause variation between cameras
+        device_->SetFeatureValue("ExposureAuto", "Off");
+        device_->SetFeatureValue("GainAuto", "Off");
+        qDebug() << "Disabled automatic camera controls for consistent quality";
+        
+        // Set packet size for GigE cameras (important for performance)
+        device_->SetFeatureValue("GevSCPSPacketSize", "9000"); // Jumbo frames if network supports it
+        device_->SetFeatureValue("GevSCPD", "5000"); // Delay between packets (ns) - adjust based on network
+        qDebug() << "Optimized network transfer parameters";
+    }
+    catch (const std::exception& e) {
+        qWarning() << "Exception setting camera quality parameters:" << e.what();
+    }
+    catch (...) {
+        qWarning() << "Unknown exception in applyCameraQualitySettings";
+    }
+#endif
 }
 #endif
 

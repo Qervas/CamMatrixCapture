@@ -1,11 +1,6 @@
 #include "main_window.hpp"
 #include "ui/pages/page.hpp"
 #include "ui/pages/camera/camera_page.hpp"
-#include "ui/pages/settings/settings_page.hpp"
-#include "ui/pages/capture/capture_page.hpp"
-#include "ui/pages/calibration/calibration_page.hpp"
-#include "ui/pages/dataset/dataset_page.hpp"
-#include "ui/pages/image_processing/image_processing_page.hpp"
 
 #include <QStatusBar>
 #include <QMenuBar>
@@ -49,9 +44,8 @@ MainWindow::MainWindow(QWidget* parent)
     tabWidget_->setStyleSheet(tabStyle);
     setCentralWidget(tabWidget_);
     
-    // Add pages
+    // Add pages - only keeping Camera page
     addPage(new ui::CameraPage(this), "Camera", "camera");
-    addPage(new ui::ImageProcessingPage(this), "Processing", "image");
     
     // Set window properties
     setWindowTitle(tr("Camera Matrix Capture"));
@@ -166,7 +160,7 @@ void MainWindow::onAbout()
     QMessageBox::about(this, tr("About Camera Matrix Capture"),
                       tr("Camera Matrix Capture v1.0.0\n"
                          "A professional tool for synchronized "
-                         "multi-camera capture and calibration."));
+                         "multi-camera capture and processing."));
 }
 
 void MainWindow::refreshCameras()

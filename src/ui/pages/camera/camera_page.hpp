@@ -14,7 +14,6 @@ namespace cam_matrix::ui {
 
 class VideoDisplayWidget;
 class CameraControlWidget;
-class SaperaStatusWidget;
 
 class CameraPage : public Page {
     Q_OBJECT
@@ -43,8 +42,6 @@ private slots:
     void onCameraStatusChanged(const QString& status);
     void onManagerStatusChanged(const std::string& status);
     void onNewFrame(const QImage& frame);
-    void onTestSaperaCamera();
-    void onDirectCameraAccess();
     void onCapturePhotoRequested(int cameraIndex);
     void onPhotoCaptured(const QImage& image, const std::string& path);
     
@@ -83,7 +80,6 @@ private:
     QWidget* loadingOverlay_{nullptr};
     VideoDisplayWidget* videoDisplay_{nullptr};
     CameraControlWidget* cameraControl_{nullptr};
-    SaperaStatusWidget* saperaStatus_{nullptr};
     QWidget* syncGroup_{nullptr};
     QProgressBar* syncProgressBar_{nullptr};
     QLabel* syncStatusLabel_{nullptr};
@@ -100,8 +96,6 @@ private:
     QPushButton* disconnectSelectedButton_{nullptr};
     QPushButton* captureSyncButton_{nullptr};
     QPushButton* clearConsoleButton_{nullptr};
-    QPushButton* testSaperaButton_{nullptr};
-    QPushButton* directCameraButton_{nullptr};
     QPushButton* toggleDebugSectionsButton_{nullptr};
     
     // Debug sections for toggling

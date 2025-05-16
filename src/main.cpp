@@ -4,7 +4,6 @@
 #include <iostream>
 #include <stdexcept>
 #include <QTimer>
-#include <QDebug>
 #include "core/sapera_defs.hpp"
 
 int main(int argc, char *argv[]) {
@@ -17,17 +16,6 @@ int main(int argc, char *argv[]) {
         
         // Apply stylesheet for better appearance
         app.setStyle("Fusion");
-
-        // Debug: Print available cameras to verify "System" camera is filtered out
-        std::vector<std::string> cameraNames;
-        if (cam_matrix::core::SaperaUtils::getAvailableCameras(cameraNames)) {
-            qDebug() << "Available cameras:";
-            for (const auto& name : cameraNames) {
-                qDebug() << "  -" << QString::fromStdString(name);
-            }
-        } else {
-            qDebug() << "No cameras found";
-        }
 
         // Create GUI manager
         cam_matrix::GuiManager guiManager;

@@ -1,9 +1,10 @@
 #include "camera_page.hpp"
 #include "ui/widgets/video_display_widget.hpp"
 #include "ui/widgets/camera_control_widget.hpp"
-#include "ui/widgets/sapera_status_widget.hpp"
-#include "ui/dialogs/direct_camera_dialog.hpp"
+#include "ui/widgets/direct_camera_widget.hpp"
 #include "ui/dialogs/photo_preview_dialog.hpp"
+#include "core/camera_manager.hpp"
+#include "core/sapera_defs.hpp"
 #include "core/settings.hpp"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -18,6 +19,10 @@
 #include <QScroller>
 #include <QApplication>
 #include <QTimer>
+#include <QMenu>
+#include <QAction>
+#include <QClipboard>
+#include <QMimeData>
 
 namespace cam_matrix::ui {
 
@@ -415,48 +420,6 @@ void CameraPage::setupUi() {
     
     statusLayout->addWidget(debugContainer);
     
-    // Action buttons for direct camera access and testing
-    auto actionButtonsLayout = new QHBoxLayout();
-    
-    directCameraButton_ = new QPushButton();
-    directCameraButton_->setIcon(QIcon::fromTheme("camera-photo"));
-    directCameraButton_->setText("Direct Camera Access");
-    directCameraButton_->setIconSize(QSize(16, 16));
-    directCameraButton_->setStyleSheet(QString(
-        "QPushButton { background-color: %1; color: white; border-radius: 6px; padding: 8px 12px; text-align: left; }"
-        "QPushButton:hover { background-color: %2; }"
-        "QPushButton:pressed { background-color: %3; }"
-    ).arg(bgLight, QString::number(bgLight.mid(1).toInt(nullptr, 16) + 0x101010, 16), 
-          QString::number(bgLight.mid(1).toInt(nullptr, 16) + 0x202020, 16)));
-    
-    testSaperaButton_ = new QPushButton();
-    testSaperaButton_->setIcon(QIcon::fromTheme("tools-check-spelling"));
-    testSaperaButton_->setText("Test Sapera");
-    testSaperaButton_->setIconSize(QSize(16, 16));
-    testSaperaButton_->setStyleSheet(QString(
-        "QPushButton { background-color: %1; color: white; border-radius: 6px; padding: 8px 12px; text-align: left; }"
-        "QPushButton:hover { background-color: %2; }"
-        "QPushButton:pressed { background-color: %3; }"
-    ).arg(bgLight, QString::number(bgLight.mid(1).toInt(nullptr, 16) + 0x101010, 16), 
-          QString::number(bgLight.mid(1).toInt(nullptr, 16) + 0x202020, 16)));
-    
-    actionButtonsLayout->addWidget(directCameraButton_);
-    actionButtonsLayout->addWidget(testSaperaButton_);
-    
-    statusLayout->addLayout(actionButtonsLayout);
-    
-    // Sapera SDK status
-    saperaStatus_ = new SaperaStatusWidget();
-    saperaStatus_->setStyleSheet(QString(
-        "QWidget { background-color: transparent; }"
-    ));
-    
-    // Add debug sections to the container
-    debugSectionsLayout->addWidget(saperaStatus_);
-    
-    // Add statusSection to debugSectionsLayout
-    debugSectionsLayout->addWidget(statusSection);
-    
     // Storage path widget
     auto storageWidget = new QWidget();
     storageWidget->setStyleSheet(QString(
@@ -544,10 +507,6 @@ void CameraPage::createConnections() {
     
     // Debug console
     connect(clearConsoleButton_, &QPushButton::clicked, this, &CameraPage::clearDebugConsole);
-    
-    // Additional buttons
-    connect(testSaperaButton_, &QPushButton::clicked, this, &CameraPage::onTestSaperaCamera);
-    connect(directCameraButton_, &QPushButton::clicked, this, &CameraPage::onDirectCameraAccess);
     connect(toggleDebugSectionsButton_, &QPushButton::toggled, this, &CameraPage::onToggleDebugSections);
     
     // Camera manager signals
@@ -828,45 +787,6 @@ void CameraPage::onNewFrame(const QImage& frame) {
             .arg(frameCount)
             .arg(frame.width())
             .arg(frame.height()), "DEBUG");
-    }
-}
-
-void CameraPage::onTestSaperaCamera() {
-    logDebugMessage("Testing Sapera camera...", "ACTION");
-    // Implementation remains the same
-}
-
-void CameraPage::onDirectCameraAccess() {
-    logDebugMessage("Opening direct camera access dialog...", "ACTION");
-    DirectCameraDialog dialog(this);
-    
-    // Connect signals from dialog to update our camera list
-    connect(&dialog, &DirectCameraDialog::camerasFound, 
-            [this](const std::vector<std::string>& cameraNames) {
-                logDebugMessage(QString("Direct access found %1 cameras").arg(cameraNames.size()), "INFO");
-                // Signal to CameraManager to update its camera list
-                cameraManager_->updateCamerasFromDirectAccess(cameraNames);
-                // Update our UI
-                updateCameraList();
-            });
-            
-    connect(&dialog, &DirectCameraDialog::cameraDetected,
-            [this](const std::string& cameraName) {
-                logDebugMessage(QString("Direct access connected to camera: %1")
-                    .arg(QString::fromStdString(cameraName)), "INFO");
-            });
-            
-    connect(&dialog, &DirectCameraDialog::refreshMainCameraView,
-            [this]() {
-                logDebugMessage("Refreshing main camera view...", "ACTION");
-                onRefreshCameras();
-            });
-    
-    if (dialog.exec() == QDialog::Accepted) {
-        logDebugMessage("Direct camera access settings applied");
-        
-        // Refresh our camera list to show any newly detected cameras
-        onRefreshCameras();
     }
 }
 

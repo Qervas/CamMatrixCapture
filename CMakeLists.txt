@@ -27,7 +27,7 @@ set(CMAKE_PREFIX_PATH "C:/Qt/6.8.0/msvc2022_64" ${CMAKE_PREFIX_PATH})
 # Find required packages
 find_package(Qt6 COMPONENTS Core Gui Widgets REQUIRED)
 
-# Find Sapera SDK - using exact paths
+# Find Sapera SDK
 set(SAPERA_SDK_PATH "C:/Program Files/Teledyne DALSA/Sapera")
 set(SAPERA_INCLUDE_DIR "${SAPERA_SDK_PATH}/Include")
 set(SAPERA_CLASSES_DIR "${SAPERA_SDK_PATH}/Classes")
@@ -36,7 +36,7 @@ set(SAPERA_CLASSES_GUI_DIR "${SAPERA_SDK_PATH}/Classes/Gui")
 set(SAPERA_LIB_DIR "${SAPERA_SDK_PATH}/Lib/Win64")
 set(SAPERA_LIB_VS2019_DIR "${SAPERA_LIB_DIR}/VS2019")
 
-# Define library paths based on user's system
+# Define library paths
 set(CORAPI_LIB "${SAPERA_LIB_DIR}/corapi.lib")
 set(SAPCLASSBASIC_LIB "${SAPERA_LIB_DIR}/SapClassBasic.lib")
 set(SAPCLASSGUI_LIB "${SAPERA_LIB_VS2019_DIR}/SapClassGui.lib")
@@ -45,87 +45,42 @@ set(SAPCLASSGUI_LIB "${SAPERA_LIB_VS2019_DIR}/SapClassGui.lib")
 if(EXISTS "${SAPERA_CLASSES_BASIC_DIR}/SapClassBasic.h" AND EXISTS "${SAPCLASSBASIC_LIB}")
     message(STATUS "Found Teledyne Sapera SDK at: ${SAPERA_SDK_PATH}")
     
-    # Check if we can use the full Sapera SDK or just the stub implementation
+    # Check if we should use mock implementation
     option(USE_MOCK_SAPERA "Use mock Sapera implementation even if SDK is found" FALSE)
     
     if(USE_MOCK_SAPERA)
-        # Use mock implementation
         set(SAPERA_FOUND FALSE)
         set(HAS_SAPERA 0)
         set(HAS_GIGE_VISION 1)
-        add_definitions(-DSAPERA_FOUND=0)
-        add_definitions(-DHAS_SAPERA=0)
-        add_definitions(-DHAS_GIGE_VISION=1)
+        add_definitions(-DSAPERA_FOUND=0 -DHAS_SAPERA=0 -DHAS_GIGE_VISION=1)
         message(STATUS "Using mock Sapera implementation (forced by USE_MOCK_SAPERA)")
-        
-        # Disable direct access components that require the full SDK
         set(EXCLUDE_DIRECT_ACCESS TRUE)
         add_definitions(-DEXCLUDE_DIRECT_ACCESS=1)
     else()
-        # Use real SDK
         set(SAPERA_FOUND TRUE)
         set(HAS_SAPERA 1)
         set(HAS_GIGE_VISION 0)
-        add_definitions(-DSAPERA_FOUND=1)
-        add_definitions(-DHAS_SAPERA=1)
-        add_definitions(-DHAS_GIGE_VISION=0)
+        add_definitions(-DSAPERA_FOUND=1 -DHAS_SAPERA=1 -DHAS_GIGE_VISION=0)
     endif()
     
-    # Print detected directories for debugging
-    message(STATUS "Using include directories:")
-    message(STATUS "  - ${SAPERA_INCLUDE_DIR}")
-    message(STATUS "  - ${SAPERA_CLASSES_DIR}")
-    message(STATUS "  - ${SAPERA_CLASSES_BASIC_DIR}")
-    message(STATUS "  - ${SAPERA_CLASSES_GUI_DIR}")
-    message(STATUS "Using library directories:")
-    message(STATUS "  - ${SAPERA_LIB_DIR}")
-    message(STATUS "  - ${SAPERA_LIB_VS2019_DIR}")
-    
-    # Check required libraries exist
-    if(NOT EXISTS "${CORAPI_LIB}")
-        message(WARNING "corapi.lib not found at ${CORAPI_LIB}")
-        set(CORAPI_LIB "")
-    else()
-        message(STATUS "Found corapi.lib: ${CORAPI_LIB}")
-    endif()
-    
-    if(NOT EXISTS "${SAPCLASSBASIC_LIB}")
-        message(WARNING "SapClassBasic.lib not found at ${SAPCLASSBASIC_LIB}")
-        set(SAPCLASSBASIC_LIB "")
-    else()
-        message(STATUS "Found SapClassBasic.lib: ${SAPCLASSBASIC_LIB}")
-    endif()
-    
-    if(NOT EXISTS "${SAPCLASSGUI_LIB}")
-        message(WARNING "SapClassGui.lib not found at ${SAPCLASSGUI_LIB} - will not link")
-        set(SAPCLASSGUI_LIB "")
-    else()
-        message(STATUS "Found SapClassGui.lib: ${SAPCLASSGUI_LIB}")
-    endif()
-    
-    # Final check if we can continue with real SDK or need to fallback to mock
+    # Validate required libraries
     if(NOT EXISTS "${CORAPI_LIB}" OR NOT EXISTS "${SAPCLASSBASIC_LIB}")
         message(WARNING "Required Sapera libraries not found - falling back to mock implementation")
         set(SAPERA_FOUND FALSE)
         set(HAS_SAPERA 0)
         set(HAS_GIGE_VISION 1)
-        add_definitions(-DSAPERA_FOUND=0)
-        add_definitions(-DHAS_SAPERA=0)
-        add_definitions(-DHAS_GIGE_VISION=1)
+        add_definitions(-DSAPERA_FOUND=0 -DHAS_SAPERA=0 -DHAS_GIGE_VISION=1)
     endif()
 else()
     # Fallback to mock mode
     set(SAPERA_FOUND FALSE)
     set(HAS_SAPERA 0)
     set(HAS_GIGE_VISION 1)
-    add_definitions(-DSAPERA_FOUND=0)
-    add_definitions(-DHAS_SAPERA=0)
-    add_definitions(-DHAS_GIGE_VISION=1)
+    add_definitions(-DSAPERA_FOUND=0 -DHAS_SAPERA=0 -DHAS_GIGE_VISION=1)
     message(WARNING "Using mock Sapera implementation - Sapera SDK not found")
-    message(STATUS "Checked for: ${SAPERA_CLASSES_BASIC_DIR}/SapClassBasic.h")
 endif()
 
-# Add debugging flag in debug builds for additional error output
+# Set debug flag
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     add_definitions(-DDEBUG_MODE=1)
 endif()
@@ -191,13 +146,11 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     Qt6::Widgets
 )
 
-# Automatically deploy Qt DLLs on Windows
+# Deploy Qt DLLs on Windows
 if(WIN32)
-    # Get the Qt binary directory
     get_target_property(QT_QMAKE_EXECUTABLE Qt6::qmake IMPORTED_LOCATION)
     get_filename_component(QT_BINARY_DIR "${QT_QMAKE_EXECUTABLE}" DIRECTORY)
 
-    # Use windeployqt in post-build step
     add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
         COMMAND "${QT_BINARY_DIR}/windeployqt.exe"
             --verbose 1

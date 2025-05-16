@@ -1,6 +1,6 @@
 #pragma once
 #include "core/camera.hpp"
-#include "core/sapera_defs.hpp"  // Use our conditional include
+#include "core/sapera_defs.hpp"
 #include "camera_thread.hpp"
 
 #include <string>
@@ -79,13 +79,9 @@ public:
     // Camera configuration
     bool configureCamera();
     
-    // Show if we are real Sapera or simulation
+    // Indicates if we're using real or simulated Sapera
     bool isRealSapera() const { 
-    #ifdef HAS_SAPERA
-        return true; 
-    #else
-        return false;
-    #endif
+        return false; // Always return false since we're using the stub implementation
     }
 
 signals:
@@ -122,16 +118,16 @@ private:
     QThread frameGeneratorThread_;
     FrameGeneratorWorker* frameGenerator_{nullptr};
     
-    // Thread management methods - available in both compilation modes
+    // Thread management methods
     void startFrameThread();
     void stopFrameThread();
     
-#ifdef HAS_SAPERA
-    // Sapera-specific implementation
+    // Sapera implementation
     bool createSaperaObjects();
     void destroySaperaObjects();
     void startFrameAcquisition();
     void stopFrameAcquisition();
+    void applyCameraQualitySettings();
     void printCameraInfo() const;
     void printFeatureValue(const char* featureName) const;
     bool isFeatureAvailable(const char* featureName) const;
@@ -142,7 +138,6 @@ private:
     std::unique_ptr<SapBufferWithTrash> buffer_;
     std::unique_ptr<SapAcqDeviceToBuf> transfer_;
     std::unique_ptr<SapView> view_;
-#endif
 };
 
 } // namespace cam_matrix::core::sapera 
