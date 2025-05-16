@@ -1,15 +1,12 @@
 #pragma once
 
-#include "core/camera.hpp"
-#include "core/sapera/sapera_camera.hpp"
-#include <memory>
-#include <vector>
 #include <QObject>
+#include <vector>
 #include <set>
-#include <QDateTime>
-#include <QDir>
-#include <future>
+#include <memory>
+#include <QImage>
 #include <mutex>
+#include "core/sapera/sapera_camera_real.hpp"
 
 namespace cam_matrix::core {
 
@@ -24,14 +21,13 @@ public:
     void updateCamerasFromDirectAccess(const std::vector<std::string>& cameraNames);
 
     // Get list of available cameras
-    std::vector<Camera*> getCameras() const;
+    std::vector<SaperaCameraReal*> getCameras() const;
     
     // Get list of available camera names
     std::vector<std::string> getAvailableCameras() const;
 
     // Camera access
-    Camera* getCameraByIndex(size_t index) const;
-    sapera::SaperaCamera* getSaperaCameraByIndex(size_t index) const;
+    SaperaCameraReal* getCameraByIndex(size_t index) const;
 
     // Connection management
     bool connectCamera(size_t index);
@@ -42,13 +38,11 @@ public:
     // Camera settings
     bool setExposureTime(size_t index, double value);
     bool setGain(size_t index, double value);
-    bool setFormat(size_t index, const std::string& format);
     double getExposureTime(size_t index) const;
     double getGain(size_t index) const;
-    std::string getFormat(size_t index) const;
     
     // Photo capture
-    bool capturePhoto(size_t index, const std::string& path);
+    bool capturePhoto(size_t index, const QString& path);
 
     // Multi-camera management
     void selectCameraForSync(size_t index, bool selected);
@@ -58,7 +52,7 @@ public:
     std::set<size_t> getSelectedCameras() const;
     
     // Synchronized capture
-    bool capturePhotosSync(const std::string& basePath = "");
+    bool capturePhotosSync(const QString& basePath = "");
     
     // Check if camera is selected for sync
     bool isCameraSelected(size_t index) const;
@@ -68,26 +62,26 @@ public slots:
     void scanForCameras();
 
 signals:
-    void statusChanged(const std::string& status);
-    void error(const std::string& error);
+    void statusChanged(const QString& status);
+    void error(const QString& error);
     void cameraConnected(size_t index);
     void cameraDisconnected(size_t index);
     void syncCaptureStarted(int count);
     void syncCaptureComplete(int successCount, int totalCount);
     void syncCaptureProgress(int current, int total);
-    void photoCaptured(size_t cameraIndex, const std::string& path);
+    void photoCaptured(size_t cameraIndex, const QString& path);
     void newFrameAvailable(const QImage& frame);
     void cameraStatusChanged(const QString& status);
-    void managerStatusChanged(const std::string& status);
-    void photoCaptured(const QImage& image, const std::string& path);
+    void managerStatusChanged(const QString& status);
+    void photoCaptured(const QImage& image, const QString& path);
 
 private:
-    std::vector<std::unique_ptr<Camera>> cameras_;
+    std::vector<std::unique_ptr<SaperaCameraReal>> cameras_;
     std::set<size_t> selectedCameras_;
     mutable std::mutex selectionMutex_;
     
     // Helper method for sync capture
-    std::string generateCaptureFolder() const;
+    QString generateCaptureFolder() const;
 };
 
 } // namespace cam_matrix::core

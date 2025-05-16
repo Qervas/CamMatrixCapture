@@ -88,6 +88,7 @@ add_executable(${PROJECT_NAME} ${SOURCES} ${RESOURCES})
 # Include directories
 target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
+    "C:/Program Files/Teledyne DALSA/Sapera/Include"
 )
 
 # Add Sapera include and library directories if found
@@ -165,3 +166,5 @@ message(STATUS "Output Directory: ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
 message(STATUS "Qt Version: ${Qt6_VERSION}")
 message(STATUS "Compiler: ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}")
 message(STATUS "Sapera SDK Found: ${SAPERA_FOUND}")
+
+target_link_libraries(${PROJECT_NAME} PRIVATE "C:/Program Files/Teledyne DALSA/Sapera/Lib/Win64/SapClassBasic.lib")

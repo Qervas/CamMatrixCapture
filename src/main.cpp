@@ -4,7 +4,6 @@
 #include <iostream>
 #include <stdexcept>
 #include <QTimer>
-#include "core/sapera_defs.hpp"
 
 int main(int argc, char *argv[]) {
     try {

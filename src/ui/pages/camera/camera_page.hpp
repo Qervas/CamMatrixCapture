@@ -40,7 +40,7 @@ private slots:
     void onDisconnectCamera();
     void onCameraSelected(int index);
     void onCameraStatusChanged(const QString& status);
-    void onManagerStatusChanged(const std::string& status);
+    void onManagerStatusChanged(const QString& status);
     void onNewFrame(const QImage& frame);
     void onCapturePhotoRequested(int cameraIndex);
     void onPhotoCaptured(const QImage& image, const std::string& path);

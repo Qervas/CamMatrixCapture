@@ -125,7 +125,7 @@ void CameraControlWidget::onCapturePhotoClicked()
 {
     if (currentCameraIndex_ < 0)
         return;
-        
+    
     emit statusChanged(tr("Capturing photo from camera %1...").arg(currentCameraIndex_));
     emit capturePhotoRequested(currentCameraIndex_);
     emit photoCaptureRequested();

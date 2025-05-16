@@ -3,7 +3,6 @@
 #include "ui/widgets/camera_control_widget.hpp"
 #include "ui/dialogs/photo_preview_dialog.hpp"
 #include "core/camera_manager.hpp"
-#include "core/sapera_defs.hpp"
 #include "core/settings.hpp"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -22,6 +21,7 @@
 #include <QAction>
 #include <QClipboard>
 #include <QMimeData>
+#include <QPainter>
 
 namespace cam_matrix::ui {
 
@@ -513,30 +513,27 @@ void CameraPage::createConnections() {
             this, &CameraPage::onCameraStatusChanged);
     connect(cameraManager_.get(), &core::CameraManager::managerStatusChanged, 
             this, &CameraPage::onManagerStatusChanged);
-    connect(cameraManager_.get(), &core::CameraManager::newFrameAvailable, 
-            this, &CameraPage::onNewFrame);
     
-    // Fix photoCaptured signal connection - use the correct signal type
-    // We need to use a lambda as an adapter since the signatures don't exactly match
-    QObject::connect(cameraManager_.get(), 
-                   qOverload<const QImage&, const std::string&>(&core::CameraManager::photoCaptured),
-                   this, &CameraPage::onPhotoCaptured);
+    // Fix photoCaptured signal connection - use a lambda with matching signature
+    // and explicitly cast the signal to the correct overload.
+    connect(cameraManager_.get(), 
+            static_cast<void (core::CameraManager::*)(const QImage&, const QString&)>(&core::CameraManager::photoCaptured),
+            this, 
+            [this](const QImage& img, const QString& path) { 
+                onPhotoCaptured(img, path.toStdString()); 
+            });
     
     connect(cameraManager_.get(), &core::CameraManager::syncCaptureProgress, 
             this, &CameraPage::onSyncCaptureProgress);
     connect(cameraManager_.get(), &core::CameraManager::syncCaptureComplete, 
             this, &CameraPage::onSyncCaptureComplete);
     
-    // Camera control signals
-    connect(cameraControl_, &CameraControlWidget::formatChanged, 
-            [this](const QString& format) {
-                if (selectedCameraIndex_ >= 0) {
-                    cameraManager_->setFormat(selectedCameraIndex_, format.toStdString());
-                    logDebugMessage(QString("Set format to %1 for camera %2")
-                        .arg(format).arg(selectedCameraIndex_));
-                }
-            });
+    // Connect newFrameAvailable signal to onNewFrame slot
+    connect(cameraManager_.get(), &core::CameraManager::newFrameAvailable,
+            this, &CameraPage::onNewFrame);
     
+    // Camera control signals
+
     connect(cameraControl_, &CameraControlWidget::photoCaptureRequested, 
             [this]() {
                 if (selectedCameraIndex_ >= 0) {
@@ -568,23 +565,12 @@ void CameraPage::initialize() {
     // Set up a timer to request frames from the camera periodically (every 50ms)
     QTimer* frameTimer = new QTimer(this);
     connect(frameTimer, &QTimer::timeout, this, [this]() {
-        // If we have a selected camera and it's connected, get its frame
-        if (selectedCameraIndex_ >= 0 && cameraManager_->isCameraConnected(selectedCameraIndex_)) {
-            auto* camera = cameraManager_->getSaperaCameraByIndex(selectedCameraIndex_);
-            if (camera && camera->isConnected()) {
-                QImage currentFrame = camera->getFrame();
-                if (!currentFrame.isNull()) {
-                    videoDisplay_->updateFrame(currentFrame);
-                    
-                    // Keep track of successful frame updates
-                    static int frameCount = 0;
-                    frameCount++;
-                    
-                    // Log only occasionally
-                    if (frameCount % 60 == 0) {
-                        logDebugMessage(QString("Camera feed active - frame %1 received").arg(frameCount), "DEBUG");
-                    }
-                }
+        if (selectedCameraIndex_ >= 0) {
+            auto* camera = cameraManager_->getCameraByIndex(selectedCameraIndex_);
+            if (camera) { // Check if camera pointer is valid
+                // You might want to check if the camera is actually supposed to be connected here
+                // For now, just try to get a frame if the camera object exists
+                camera->getLatestFrame(); // Assuming getLatestFrame() exists
             }
         }
     });
@@ -594,24 +580,34 @@ void CameraPage::initialize() {
     QTimer* watchdogTimer = new QTimer(this);
     connect(watchdogTimer, &QTimer::timeout, this, [this]() {
         if (selectedCameraIndex_ >= 0) {
-            // Check if the camera is still connected
-            bool isConnected = cameraManager_->isCameraConnected(selectedCameraIndex_);
+            // Check if the camera is still responsive
+            bool isConnectedByManager = cameraManager_->isCameraConnected(selectedCameraIndex_);
             
-            // If we think it's connected but actually it's not, attempt to reconnect
-            if (!isConnected && disconnectButton_->isEnabled()) {
-                logDebugMessage("Watchdog: Camera connection lost, attempting to reconnect...", "WARNING");
-                onConnectCamera();
+            // If CameraManager thinks it's connected but actually it's not (e.g., UI state mismatch), attempt to reconnect
+            // This part of logic seems to compare manager's state with UI state (disconnectButton)
+            // Original: if (!isConnected && disconnectButton_->isEnabled()) {
+            // Let's use isConnectedByManager for clarity
+            if (!isConnectedByManager && disconnectButton_->isEnabled()) {
+                logDebugMessage("Watchdog: Camera connection potentially lost (UI/manager mismatch), attempting to reconnect...", "WARNING");
+                onConnectCamera(); // This will re-evaluate and set connection state
             }
             
-            // Send a "keepalive" signal to the camera to prevent timeout
-            auto* camera = cameraManager_->getSaperaCameraByIndex(selectedCameraIndex_);
-            if (camera && camera->isConnected()) {
-                // Get a frame to keep the connection active
-                camera->getFrame();
+            // Send a "keepalive" signal/operation to the camera to prevent timeout
+            // if the manager says it's connected.
+            auto* camera = cameraManager_->getCameraByIndex(selectedCameraIndex_);
+            if (isConnectedByManager) { // Check using CameraManager's state
+                if (camera) { // Ensure camera object exists
+                    // Get a frame to keep the connection active
+                    logDebugMessage(QString("Watchdog: Pinging camera %1 by getting a frame.").arg(selectedCameraIndex_), "DEBUG");
+                    camera->getLatestFrame();
+                } else {
+                    // This scenario (manager says connected, but no camera object) would be unusual.
+                    logDebugMessage(QString("Watchdog: CameraManager reports camera %1 connected, but getCameraByIndex returned null.").arg(selectedCameraIndex_), "ERROR");
+                }
             }
         }
     });
-    watchdogTimer->start(2000); // Check every 2 seconds
+    watchdogTimer->start(5000); // Check every 5 seconds
 }
 
 void CameraPage::cleanup() {
@@ -664,10 +660,10 @@ void CameraPage::onConnectCamera() {
             }
             
             // Get the camera object directly and request an initial frame
-            auto* camera = cameraManager_->getSaperaCameraByIndex(index);
-            if (camera && camera->isConnected()) {
+            auto* camera = cameraManager_->getCameraByIndex(index);
+            if (camera) {
                 // Try to get a current frame
-                QImage currentFrame = camera->getFrame();
+                QImage currentFrame = camera->getLatestFrame();
                 if (!currentFrame.isNull()) {
                     videoDisplay_->updateFrame(currentFrame);
                     logDebugMessage("Updated video display with initial frame");
@@ -708,59 +704,32 @@ void CameraPage::onDisconnectCamera() {
 
 void CameraPage::onCameraSelected(int index) {
     selectedCameraIndex_ = index;
-
     bool cameraSelected = (index >= 0);
-    connectButton_->setEnabled(cameraSelected);
+    // auto* camera = cameraSelected ? cameraManager_->getCameraByIndex(index) : nullptr; // camera ptr already obtained if needed
+
+    connectButton_->setEnabled(cameraSelected && !cameraManager_->isCameraConnected(index));
     disconnectButton_->setEnabled(cameraSelected && cameraManager_->isCameraConnected(index));
-    
+    cameraControl_->setEnabled(cameraSelected && cameraManager_->isCameraConnected(index));
+    cameraControl_->setCameraIndex(cameraSelected && cameraManager_->isCameraConnected(index) ? index : -1);
+
     if (cameraSelected) {
         logDebugMessage(QString("Camera selected: %1").arg(cameraList_->item(index)->text()));
         
-        // Update camera control widget with camera settings
-        bool isConnected = cameraManager_->isCameraConnected(index);
-        
-        // Force set enabled state for all controls
-        cameraControl_->setEnabled(isConnected);
-        
-        // IMPORTANT: Set the camera index to enable the capture button
-        cameraControl_->setCameraIndex(isConnected ? index : -1);
-        
-        // Log the connection status
-        logDebugMessage(QString("Camera connected status: %1").arg(isConnected ? "Connected" : "Not Connected"));
-        
-        if (isConnected) {
-            double exposure = cameraManager_->getExposureTime(index);
-            double gain = cameraManager_->getGain(index);
-            std::string format = cameraManager_->getFormat(index);
-            
-            logDebugMessage(QString("Setting camera controls - Format: %1")
-                .arg(QString::fromStdString(format)));
-                
-            // Update the control values
-            cameraControl_->setFormat(QString::fromStdString(format));
-            
-            // Force update the UI to ensure controls are enabled
-            QApplication::processEvents();
-            
-            logDebugMessage(QString("Loaded camera settings - Format: %1")
-                .arg(QString::fromStdString(format)));
-                
-            // Get a current frame to show in the video display
-            auto* camera = cameraManager_->getSaperaCameraByIndex(index);
-            if (camera) {
-                QImage currentFrame = camera->getFrame();
+        if (cameraManager_->isCameraConnected(index)) {
+            auto* camera = cameraManager_->getCameraByIndex(index);
+            if (camera) { 
+                QImage currentFrame = camera->getLatestFrame();
                 if (!currentFrame.isNull()) {
                     videoDisplay_->updateFrame(currentFrame);
-                    logDebugMessage("Updated video display with current frame");
+                    logDebugMessage("Updated video display with current frame on selection");
                 }
             }
         } else {
-            logDebugMessage("Camera not connected - controls disabled");
-            cameraControl_->setEnabled(false);
+            videoDisplay_->clear(); // Clear display if selected camera is not connected
+            logDebugMessage("Selected camera not connected - controls updated, display cleared");
         }
     } else {
-        cameraControl_->setEnabled(false);
-        cameraControl_->setCameraIndex(-1); // Disable capture button
+        videoDisplay_->clear(); // Clear display if no camera is selected
     }
 }
 
@@ -769,24 +738,8 @@ void CameraPage::onCameraStatusChanged(const QString& status) {
     updateCameraList();
 }
 
-void CameraPage::onManagerStatusChanged(const std::string& status) {
-    logDebugMessage(QString("Manager status: %1").arg(QString::fromStdString(status)));
-}
-
-void CameraPage::onNewFrame(const QImage& frame) {
-    // Update the video display with the new frame
-    videoDisplay_->updateFrame(frame);
-    
-    // Debug: log frame updates periodically
-    static int frameCount = 0;
-    frameCount++;
-    
-    if (frameCount % 30 == 0) {  // Log every 30 frames to avoid flooding
-        logDebugMessage(QString("Received frame %1 (%2x%3)")
-            .arg(frameCount)
-            .arg(frame.width())
-            .arg(frame.height()), "DEBUG");
-    }
+void CameraPage::onManagerStatusChanged(const QString& status) {
+    logDebugMessage(QString("Manager status: %1").arg(status));
 }
 
 void CameraPage::onCapturePhotoRequested(int cameraIndex) {
@@ -800,7 +753,7 @@ void CameraPage::onCapturePhotoRequested(int cameraIndex) {
             
         if (!path.isEmpty()) {
             logDebugMessage(QString("Capturing photo from camera %1 to %2").arg(cameraIndex).arg(path));
-            cameraManager_->capturePhoto(cameraIndex, path.toStdString());
+            cameraManager_->capturePhoto(cameraIndex, path);
         }
     }
 }
@@ -839,28 +792,20 @@ void CameraPage::updateCameraList() {
         QString cameraName = QString::fromStdString(cameras[i]);
         QListWidgetItem* item = new QListWidgetItem(cameraName);
         
-        // Check if camera is connected
-        bool isConnected = cameraManager_->isCameraConnected(i);
-        
-        // Add connection status
-        if (isConnected) {
+        bool isActuallyConnected = cameraManager_->isCameraConnected(i);
+
+        if (isActuallyConnected) {
             item->setIcon(QIcon::fromTheme("network-wired"));
-            item->setText(QString("%1 (Connected)").arg(cameraName));
+            // Optionally, append (Connected) to the name if not too verbose, or rely on icon + checkmark
+            // item->setText(QString("%1 (Connected)").arg(cameraName)); 
             item->setForeground(QBrush(QColor(46, 139, 87))); // SeaGreen
-            
-            // Auto-select connected cameras for multi-camera operations
-            item->setCheckState(Qt::Checked);
-            // Update camera manager selection state
-            cameraManager_->selectCameraForSync(i, true);
+            item->setCheckState(Qt::Checked); // Reflect manager's sync selection state if desired, or manage separately
+            // cameraManager_->selectCameraForSync(i, true); // Decide if auto-selecting for sync upon connection display
         } else {
             item->setIcon(QIcon::fromTheme("network-offline"));
-            // Make items checkable for multi-selection
-            item->setCheckState(Qt::Unchecked);
+            item->setCheckState(Qt::Unchecked); 
         }
-        
-        // Make items checkable for multi-selection
         item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
-        
         cameraList_->addItem(item);
     }
     
@@ -957,7 +902,7 @@ void CameraPage::onCaptureSync() {
     syncProgressBar_->show();
     
     // Call the capturePhotosSync method
-    bool success = cameraManager_->capturePhotosSync(dirPath.toStdString());
+    bool success = cameraManager_->capturePhotosSync(dirPath);
     
     if (!success) {
         logDebugMessage("Failed to start synchronized capture", "ERROR");
@@ -1146,6 +1091,18 @@ void CameraPage::onToggleDebugSections(bool checked) {
     }
     
     logDebugMessage(QString("Debug sections %1").arg(areDebugSectionsVisible_ ? "shown" : "hidden"));
+}
+
+// Add the implementation for onNewFrame
+void CameraPage::onNewFrame(const QImage& frame) {
+    logDebugMessage(QString("CameraPage::onNewFrame received frame.isNull: %1, size: %2x%3")
+        .arg(frame.isNull())
+        .arg(frame.width())
+        .arg(frame.height()), 
+        "DEBUG");
+    if (videoDisplay_) {
+        videoDisplay_->updateFrame(frame);
+    }
 }
 
 } // namespace cam_matrix::ui

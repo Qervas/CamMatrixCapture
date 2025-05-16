@@ -1,6 +1,4 @@
 #include "core/camera_manager.hpp"
-#include "core/sapera/sapera_camera.hpp"
-#include "core/sapera_defs.hpp"
 #include <QDebug>
 #include <QDateTime>
 #include <QDir>
@@ -14,7 +12,6 @@ namespace cam_matrix::core {
 CameraManager::CameraManager(QObject* parent)
     : QObject(parent)
 {
-    // Automatically scan for cameras on initialization
     QMetaObject::invokeMethod(this, "scanForCameras", Qt::QueuedConnection);
 }
 
@@ -25,28 +22,17 @@ void CameraManager::scanForCameras()
     cameras_.clear();
     emit managerStatusChanged("Scanning for cameras...");
 
-    // Get the Sapera version
-    std::string version = SaperaUtils::getSaperaVersion();
-    emit statusChanged("Sapera SDK version: " + version);
-    
-    // Scan for Sapera cameras
-    std::vector<std::string> cameraNames;
-    if (SaperaUtils::getAvailableCameras(cameraNames)) {
-        for (const auto& name : cameraNames) {
-            cameras_.push_back(std::make_unique<sapera::SaperaCamera>(name));
-        }
-        emit statusChanged("Found " + std::to_string(cameras_.size()) + " cameras");
-    } else {
-        emit statusChanged("No cameras found");
+    // Enumerate real Sapera cameras
+    auto cameraFullNames = SaperaCameraReal::enumerateCameras();
+    for (int i = 0; i < static_cast<int>(cameraFullNames.size()); ++i) {
+        cameras_.push_back(std::make_unique<SaperaCameraReal>(i, cameraFullNames[i], QString()));
     }
-
-    // Notify the UI that camera list has been updated
+    emit statusChanged(QString("Found %1 cameras").arg(cameras_.size()));
     emit cameraStatusChanged("Camera list updated");
 }
 
-std::vector<Camera*> CameraManager::getCameras() const
-{
-    std::vector<Camera*> result;
+std::vector<SaperaCameraReal*> CameraManager::getCameras() const {
+    std::vector<SaperaCameraReal*> result;
     result.reserve(cameras_.size());
     for (const auto& camera : cameras_) {
         result.push_back(camera.get());
@@ -54,81 +40,40 @@ std::vector<Camera*> CameraManager::getCameras() const
     return result;
 }
 
-Camera* CameraManager::getCameraByIndex(size_t index) const
-{
+SaperaCameraReal* CameraManager::getCameraByIndex(size_t index) const {
     if (index < cameras_.size()) {
         return cameras_[index].get();
     }
     return nullptr;
 }
 
-sapera::SaperaCamera* CameraManager::getSaperaCameraByIndex(size_t index) const
-{
+bool CameraManager::connectCamera(size_t index) {
     if (index < cameras_.size()) {
-        return dynamic_cast<sapera::SaperaCamera*>(cameras_[index].get());
-    }
-    return nullptr;
-}
-
-bool CameraManager::connectCamera(size_t index)
-{
-    if (index < cameras_.size()) {
-        qDebug() << "Connecting camera at index" << index << "..." << QString::fromStdString(cameras_[index]->getName());
-        
-        // First disconnect any existing connections to prevent duplicates
-        disconnect(cameras_[index].get(), nullptr, this, nullptr);
-        
-        bool result = cameras_[index]->connectCamera();
-        if (result) {
-            qDebug() << "Camera connected successfully, setting up signal/slot connections";
-            
-            // Connect the camera's newFrameAvailable signal to our own
-            // Important: Use Qt::QueuedConnection to ensure thread safety
-            connect(cameras_[index].get(), &Camera::newFrameAvailable,
-                    this, &CameraManager::newFrameAvailable, Qt::QueuedConnection);
-            
-            // Debug: Check if the camera can provide frames
-            auto* saperaCam = dynamic_cast<sapera::SaperaCamera*>(cameras_[index].get());
-            if (saperaCam) {
-                QImage currentFrame = saperaCam->getFrame();
-                if (!currentFrame.isNull()) {
-                    qDebug() << "Initial frame received from camera, size:" << currentFrame.size();
-                    // Forward this initial frame
-                    emit newFrameAvailable(currentFrame);
-                } else {
-                    qDebug() << "Initial frame is null";
-                }
-            }
-            
+        auto* camera = cameras_[index].get();
+        if (camera->connectCamera()) {
+            connect(camera, &SaperaCameraReal::frameReady, this, &CameraManager::newFrameAvailable, Qt::QueuedConnection);
             emit cameraConnected(index);
-            emit cameraStatusChanged(QString("Camera %1 connected").arg(QString::fromStdString(cameras_[index]->getName())));
+            emit cameraStatusChanged(QString("Camera %1 connected").arg(index));
+            return true;
         } else {
-            qDebug() << "Failed to connect camera at index" << index;
-            emit cameraStatusChanged(QString("Failed to connect camera %1").arg(QString::fromStdString(cameras_[index]->getName())));
+            emit cameraStatusChanged(QString("Failed to connect camera %1").arg(index));
         }
-        return result;
     }
     return false;
 }
 
-bool CameraManager::disconnectCamera(size_t index)
-{
+bool CameraManager::disconnectCamera(size_t index) {
     if (index < cameras_.size()) {
-        // Disconnect the signal connection before disconnecting the camera
-        disconnect(cameras_[index].get(), &Camera::newFrameAvailable,
-                   this, &CameraManager::newFrameAvailable);
-        
-        bool result = cameras_[index]->disconnectCamera();
-        if (result) {
-            emit cameraDisconnected(index);
-        }
-        return result;
+        auto* camera = cameras_[index].get();
+        disconnect(camera, &SaperaCameraReal::frameReady, this, &CameraManager::newFrameAvailable);
+        camera->disconnectCamera();
+        emit cameraDisconnected(index);
+        return true;
     }
     return false;
 }
 
-bool CameraManager::disconnectAllCameras()
-{
+bool CameraManager::disconnectAllCameras() {
     bool allDisconnected = true;
     for (size_t i = 0; i < cameras_.size(); ++i) {
         if (!disconnectCamera(i)) {
@@ -138,133 +83,84 @@ bool CameraManager::disconnectAllCameras()
     return allDisconnected;
 }
 
-// New multi-camera management methods
-void CameraManager::selectCameraForSync(size_t index, bool selected)
-{
-    if (index >= cameras_.size()) {
-        return;
-    }
-    
+void CameraManager::selectCameraForSync(size_t index, bool selected) {
+    if (index >= cameras_.size()) return;
     {
         std::lock_guard<std::mutex> lock(selectionMutex_);
-        if (selected) {
-            selectedCameras_.insert(index);
-        } else {
-            selectedCameras_.erase(index);
-        }
+        if (selected) selectedCameras_.insert(index);
+        else selectedCameras_.erase(index);
     }
-    
-    emit statusChanged("Camera " + std::to_string(index) + (selected ? " selected" : " deselected") + 
-                      " for sync (" + std::to_string(selectedCameras_.size()) + " cameras selected)");
+    emit statusChanged(QString("Camera %1 %2 for sync (%3 cameras selected)")
+        .arg(index).arg(selected ? "selected" : "deselected").arg(selectedCameras_.size()));
 }
 
-void CameraManager::clearCameraSelection()
-{
+void CameraManager::clearCameraSelection() {
     {
         std::lock_guard<std::mutex> lock(selectionMutex_);
         selectedCameras_.clear();
     }
-    
     emit statusChanged("Camera selection cleared");
 }
 
-bool CameraManager::connectSelectedCameras()
-{
+bool CameraManager::connectSelectedCameras() {
     bool allConnected = true;
     std::vector<size_t> indexesToConnect;
-    
-    // Get copy of selection to avoid locking during connection
     {
         std::lock_guard<std::mutex> lock(selectionMutex_);
         indexesToConnect.assign(selectedCameras_.begin(), selectedCameras_.end());
     }
-    
     if (indexesToConnect.empty()) {
         emit error("No cameras selected for synchronized connection");
         return false;
     }
-    
-    emit statusChanged("Connecting " + std::to_string(indexesToConnect.size()) + " cameras...");
-    
-    // Connect cameras sequentially - this could be parallelized in future
+    emit statusChanged(QString("Connecting %1 cameras...").arg(indexesToConnect.size()));
     int connectedCount = 0;
     for (size_t index : indexesToConnect) {
         if (index < cameras_.size()) {
-            bool result = cameras_[index]->connectCamera();
-            if (result) {
-                emit cameraConnected(index);
-                connectedCount++;
-            } else {
-                allConnected = false;
-                emit error("Failed to connect camera " + std::to_string(index));
-            }
+            if (connectCamera(index)) connectedCount++;
+            else allConnected = false;
         }
     }
-    
-    emit statusChanged("Connected " + std::to_string(connectedCount) + " of " + 
-                      std::to_string(indexesToConnect.size()) + " cameras");
-    
+    emit statusChanged(QString("Connected %1 of %2 cameras").arg(connectedCount).arg(indexesToConnect.size()));
     return allConnected;
 }
 
-bool CameraManager::disconnectSelectedCameras()
-{
+bool CameraManager::disconnectSelectedCameras() {
     bool allDisconnected = true;
     std::vector<size_t> indexesToDisconnect;
-    
-    // Get copy of selection to avoid locking during disconnection
     {
         std::lock_guard<std::mutex> lock(selectionMutex_);
         indexesToDisconnect.assign(selectedCameras_.begin(), selectedCameras_.end());
     }
-    
     if (indexesToDisconnect.empty()) {
         emit error("No cameras selected for synchronized disconnection");
         return false;
     }
-    
-    emit statusChanged("Disconnecting " + std::to_string(indexesToDisconnect.size()) + " cameras...");
-    
-    // Disconnect cameras sequentially
+    emit statusChanged(QString("Disconnecting %1 cameras...").arg(indexesToDisconnect.size()));
     int disconnectedCount = 0;
     for (size_t index : indexesToDisconnect) {
         if (index < cameras_.size()) {
-            bool result = cameras_[index]->disconnectCamera();
-            if (result) {
-                emit cameraDisconnected(index);
-                disconnectedCount++;
-            } else {
-                allDisconnected = false;
-                emit error("Failed to disconnect camera " + std::to_string(index));
-            }
+            if (disconnectCamera(index)) disconnectedCount++;
+            else allDisconnected = false;
         }
     }
-    
-    emit statusChanged("Disconnected " + std::to_string(disconnectedCount) + " of " + 
-                      std::to_string(indexesToDisconnect.size()) + " cameras");
-    
+    emit statusChanged(QString("Disconnected %1 of %2 cameras").arg(disconnectedCount).arg(indexesToDisconnect.size()));
     return allDisconnected;
 }
 
-std::set<size_t> CameraManager::getSelectedCameras() const
-{
+std::set<size_t> CameraManager::getSelectedCameras() const {
     std::lock_guard<std::mutex> lock(selectionMutex_);
     return selectedCameras_;
 }
 
-bool CameraManager::isCameraSelected(size_t index) const
-{
+bool CameraManager::isCameraSelected(size_t index) const {
     std::lock_guard<std::mutex> lock(selectionMutex_);
     return selectedCameras_.find(index) != selectedCameras_.end();
 }
 
-std::string CameraManager::generateCaptureFolder() const
-{
-    // Create a timestamp-based folder name
+QString CameraManager::generateCaptureFolder() const {
     QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd_HH-mm-ss");
     QString folderName = "captures/nerf_" + timestamp;
-    
-    // Create the directory
     QDir dir(folderName);
     if (!dir.exists()) {
         if (!dir.mkpath(".")) {
@@ -272,84 +168,53 @@ std::string CameraManager::generateCaptureFolder() const
             return "";
         }
     }
-    
-    return folderName.toStdString();
+    return folderName;
 }
 
-bool CameraManager::capturePhotosSync(const std::string& basePath)
-{
+bool CameraManager::capturePhotosSync(const QString& basePath) {
     std::vector<size_t> indexesToCapture;
-    
-    // Get copy of selection to avoid locking during capture
     {
         std::lock_guard<std::mutex> lock(selectionMutex_);
         indexesToCapture.assign(selectedCameras_.begin(), selectedCameras_.end());
     }
-    
     if (indexesToCapture.empty()) {
         emit error("No cameras selected for synchronized capture");
         return false;
     }
-    
-    // Check if all selected cameras are connected
     for (size_t index : indexesToCapture) {
-        if (index >= cameras_.size() || !cameras_[index]->isConnected()) {
-            emit error("Camera " + std::to_string(index) + " is not connected. "
-                      "All cameras must be connected for synchronized capture.");
+        if (index >= cameras_.size() || !isCameraConnected(index)) {
+            emit error(QString("Camera %1 is not connected. All cameras must be connected for synchronized capture.").arg(index));
             return false;
         }
     }
-    
-    // Generate a capture folder if not provided
-    std::string captureFolder = basePath;
-    if (captureFolder.empty()) {
+    QString captureFolder = basePath;
+    if (captureFolder.isEmpty()) {
         captureFolder = generateCaptureFolder();
-        if (captureFolder.empty()) {
+        if (captureFolder.isEmpty()) {
             emit error("Failed to create capture folder");
             return false;
         }
     }
-    
     emit syncCaptureStarted(static_cast<int>(indexesToCapture.size()));
-    emit statusChanged("Starting synchronized capture with " + 
-                      std::to_string(indexesToCapture.size()) + " cameras...");
-    
-    // Prepare the cameras for capture (could include focusing, etc.)
-    // For now, we'll just sleep briefly to ensure cameras are ready
+    emit statusChanged(QString("Starting synchronized capture with %1 cameras...").arg(indexesToCapture.size()));
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    
-    // Use async to capture from all cameras simultaneously
     std::vector<std::future<bool>> captureFutures;
-    std::vector<std::string> capturePaths;
+    std::vector<QString> capturePaths;
     captureFutures.reserve(indexesToCapture.size());
     capturePaths.reserve(indexesToCapture.size());
-    
-    // Launch capture operations for all cameras
     for (size_t i = 0; i < indexesToCapture.size(); ++i) {
         size_t cameraIndex = indexesToCapture[i];
-        
-        // Generate timestamp for the filename
         QString timeStamp = QDateTime::currentDateTime().toString("yyyy-MM-dd_HH-mm-ss-zzz");
-        
-        // Create filename with camera index, name, and timestamp
-        std::string filename = captureFolder + "/camera_" + 
-                              std::to_string(cameraIndex) + "_" +
-                              cameras_[cameraIndex]->getName() + "_" +
-                              timeStamp.toStdString() + ".png";
-        
+        QString filename = captureFolder + QString("/camera_%1_%2_%3.png").arg(cameraIndex).arg(cameraIndex).arg(timeStamp);
         capturePaths.push_back(filename);
-        
-        // Launch async capture operation
         captureFutures.push_back(std::async(std::launch::async, [this, cameraIndex, filename]() {
-            auto* camera = dynamic_cast<sapera::SaperaCamera*>(cameras_[cameraIndex].get());
+            auto* camera = getCameraByIndex(cameraIndex);
             if (camera) {
                 return camera->capturePhoto(filename);
             }
             return false;
         }));
     }
-    
-    // Wait for all captures to complete and count successes
     int successCount = 0;
     for (size_t i = 0; i < captureFutures.size(); ++i) {
         bool success = captureFutures[i].get();
@@ -357,171 +222,68 @@ bool CameraManager::capturePhotosSync(const std::string& basePath)
             successCount++;
             emit photoCaptured(indexesToCapture[i], capturePaths[i]);
         }
-        emit syncCaptureProgress(static_cast<int>(i + 1), 
-                               static_cast<int>(captureFutures.size()));
+        emit syncCaptureProgress(static_cast<int>(i + 1), static_cast<int>(captureFutures.size()));
     }
-    
     emit syncCaptureComplete(successCount, static_cast<int>(indexesToCapture.size()));
-    emit statusChanged("Synchronized capture complete: " + std::to_string(successCount) + 
-                      " of " + std::to_string(indexesToCapture.size()) + " successful");
-    
+    emit statusChanged(QString("Synchronized capture complete: %1 of %2 successful").arg(successCount).arg(indexesToCapture.size()));
     return successCount == static_cast<int>(indexesToCapture.size());
 }
 
-// New method implementations
 std::vector<std::string> CameraManager::getAvailableCameras() const {
     std::vector<std::string> cameraNames;
     cameraNames.reserve(cameras_.size());
-    
     for (const auto& camera : cameras_) {
-        cameraNames.push_back(camera->getName());
+        if (camera) {
+            cameraNames.push_back(camera->getServerName().toStdString());
+        }
     }
-    
     return cameraNames;
 }
 
 bool CameraManager::isCameraConnected(size_t index) const {
-    if (index < cameras_.size()) {
+    if (index < cameras_.size() && cameras_[index]) {
         return cameras_[index]->isConnected();
     }
     return false;
 }
 
 bool CameraManager::setExposureTime(size_t index, double value) {
-    if (index < cameras_.size()) {
-        bool result = cameras_[index]->setExposureTime(value);
-        if (result) {
-            emit managerStatusChanged("Exposure time set to " + std::to_string(value) + 
-                                     " for camera " + std::to_string(index));
-        }
-        return result;
-    }
+    // Not implemented in SaperaCameraReal, add if needed
+    Q_UNUSED(index)
+    Q_UNUSED(value)
     return false;
 }
 
 bool CameraManager::setGain(size_t index, double value) {
-    if (index < cameras_.size()) {
-        // Assuming Camera class would have a setGain method
-        // This might need to be implemented in the Camera base class
-        auto* saperaCam = dynamic_cast<sapera::SaperaCamera*>(cameras_[index].get());
-        if (saperaCam) {
-            bool result = saperaCam->setGain(value);
-            if (result) {
-                emit managerStatusChanged("Gain set to " + std::to_string(value) + 
-                                         " for camera " + std::to_string(index));
-            }
-            return result;
-        }
-    }
-    return false;
-}
-
-bool CameraManager::setFormat(size_t index, const std::string& format) {
-    if (index < cameras_.size()) {
-        // Assuming Camera class would have a setFormat method
-        // This might need to be implemented in the Camera base class
-        auto* saperaCam = dynamic_cast<sapera::SaperaCamera*>(cameras_[index].get());
-        if (saperaCam) {
-            bool result = saperaCam->setPixelFormat(format);
-            if (result) {
-                emit managerStatusChanged("Format set to " + format + 
-                                         " for camera " + std::to_string(index));
-            }
-            return result;
-        }
-    }
+    // Not implemented in SaperaCameraReal, add if needed
+    Q_UNUSED(index)
+    Q_UNUSED(value)
     return false;
 }
 
 double CameraManager::getExposureTime(size_t index) const {
-    if (index < cameras_.size()) {
-        auto* saperaCam = dynamic_cast<sapera::SaperaCamera*>(cameras_[index].get());
-        if (saperaCam) {
-            return saperaCam->getExposureTime();
-        }
-    }
+    // Not implemented in SaperaCameraReal, add if needed
+    Q_UNUSED(index)
     return 0.0;
 }
 
 double CameraManager::getGain(size_t index) const {
-    if (index < cameras_.size()) {
-        auto* saperaCam = dynamic_cast<sapera::SaperaCamera*>(cameras_[index].get());
-        if (saperaCam) {
-            return saperaCam->getGain();
-        }
-    }
+    // Not implemented in SaperaCameraReal, add if needed
+    Q_UNUSED(index)
     return 0.0;
 }
 
-std::string CameraManager::getFormat(size_t index) const {
+bool CameraManager::capturePhoto(size_t index, const QString& path) {
     if (index < cameras_.size()) {
-        auto* saperaCam = dynamic_cast<sapera::SaperaCamera*>(cameras_[index].get());
-        if (saperaCam) {
-            return saperaCam->getPixelFormat();
-        }
-    }
-    return "Unknown";
-}
-
-bool CameraManager::capturePhoto(size_t index, const std::string& path) {
-    if (index < cameras_.size() && cameras_[index]->isConnected()) {
-        bool result = cameras_[index]->capturePhoto(path);
-        if (result) {
-            // This is a placeholder. In a real implementation, we'd need to get the 
-            // image from the camera and emit it alongside the path
-            emit managerStatusChanged("Photo captured from camera " + std::to_string(index) + 
-                                     " and saved to " + path);
-            
-            // For the signal that camera_page.cpp expects, we would need to emit the actual image
-            // This is just a placeholder as we don't have access to the actual image here
-            QImage dummyImage;
-            emit photoCaptured(dummyImage, path);
-        }
-        return result;
+        auto* camera = cameras_[index].get();
+        return camera->capturePhoto(path);
     }
     return false;
 }
 
 void CameraManager::updateCamerasFromDirectAccess(const std::vector<std::string>& cameraNames) {
-    if (cameraNames.empty()) {
-        emit managerStatusChanged("No cameras found from direct access");
-        return;
-    }
-    
-    bool cameraAdded = false;
-    
-    // Check which cameras are not already in our list
-    std::vector<std::string> existingNames = getAvailableCameras();
-    
-    // Track indices where we find matches
-    std::set<size_t> existingIndices;
-    
-    // Check each camera from direct access against existing cameras
-    for (const auto& directName : cameraNames) {
-        bool found = false;
-        
-        // See if this camera name already exists in our list
-        for (size_t i = 0; i < existingNames.size(); ++i) {
-            if (existingNames[i] == directName) {
-                found = true;
-                existingIndices.insert(i);
-                break;
-            }
-        }
-        
-        // If not found, add it to our camera list
-        if (!found) {
-            cameras_.push_back(std::make_unique<sapera::SaperaCamera>(directName));
-            emit managerStatusChanged("Added camera from direct access: " + directName);
-            cameraAdded = true;
-        }
-    }
-    
-    if (cameraAdded) {
-        emit cameraStatusChanged("Cameras updated from direct access");
-    } else {
-        emit managerStatusChanged("No new cameras found from direct access");
-    }
+    Q_UNUSED(cameraNames)
+    // No-op: direct access not used in real Sapera integration
 }
 
 } // namespace cam_matrix::core
