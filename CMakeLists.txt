@@ -22,7 +22,7 @@ if(MSVC)
 endif()
 
 # Set Qt6 path
-set(CMAKE_PREFIX_PATH "C:/Qt/6.8.0/msvc2022_64" ${CMAKE_PREFIX_PATH})
+set(CMAKE_PREFIX_PATH "C:\\Qt\\Qt6.9.0\\6.9.0\\msvc2022_64" ${CMAKE_PREFIX_PATH})
 
 # Find required packages
 find_package(Qt6 COMPONENTS Core Gui Widgets REQUIRED)
@@ -126,6 +126,19 @@ if(SAPERA_FOUND)
             COMMENT "Copying Sapera DLL: ${DLL_PATH}"
         )
     endforeach()
+
+    # Copy the camera configuration file (CCF) to the output directory
+    set(CCF_FILE_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/config/NanoC4020.ccf")
+    if(EXISTS "${CCF_FILE_SOURCE}")
+        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${CCF_FILE_SOURCE}"
+                "$<TARGET_FILE_DIR:${PROJECT_NAME}>/NanoC4020.ccf" # Ensure filename is part of destination
+            COMMENT "Copying CCF file: ${CCF_FILE_SOURCE}"
+        )
+    else()
+        message(WARNING "CCF file not found at ${CCF_FILE_SOURCE}")
+    endif()
 endif()
 
 # Link with Qt libraries

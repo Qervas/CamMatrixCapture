@@ -24,9 +24,23 @@ void CameraManager::scanForCameras()
 
     // Enumerate real Sapera cameras
     auto cameraFullNames = SaperaCameraReal::enumerateCameras();
-    for (int i = 0; i < static_cast<int>(cameraFullNames.size()); ++i) {
-        cameras_.push_back(std::make_unique<SaperaCameraReal>(i, cameraFullNames[i], QString()));
+    
+    // Filter out non-camera devices like "System"
+    QStringList filteredCameras;
+    for (const auto& name : cameraFullNames) {
+        // Skip system devices and other non-camera devices
+        if (name.toLower() != "system" && !name.isEmpty()) {
+            filteredCameras.append(name);
+        } else {
+            qDebug() << "Skipping non-camera device:" << name;
+        }
     }
+    
+    // Create camera objects for real cameras
+    for (int i = 0; i < filteredCameras.size(); ++i) {
+        cameras_.push_back(std::make_unique<SaperaCameraReal>(i, filteredCameras[i], QString()));
+    }
+    
     emit statusChanged(QString("Found %1 cameras").arg(cameras_.size()));
     emit cameraStatusChanged("Camera list updated");
 }

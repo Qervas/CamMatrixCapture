@@ -34,6 +34,8 @@ private:
     QString m_serverName;
     QString m_configName;
     bool m_connected = false;
+    bool m_isAcquiring = false;
+    bool m_connFailed = false;
 
     SapLocation* m_loc = nullptr;
     SapAcqDevice* m_acqDevice = nullptr;
@@ -43,4 +45,5 @@ private:
     SapAcqDeviceToBuf* m_transfer = nullptr;
 
     QImage m_lastFrame;
+    std::vector<QImage> m_frames; // Buffer to store multiple frames
 }; 
