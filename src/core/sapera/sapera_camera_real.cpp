@@ -1,93 +1,134 @@
 #include <QObject>
 #include <QImage>
 #include <QString>
+#include <QStringList>
 #include "sapera_camera_real.hpp"
 #include "sapera_utils.hpp"
 #include <QDebug>
 #include <QBuffer>
 #include <functional>
+#include <QDateTime>
+#include <QDir>
+#include <QFileInfo>
+#include <QCoreApplication>
+#include <QThread>
 
-static QImage SapBufferToQImage(SapBuffer* buffer) {
-    if (!buffer) return QImage();
+// Include the proper SapBufferWithTrash header instead of redefining it
+#include <SapBufferWithTrash.h>
+
+// QImage conversion helper
+static QImage SapBufferToQImage(SapBuffer *buffer)
+{
+    if (!buffer)
+        return QImage();
     int width = buffer->GetWidth();
     int height = buffer->GetHeight();
     int format = buffer->GetFormat();
-    void* pData = nullptr;
-    if (!buffer->GetAddress(&pData) || !pData) return QImage();
-    if (format == SapFormatRGB888) {
-        return QImage(static_cast<const uchar*>(pData), width, height, width * 3, QImage::Format_RGB888).copy();
+    void *pData = nullptr;
+    if (!buffer->GetAddress(&pData) || !pData)
+        return QImage();
+    if (format == SapFormatRGB888)
+    {
+        return QImage(static_cast<const uchar *>(pData), width, height, width * 3, QImage::Format_RGB888).copy();
     }
     return QImage();
 }
 
-SaperaCameraReal::SaperaCameraReal(int serverIndex, const QString& serverName, const QString& configName, QObject* parent)
+SaperaCameraReal::SaperaCameraReal(int serverIndex, const QString &serverName, const QString &configName, QObject *parent)
     : QObject(parent), m_serverIndex(serverIndex), m_serverName(serverName), m_configName(configName)
 {
-    m_loc = new SapLocation(serverIndex, 0);
+    // Create the location with server name as in the sample code
+    m_loc = new SapLocation(serverName.toStdString().c_str(), 0);
 }
 
-SaperaCameraReal::~SaperaCameraReal() {
+SaperaCameraReal::~SaperaCameraReal()
+{
     cleanup();
     delete m_loc;
 }
 
-void SaperaCameraReal::cleanup() {
+void SaperaCameraReal::cleanup()
+{
     // Disable error dialogs during cleanup
     SapManager::SetDisplayStatusMode(FALSE);
-    
-    try {
+
+    try
+    {
         // Stop and clean up all resources - order matters!
-        if (m_transfer) {
-            try {
-                if (m_isAcquiring) {
-                    try {
+        if (m_transfer)
+        {
+            try
+            {
+                if (m_isAcquiring)
+                {
+                    try
+                    {
                         // First try to stop acquisition if it's running
                         m_transfer->Freeze();
                         m_isAcquiring = false;
                         qDebug() << "Stopped acquisition for:" << m_serverName;
-                    } catch (...) {
+                    }
+                    catch (...)
+                    {
                         qWarning() << "Exception when stopping acquisition - continuing cleanup";
                     }
                 }
-                
-                try {
+
+                try
+                {
                     m_transfer->Destroy();
-                } catch (...) {
+                }
+                catch (...)
+                {
                     qWarning() << "Exception when destroying transfer object - continuing cleanup";
                 }
-                
+
                 delete m_transfer;
-            } catch (...) {
+            }
+            catch (...)
+            {
                 qWarning() << "Exception when deleting transfer object";
             }
             m_transfer = nullptr;
         }
 
-        if (m_colorConv) {
-            try {
+        if (m_colorConv)
+        {
+            try
+            {
                 m_colorConv->Destroy();
                 delete m_colorConv;
-            } catch (...) {
+            }
+            catch (...)
+            {
                 qWarning() << "Exception when cleaning up color conversion object";
             }
             m_colorConv = nullptr;
         }
 
-        if (m_rawBuffer) {
-            try {
+        if (m_rawBuffer)
+        {
+            try
+            {
                 m_rawBuffer->Destroy();
                 delete m_rawBuffer;
-            } catch (...) {
+            }
+            catch (...)
+            {
                 qWarning() << "Exception when cleaning up buffer object";
             }
             m_rawBuffer = nullptr;
         }
 
-        if (m_acqDevice) {
-            try {
+        if (m_acqDevice)
+        {
+            try
+            {
                 m_acqDevice->Destroy();
                 delete m_acqDevice;
-            } catch (...) {
+            }
+            catch (...)
+            {
                 qWarning() << "Exception when cleaning up acquisition device";
             }
             m_acqDevice = nullptr;
@@ -97,9 +138,11 @@ void SaperaCameraReal::cleanup() {
         m_connFailed = false;
         m_connected = false;
         m_isAcquiring = false;
-        
+
         qDebug() << "Cleanup completed for:" << m_serverName;
-    } catch (...) {
+    }
+    catch (...)
+    {
         qWarning() << "Unhandled exception during cleanup";
         // Reset all pointers to nullptr to prevent double-free attempts
         m_transfer = nullptr;
@@ -111,362 +154,452 @@ void SaperaCameraReal::cleanup() {
     }
 }
 
-bool SaperaCameraReal::connectCamera() {
-    try {
+bool SaperaCameraReal::connectCamera()
+{
+    try
+    {
         // Make sure we clean up any previously created objects first
         cleanup();
-        
+
         // Initialize Sapera with error suppression - do this FIRST
-        sapera_utils::initialize_sapera();
-        
+        SapManager::SetDisplayStatusMode(FALSE);
+
         qDebug() << "Connecting to camera:" << m_serverName;
-        
-        // Use unique_ptr for RAII during connection process
-        // Important: Use the server name directly as in the working version
-        std::unique_ptr<SapAcqDevice> tempAcqDevice;
-        try {
-            tempAcqDevice.reset(new SapAcqDevice(m_serverName.toStdString().c_str()));
-        } catch (const std::exception& e) {
-            qWarning() << "Exception creating acquisition device:" << e.what();
-            m_connected = false;
-            return false;
-        } catch (...) {
-            qWarning() << "Unknown exception creating acquisition device";
-            m_connected = false;
-            return false;
-        }
-        
-        if (!tempAcqDevice) {
-            qWarning() << "Failed to allocate acquisition device for server:" << m_serverName;
-            m_connected = false;
-            return false;
-        }
-        
-        // Set display mode on the device to suppress errors
-        try {
-            tempAcqDevice->SetDisplayStatusMode(FALSE);
-        } catch (...) {
-            qWarning() << "Exception while setting display mode";
-            // Continue anyway
-        }
-        
-        // Use SFINAE for creating the device, but maintain the working approach
-        if (!sapera_utils::safe_create(tempAcqDevice.get(), "acquisition device")) {
-            qWarning() << "Failed to create acquisition device for server:" << m_serverName;
-            m_connected = false;
+
+        // Create SapLocation directly using the server name from original sample code
+        // The key is using the naming pattern Nano-C4020_N as in the console sample
+        *m_loc = SapLocation(m_serverName.toStdString().c_str(), 0);
+
+        // Find the configuration file (use the copy in build directory)
+        QString ccfPath = QCoreApplication::applicationDirPath() + "/NanoC4020.ccf";
+        QFileInfo checkFile(ccfPath);
+
+        // Create the acquisition device - direct approach like sample code
+        m_acqDevice = new SapAcqDevice(*m_loc, ccfPath.toStdString().c_str());
+
+        // Create buffer - simpler approach
+        m_rawBuffer = new SapBuffer(2, m_acqDevice);
+
+        // Create transfer - simpler approach matching sample
+        m_transfer = new SapAcqDeviceToBuf(m_acqDevice, m_rawBuffer, XferCallback, this);
+
+        qDebug() << "Creating Sapera objects...";
+
+        // Create all objects in sequence
+        if (!m_acqDevice->Create())
+        {
+            qWarning() << "Failed to create acquisition device";
+            cleanup();
             return false;
         }
-        
-        qDebug() << "Successfully created acquisition device for:" << m_serverName;
-        
-        // Create buffer with SFINAE utility (2 buffers for continuous acquisition)
-        std::unique_ptr<SapBuffer> tempRawBuffer;
-        try {
-            tempRawBuffer.reset(new SapBuffer(2, tempAcqDevice.get()));
-            if (!tempRawBuffer) {
-                qWarning() << "Failed to allocate buffer for server:" << m_serverName;
-                return false;
-            }
-        } catch (...) {
-            qWarning() << "Exception creating buffer for server:" << m_serverName;
+
+        if (!m_rawBuffer->Create())
+        {
+            qWarning() << "Failed to create buffer";
+            cleanup();
             return false;
         }
-        
-        // Create the buffer using SFINAE
-        if (!sapera_utils::safe_create(tempRawBuffer.get(), "raw buffer")) {
-            qWarning() << "Failed to create raw buffer for server:" << m_serverName;
+
+        // Create color conversion
+        m_colorConv = new SapColorConversion(m_rawBuffer);
+        if (m_colorConv->Create())
+        {
+            m_colorConv->Enable(TRUE, FALSE);
+            m_colorConv->SetOutputFormat(SapFormatRGB888);
+            m_colorConv->SetAlign(SapColorConversion::AlignRGGB);
+            m_colorConv->SetMethod(SapColorConversion::Method1);
+            qDebug() << "Color conversion created successfully";
+        }
+        else
+        {
+            qWarning() << "Failed to create color conversion";
+            delete m_colorConv;
+            m_colorConv = nullptr;
+        }
+
+        if (!m_transfer->Create())
+        {
+            qWarning() << "Failed to create transfer";
+            cleanup();
             return false;
         }
-        
-        // Get the buffer format safely
-        SapFormat rawBufferFormatVal = 0; // Default to 0 (usually means unknown/invalid)
-        try {
-            rawBufferFormatVal = tempRawBuffer->GetFormat();
-            qDebug() << "Raw buffer format for" << m_serverName << "is:" << static_cast<int>(rawBufferFormatVal);
-        } catch (...) {
-            qWarning() << "Exception getting buffer format - continuing anyway";
-        }
-        
-        // Attempt to create color conversion - but don't fail if it doesn't work
-        std::unique_ptr<SapColorConversion> tempColorConv;
-        bool colorConvCreated = false;
-        try {
-            tempColorConv.reset(new SapColorConversion(tempAcqDevice.get(), tempRawBuffer.get()));
-            if (tempColorConv && sapera_utils::safe_create(tempColorConv.get(), "color conversion")) {
-                colorConvCreated = true;
-                qDebug() << "Created color conversion for server:" << m_serverName;
-            } else {
-                qWarning() << "Could not create color conversion for server:" << m_serverName;
-            }
-        } catch (...) {
-            qWarning() << "Exception creating color conversion - continuing without it";
-        }
-        
-        // Only configure color conversion if created successfully
-        bool colorEnabled = false;
-        if (colorConvCreated) {
-            try {
-                // Use the safe operation wrapper for enabling
-                colorEnabled = sapera_utils::safe_sapera_op(
-                    [&]() { return tempColorConv->Enable(TRUE, FALSE); },
-                    "enable color conversion"
-                );
-                
-                if (colorEnabled) {
-                    qDebug() << "Color conversion enabled for:" << m_serverName;
-                    
-                    // Set format now that conversion is enabled
-                    sapera_utils::safe_sapera_op(
-                        [&]() { return tempColorConv->SetOutputFormat(SapFormatRGB888); },
-                        "set output format"
-                    );
-                    
-                    // Get alignment data safely
-                    SapColorConversion::Align detectedAlign = SapColorConversion::AlignNone;
-                    sapera_utils::safe_sapera_op(
-                        [&]() {
-                            detectedAlign = SapColorConversion::GetAlignModeFromAcqDevice(tempAcqDevice.get());
-                            return true;
-                        },
-                        "get Bayer alignment"
-                    );
-                    
-                    qDebug() << "Detected Bayer alignment for" << m_serverName << "is:" << detectedAlign;
-                    
-                    // Set alignment if valid
-                    if (detectedAlign != SapColorConversion::AlignNone) {
-                        sapera_utils::safe_sapera_op(
-                            [&]() { return tempColorConv->SetAlign(detectedAlign); },
-                            "set Bayer alignment"
-                        );
-                        
-                        sapera_utils::safe_sapera_op(
-                            [&]() { return tempColorConv->SetMethod(SapColorConversion::Method1); },
-                            "set conversion method"
-                        );
-                    }
-                } else {
-                    qWarning() << "Color conversion could not be enabled for:" << m_serverName;
-                }
-            } catch (...) {
-                qWarning() << "Exception configuring color conversion - continuing without it";
-                colorConvCreated = false;
-            }
-        }
-        
-        // Create transfer object with SFINAE utility
-        std::unique_ptr<SapAcqDeviceToBuf> tempTransfer;
-        try {
-            tempTransfer.reset(new SapAcqDeviceToBuf(tempAcqDevice.get(), tempRawBuffer.get()));
-            if (!tempTransfer) {
-                qWarning() << "Failed to allocate transfer object for:" << m_serverName;
-                return false;
-            }
-            
-            tempTransfer->SetCallbackInfo(XferCallback, this);
-            tempTransfer->SetAutoEmpty(true);
-        } catch (...) {
-            qWarning() << "Exception creating transfer object for:" << m_serverName;
+
+        if (!m_transfer->Init())
+        {
+            qWarning() << "Failed to initialize transfer";
+            cleanup();
             return false;
         }
-        
-        qDebug() << "Creating transfer object for:" << m_serverName;
-        try {
-            if (!sapera_utils::safe_create(tempTransfer.get(), "transfer")) {
-                qWarning() << "Failed to create transfer object for:" << m_serverName;
-                return false;
-            }
-        } catch (...) {
-            qWarning() << "Exception in transfer creation for:" << m_serverName;
+
+        // Start acquisition
+        if (!m_transfer->Grab())
+        {
+            qWarning() << "Failed to start acquisition";
+            cleanup();
             return false;
         }
-        
-        qDebug() << "Starting acquisition for:" << m_serverName;
-        // Start acquisition using safe wrapper with extra protection
-        bool acquisitionStarted = false;
-        try {
-            acquisitionStarted = sapera_utils::safe_sapera_op(
-                [&]() { return tempTransfer->Grab(); },
-                "start acquisition"
-            );
-            
-            if (!acquisitionStarted) {
-                qWarning() << "Failed to start acquisition for:" << m_serverName;
-                return false;
-            }
-        } catch (...) {
-            qWarning() << "Exception starting acquisition for:" << m_serverName;
-            return false;
-        }
-        
-        // Transfer ownership of the temp objects to the member variables
-        try {
-            m_acqDevice = tempAcqDevice.release();
-            m_rawBuffer = tempRawBuffer.release();
-            if (colorConvCreated) {
-                m_colorConv = tempColorConv.release();
-            }
-            m_transfer = tempTransfer.release();
-        } catch (...) {
-            qWarning() << "Exception during object ownership transfer";
-            cleanup(); // Make sure we clean up any partially initialized objects
-            return false;
-        }
-    
+
         m_connected = true;
-        qDebug() << "Camera connected and acquisition started for:" << m_serverName;
+        m_isAcquiring = true;
+        qDebug() << "Camera connected and acquisition started";
         return true;
-    } catch (const std::exception& e) {
+    }
+    catch (const std::exception &e)
+    {
         qWarning() << "Exception in connectCamera:" << e.what();
         cleanup();
-        m_connected = false;
         return false;
-    } catch (...) {
+    }
+    catch (...)
+    {
         qWarning() << "Unknown exception in connectCamera";
         cleanup();
-        m_connected = false;
         return false;
     }
 }
 
-void SaperaCameraReal::disconnectCamera() {
+void SaperaCameraReal::disconnectCamera()
+{
     stopAcquisition();
     cleanup();
 }
 
-bool SaperaCameraReal::isConnected() const {
+bool SaperaCameraReal::isConnected() const
+{
     return m_connected;
 }
 
-bool SaperaCameraReal::startAcquisition() {
-    if (!m_transfer) {
+bool SaperaCameraReal::startAcquisition()
+{
+    if (!m_transfer)
+    {
         qWarning() << "Cannot start acquisition - transfer object is null for camera:" << m_serverName;
         return false;
     }
-    
-    return sapera_utils::safe_sapera_op([&]() {
+
+    return sapera_utils::safe_sapera_op([&]()
+                                        {
         bool result = m_transfer->Grab();
         if (result) {
             qDebug() << "Successfully started acquisition for camera:" << m_serverName;
         }
-        return result;
-    }, "start acquisition");
+        return result; }, "start acquisition");
 }
 
-void SaperaCameraReal::stopAcquisition() {
-    if (!m_transfer) {
+void SaperaCameraReal::stopAcquisition()
+{
+    if (!m_transfer)
+    {
         return; // Nothing to do
     }
-    
-    sapera_utils::safe_sapera_op([&]() {
+
+    sapera_utils::safe_sapera_op([&]()
+                                 {
         m_transfer->Freeze();
         qDebug() << "Acquisition stopped for camera:" << m_serverName;
-        return true;
-    }, "stop acquisition");
+        return true; }, "stop acquisition");
 }
 
-bool SaperaCameraReal::capturePhoto(const QString& filePath) {
-    // Check all required objects
-    if (!m_colorConv || !m_transfer) {
-        qWarning() << "Cannot capture photo - required objects not initialized for camera:" << m_serverName;
+bool SaperaCameraReal::capturePhoto(const QString &filePath)
+{
+    qCritical() << "========== CAPTURE PHOTO START ==========";
+    qCritical() << "Capturing photo to:" << filePath;
+
+    // Disable error dialogs immediately
+    SapManager::SetDisplayStatusMode(FALSE);
+
+    // Track if we're actively taking a photo to prevent concurrent access
+    static std::atomic<bool> isCapturingPhoto(false);
+
+    // Check if we're already in a capture operation
+    if (isCapturingPhoto.exchange(true))
+    {
+        qCritical() << "Another photo capture is already in progress, please wait";
         return false;
     }
-    
-    return sapera_utils::safe_sapera_op([&]() {
-        // First freeze the acquisition
-        if (!sapera_utils::safe_sapera_op([&]() {
+
+    // Use RAII pattern to guarantee we reset the capturing flag on exit
+    struct CaptureGuard
+    {
+        CaptureGuard() {}
+        ~CaptureGuard()
+        {
+            isCapturingPhoto.store(false);
+            qCritical() << "Photo capture flag reset - safe for new captures";
+        }
+    } captureGuard;
+
+    // We need a valid connection and active resources
+    if (!m_connected || !m_acqDevice || !m_rawBuffer || !m_transfer)
+    {
+        qCritical() << "Camera not connected or resources not initialized";
+        return false;
+    }
+
+    // CRITICAL: Make sure we have a valid m_serverName
+    if (m_serverName.isEmpty() || m_serverName == "System")
+    {
+        qCritical() << "Invalid camera name for capture:" << m_serverName;
+        return false;
+    }
+
+    qCritical() << "Using camera name:" << m_serverName << "for photo capture";
+
+    // Determine save path
+    QString savePath = filePath;
+    if (savePath.isEmpty())
+    {
+        QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd_HH-mm-ss");
+        savePath = QCoreApplication::applicationDirPath() + "/capture_" + timestamp + ".tiff";
+    }
+
+    bool saveResult = false;
+    bool wasAcquiring = m_isAcquiring;
+
+    try
+    {
+        // Add a delay before any operation to ensure stable state
+        QThread::msleep(50);
+
+        // Temporarily pause the continuous acquisition if it's running
+        if (wasAcquiring)
+        {
+            qCritical() << "Pausing live acquisition for snapshot";
             m_transfer->Freeze();
-            return true;
-        }, "freeze for photo")) {
+            // Give it time to stop completely - avoid resource conflicts
+            QThread::msleep(200);
+        }
+
+        // Take a fresh snapshot with resource conflict handling
+        qCritical() << "Taking a fresh snapshot";
+
+        int retryCount = 0;
+        bool snapSuccess = false;
+        while (!snapSuccess && retryCount < 3)
+        {
+            try
+            {
+                snapSuccess = m_transfer->Snap();
+                if (!snapSuccess)
+                {
+                    retryCount++;
+                    qCritical() << "Snap failed, retrying..." << retryCount;
+                    QThread::msleep(200 * retryCount); // Increasing delay with each retry
+                }
+            }
+            catch (...)
+            {
+                qCritical() << "Exception during Snap operation, retrying..." << retryCount;
+                retryCount++;
+                QThread::msleep(300 * retryCount);
+            }
+        }
+
+        if (!snapSuccess)
+        {
+            qCritical() << "Failed to snap after multiple attempts";
+
+            // Restart acquisition if it was running before
+            if (wasAcquiring)
+            {
+                qCritical() << "Restarting live acquisition";
+                m_transfer->Grab();
+                m_isAcquiring = true;
+            }
+
             return false;
         }
-        
-        // Wait for transfer completion with timeout
-        bool waitResult = false;
-        sapera_utils::safe_sapera_op([&]() {
-            waitResult = m_transfer->Wait(5000);
-            return true;
-        }, "wait for transfer");
-        
-        if (!waitResult) {
-            qWarning() << "Timeout waiting for transfer completion for camera:" << m_serverName;
-            // Restart acquisition and return failure
-            sapera_utils::safe_sapera_op([&]() { 
-                m_transfer->Grab(); 
-                return true; 
-            }, "restart after timeout");
+
+        // Wait for the transfer to complete
+        qCritical() << "Waiting for transfer to complete";
+        if (!m_transfer->Wait(3000)) // 3 second timeout
+        {
+            qCritical() << "Transfer timeout while capturing frame";
+
+            // Restart acquisition if it was running before
+            if (wasAcquiring)
+            {
+                qCritical() << "Restarting live acquisition";
+                m_transfer->Grab();
+                m_isAcquiring = true;
+            }
+
             return false;
         }
-        
-        // Convert the frame with color conversion
-        bool conversionResult = sapera_utils::safe_sapera_op([&]() {
-            return m_colorConv->Convert();
-        }, "convert for photo");
-        
-        if (!conversionResult) {
-            // Restart acquisition and return failure
-            sapera_utils::safe_sapera_op([&]() { 
-                m_transfer->Grab(); 
-                return true; 
-            }, "restart after failed conversion");
+
+        // Now we should have a fresh frame in the buffer
+        qCritical() << "Got fresh frame, processing for capture";
+
+        // Add a short delay to stabilize
+        QThread::msleep(50);
+
+        // Check if we have a color conversion object
+        if (!m_colorConv)
+        {
+            qCritical() << "Missing color conversion object for capture";
+
+            // Restart acquisition if it was running before
+            if (wasAcquiring)
+            {
+                qCritical() << "Restarting live acquisition";
+                m_transfer->Grab();
+                m_isAcquiring = true;
+            }
+
             return false;
         }
-        
+
+        // Use the color conversion on the fresh frame
+        if (!m_colorConv->Convert())
+        {
+            qCritical() << "Failed to convert buffer for capture";
+
+            // Restart acquisition if it was running before
+            if (wasAcquiring)
+            {
+                qCritical() << "Restarting live acquisition";
+                m_transfer->Grab();
+                m_isAcquiring = true;
+            }
+
+            return false;
+        }
+
         // Get the output buffer
-        SapBuffer* outputBuffer = m_colorConv->GetOutputBuffer();
-        if (!outputBuffer) {
-            qWarning() << "Failed to get output buffer for camera:" << m_serverName;
-            // Restart acquisition and return failure
-            sapera_utils::safe_sapera_op([&]() { 
-                m_transfer->Grab(); 
-                return true; 
-            }, "restart after null buffer");
+        SapBuffer *outBuffer = m_colorConv->GetOutputBuffer();
+        if (!outBuffer)
+        {
+            qCritical() << "Failed to get output buffer";
+
+            // Restart acquisition if it was running before
+            if (wasAcquiring)
+            {
+                qCritical() << "Restarting live acquisition";
+                m_transfer->Grab();
+                m_isAcquiring = true;
+            }
+
             return false;
         }
-        
+
         // Save the image
-        bool saveResult = sapera_utils::safe_sapera_op([&]() {
-            return outputBuffer->Save(filePath.toStdString().c_str(), "bmp");
-        }, "save photo");
-        
-        if (saveResult) {
-            qDebug() << "Successfully saved photo to:" << filePath;
-        } else {
-            qWarning() << "Failed to save image to:" << filePath;
+        qCritical() << "Saving image to:" << savePath;
+        saveResult = outBuffer->Save(savePath.toStdString().c_str(), "-format tiff");
+
+        if (saveResult)
+        {
+            qCritical() << "Image saved successfully";
+            // Also update and emit the last frame
+            QImage image = SapBufferToQImage(outBuffer);
+            if (!image.isNull())
+            {
+                m_lastFrame = image;
+                emit frameReady(image);
+            }
         }
-        
-        // Always restart acquisition before returning
-        sapera_utils::safe_sapera_op([&]() { 
-            m_transfer->Grab(); 
-            return true; 
-        }, "restart after photo");
-        
+        else
+        {
+            qCritical() << "Failed to save image";
+        }
+
+        // Wait before restarting acquisition
+        QThread::msleep(100);
+
+        // Restart acquisition if it was running before
+        if (wasAcquiring)
+        {
+            qCritical() << "Restarting live acquisition";
+            m_transfer->Grab();
+            m_isAcquiring = true;
+        }
+
+        qCritical() << "========== CAPTURE PHOTO " << (saveResult ? "SUCCESS" : "FAILED") << " ==========";
         return saveResult;
-    }, "capture photo operation");
+    }
+    catch (const std::exception &e)
+    {
+        qCritical() << "Exception in capturePhoto:" << e.what();
+
+        // Make sure we restart acquisition in case of exception
+        if (wasAcquiring && m_transfer)
+        {
+            try
+            {
+                // Add a delay before trying to restart
+                QThread::msleep(200);
+                m_transfer->Grab();
+                m_isAcquiring = true;
+            }
+            catch (...)
+            {
+                qCritical() << "Failed to restart acquisition after exception";
+            }
+        }
+
+        return false;
+    }
+    catch (...)
+    {
+        qCritical() << "Unknown exception in capturePhoto";
+
+        // Make sure we restart acquisition in case of exception
+        if (wasAcquiring && m_transfer)
+        {
+            try
+            {
+                // Add a delay before trying to restart
+                QThread::msleep(200);
+                m_transfer->Grab();
+                m_isAcquiring = true;
+            }
+            catch (...)
+            {
+                qCritical() << "Failed to restart acquisition after exception";
+            }
+        }
+
+        return false;
+    }
 }
 
-QImage SaperaCameraReal::getLatestFrame() {
+QImage SaperaCameraReal::getLatestFrame()
+{
     return m_lastFrame;
 }
 
-void SaperaCameraReal::XferCallback(SapXferCallbackInfo* pInfo) {
+// More robust static callback function that handles potential NULL contexts properly
+void SaperaCameraReal::XferCallback(SapXferCallbackInfo *pInfo)
+{
     // Disable Sapera error dialogs during callback
     SapManager::SetDisplayStatusMode(FALSE);
-    
+
+    if (!pInfo)
+    {
+        qWarning() << "XferCallback received null info parameter";
+        return;
+    }
+
     // Get context safely
-    SaperaCameraReal* self = nullptr;
-    sapera_utils::safe_sapera_op([&]() {
-        self = static_cast<SaperaCameraReal*>(pInfo->GetContext());
-        return (self != nullptr);
-    }, "get callback context");
-    
-    if (!self) {
+    SaperaCameraReal *self = nullptr;
+    try
+    {
+        self = static_cast<SaperaCameraReal *>(pInfo->GetContext());
+    }
+    catch (...)
+    {
+        qWarning() << "Exception getting context in XferCallback";
+        return;
+    }
+
+    if (!self)
+    {
         qWarning() << "XferCallback received null context";
         return;
     }
-    
+
     // Process frame with safe operations
-    sapera_utils::safe_sapera_op([&]() {
+    sapera_utils::safe_sapera_op([&]()
+                                 {
         // First validate objects
         if (!self->m_rawBuffer) {
             qWarning() << "Raw buffer is null for camera:" << self->getServerName();
@@ -511,21 +644,60 @@ void SaperaCameraReal::XferCallback(SapXferCallbackInfo* pInfo) {
             return true;
         }
         
-        return false;
-    }, "process frame");
+        return false; }, "process frame");
 }
 
-QString SaperaCameraReal::getServerName() const {
+QString SaperaCameraReal::getServerName() const
+{
     return m_serverName;
 }
 
-std::vector<QString> SaperaCameraReal::enumerateCameras() {
+std::vector<QString> SaperaCameraReal::enumerateCameras()
+{
     std::vector<QString> result;
-    int count = SapManager::GetServerCount();
-    for (int i = 0; i < count; ++i) {
-        char name[256];
-        if (SapManager::GetServerName(i, name, sizeof(name)))
-            result.push_back(QString::fromUtf8(name));
+
+    try
+    {
+        // First try standard Sapera enumeration
+        SapManager::SetDisplayStatusMode(FALSE);
+        int count = SapManager::GetServerCount();
+        qDebug() << "Found" << count << "Sapera servers";
+
+        for (int i = 0; i < count; ++i)
+        {
+            char name[256];
+            if (SapManager::GetServerName(i, name, sizeof(name)))
+            {
+                QString serverName = QString::fromUtf8(name);
+                qDebug() << "Found server:" << serverName;
+                result.push_back(serverName);
+            }
+        }
+
+        // If no cameras found or count is zero, use same naming pattern as the sample code
+        if (result.empty())
+        {
+            qDebug() << "No cameras found via Sapera enumeration. Using sample code naming pattern.";
+
+            // Use the exact naming pattern from the sample code: Nano-C4020_N
+            const int acqDeviceNumber = 12;
+            for (int i = 1; i <= acqDeviceNumber; i++)
+            {
+                // IMPORTANT: Use the EXACT same format as the sample code
+                QString cameraName = QString("Nano-C4020_%1").arg(i);
+                qDebug() << "Adding camera with pattern name:" << cameraName;
+                result.push_back(cameraName);
+            }
+        }
     }
+    catch (const std::exception &e)
+    {
+        qWarning() << "Exception during camera enumeration:" << e.what();
+    }
+    catch (...)
+    {
+        qWarning() << "Unknown exception during camera enumeration";
+    }
+
     return result;
-} 
+}

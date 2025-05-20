@@ -15,6 +15,50 @@
 #include <QTimer>
 #include <type_traits>
 #include <memory>
+#include <QDebug>
+#include <QFile>
+#include <QDateTime>
+#include <QDir>
+#include <QTextStream>
+
+// Global file for logging
+QFile* g_logFile = nullptr;
+
+// Custom message handler to redirect qDebug to file
+void messageHandler(QtMsgType type, const QMessageLogContext &context, const QString &msg) {
+    // Create timestamp
+    QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss.zzz");
+    
+    // Format message based on type
+    QString logMessage;
+    switch (type) {
+    case QtDebugMsg:
+        logMessage = QString("%1 [Debug]: %2").arg(timestamp, msg);
+        break;
+    case QtInfoMsg:
+        logMessage = QString("%1 [Info]: %2").arg(timestamp, msg);
+        break;
+    case QtWarningMsg:
+        logMessage = QString("%1 [Warning]: %2").arg(timestamp, msg);
+        break;
+    case QtCriticalMsg:
+        logMessage = QString("%1 [Critical]: %2").arg(timestamp, msg);
+        break;
+    case QtFatalMsg:
+        logMessage = QString("%1 [Fatal]: %2").arg(timestamp, msg);
+        break;
+    }
+    
+    // Output to console
+    fprintf(stderr, "%s\n", logMessage.toLocal8Bit().constData());
+    
+    // Output to log file if available
+    if (g_logFile && g_logFile->isOpen()) {
+        QTextStream stream(g_logFile);
+        stream << logMessage << "\n";
+        stream.flush();
+    }
+}
 
 // SFINAE template techniques for safer Sapera operations
 namespace sapera_utils {
@@ -96,6 +140,28 @@ void closeSaperaDialogs() {
 
 int main(int argc, char *argv[]) {
     try {
+        // Set up logging to file
+        QString logDir = "C:/Users/Radiance/Desktop/CamCaptures";
+        QDir dir(logDir);
+        if (!dir.exists()) {
+            dir.mkpath(".");
+        }
+        
+        // Create log file with timestamp
+        QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd_HH-mm-ss");
+        QString logPath = logDir + "/camera_log_" + timestamp + ".txt";
+        g_logFile = new QFile(logPath);
+        
+        if (g_logFile->open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Append)) {
+            // Install the custom message handler
+            qInstallMessageHandler(messageHandler);
+            qInfo() << "Log file initialized at:" << logPath;
+        } else {
+            delete g_logFile;
+            g_logFile = nullptr;
+            std::cerr << "Could not open log file at: " << logPath.toStdString() << std::endl;
+        }
+        
         // Early initialization to disable Sapera dialogs
         SapManager::SetDisplayStatusMode(FALSE);
         
