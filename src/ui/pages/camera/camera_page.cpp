@@ -4,6 +4,7 @@
 #include "ui/dialogs/photo_preview_dialog.hpp"
 #include "core/camera_manager.hpp"
 #include "core/settings.hpp"
+#include "core/sapera/sapera_camera_real.hpp"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QSplitter>
@@ -17,6 +18,7 @@
 #include <QScroller>
 #include <QApplication>
 #include <QTimer>
+#include <QTime>
 #include <QMenu>
 #include <QAction>
 #include <QClipboard>
@@ -567,26 +569,59 @@ namespace cam_matrix::ui
         QTimer *frameTimer = new QTimer(this);
         connect(frameTimer, &QTimer::timeout, this, [this]()
                 {
-        if (selectedCameraIndex_ >= 0) {
+        try {
+            // Safety checks for a valid camera index
+            if (selectedCameraIndex_ < 0 || selectedCameraIndex_ >= cameraList_->count()) {
+                return;
+            }
+            
             // First check if camera is connected according to manager
-            if (!cameraManager_->isCameraConnected(selectedCameraIndex_)) {
+            bool isConnected = false;
+            try {
+                isConnected = cameraManager_->isCameraConnected(selectedCameraIndex_);
+            } catch (...) {
+                // Silently handle exceptions during connection check
+                return;
+            }
+            
+            if (!isConnected) {
                 // Do not attempt to fetch frames from disconnected cameras
                 return;
             }
             
-            auto* camera = cameraManager_->getCameraByIndex(selectedCameraIndex_);
-            if (camera && camera->isConnected()) { // Added explicit check for camera connection state
-                try {
-                    // Wrapped in try-catch to prevent crashes if camera is in transition
-                    QImage frame = camera->getLatestFrame();
-                    if (!frame.isNull()) {
-                        videoDisplay_->updateFrame(frame);
-                    }
-                } catch (...) {
-                    // Silently ignore exceptions during frame fetch - don't crash the app
-                    // This could happen during photo capture or connection changes
-                }
+            // Get the camera pointer safely
+            SaperaCameraReal* camera = nullptr;
+            try {
+                camera = cameraManager_->getCameraByIndex(selectedCameraIndex_);
+            } catch (...) {
+                // Silently handle exceptions when getting camera pointer
+                return;
             }
+            
+            // Verify we have a valid camera object and it reports as connected
+            if (!camera || !camera->isConnected()) {
+                return;
+            }
+            
+            // Now try to get a frame
+            try {
+                QImage frame = camera->getLatestFrame();
+                if (!frame.isNull()) {
+                    videoDisplay_->updateFrame(frame);
+                }
+            } catch (const std::exception& e) {
+                // Log exceptions during frame fetch with low frequency to avoid spam
+                static QDateTime lastErrorTime = QDateTime::currentDateTime();
+                if (lastErrorTime.msecsTo(QDateTime::currentDateTime()) > 5000) {  // Only log errors every 5 seconds
+                    logDebugMessage(QString("Frame timer: Exception getting frame: %1").arg(e.what()), "WARNING");
+                    lastErrorTime = QDateTime::currentDateTime();
+                }
+            } catch (...) {
+                // Silently ignore other exceptions during frame fetch - don't crash the app
+                // This could happen during photo capture or connection changes
+            }
+        } catch (...) {
+            // Top level catch to ensure the timer never crashes the application
         } });
         frameTimer->start(16); // Poll at ~60Hz for smooth animation
 
@@ -594,9 +629,27 @@ namespace cam_matrix::ui
         QTimer *watchdogTimer = new QTimer(this);
         connect(watchdogTimer, &QTimer::timeout, this, [this]()
                 {
-            if (selectedCameraIndex_ >= 0) {
+            try {
+                // Only proceed if we have a valid selected camera index
+                if (selectedCameraIndex_ < 0) {
+                    return;
+                }
+                
+                // Verify the camera index is within bounds
+                if (selectedCameraIndex_ >= cameraList_->count()) {
+                    logDebugMessage("Watchdog: Invalid camera index", "WARNING");
+                    return;
+                }
+                
                 // Check if the camera is still responsive
-                bool isConnectedByManager = cameraManager_->isCameraConnected(selectedCameraIndex_);
+                bool isConnectedByManager = false;
+                try {
+                    isConnectedByManager = cameraManager_->isCameraConnected(selectedCameraIndex_);
+                } catch (...) {
+                    logDebugMessage("Watchdog: Exception checking camera connection status", "WARNING");
+                    return;
+                }
+                
                 bool isEnabledInUI = disconnectButton_->isEnabled();
                 
                 // Only attempt to reconnect if the UI shows connected but manager shows disconnected
@@ -612,26 +665,60 @@ namespace cam_matrix::ui
                     videoDisplay_->clear();
                     
                     logDebugMessage("Watchdog: Please click Connect to reconnect camera if needed.", "HINT");
+                    return; // Exit early to avoid trying to get frames
+                }
+                
+                // Only try to get a frame if the manager reports that the camera is connected
+                if (!isConnectedByManager) {
+                    return;
                 }
                 
                 // Send a "keepalive" signal/operation to the camera to prevent timeout
-                // if the manager says it's connected.
-                auto* camera = cameraManager_->getCameraByIndex(selectedCameraIndex_);
-                if (isConnectedByManager && camera) {
+                try {
+                    auto* camera = cameraManager_->getCameraByIndex(selectedCameraIndex_);
+                    if (!camera) {
+                        logDebugMessage("Watchdog: Camera pointer is null despite being reported as connected", "WARNING");
+                        return;
+                    }
+                    
+                    // Verify camera reports itself as connected before trying to get a frame
+                    if (!camera->isConnected()) {
+                        logDebugMessage("Watchdog: Camera reports as not connected despite manager saying it is", "WARNING");
+                        return;
+                    }
+                    
                     // Get a frame to keep the connection active, but don't log every ping
                     // to reduce debug console spam
                     camera->getLatestFrame();
+                } catch (const std::exception& e) {
+                    logDebugMessage(QString("Watchdog: Exception during frame fetch: %1").arg(e.what()), "WARNING");
+                } catch (...) {
+                    logDebugMessage("Watchdog: Unknown exception during frame fetch", "WARNING");
                 }
+            } catch (...) {
+                logDebugMessage("Watchdog: Unhandled exception in watchdog timer", "ERROR");
             } });
         watchdogTimer->start(5000); // Check every 5 seconds
     }
 
     void CameraPage::cleanup()
     {
+        // Keep a strong reference to parent window to prevent deletion
+        QWidget *parentWindow = window();
+
+        // Clear selected camera index to prevent frame timer from accessing disconnected camera
+        selectedCameraIndex_ = -1;
+
         // Disconnect cameras and save settings
         cameraManager_->disconnectAllCameras();
         saveSettings();
         logDebugMessage("Camera page cleanup completed", "INFO");
+
+        // Ensure the main window stays visible
+        if (parentWindow)
+        {
+            parentWindow->activateWindow();
+        }
     }
 
     void CameraPage::onRefreshCameras()
@@ -684,20 +771,41 @@ namespace cam_matrix::ui
                 }
 
                 // Get the camera object directly and request an initial frame
-                auto *camera = cameraManager_->getCameraByIndex(index);
-                if (camera)
+                try
                 {
-                    // Try to get a current frame
-                    QImage currentFrame = camera->getLatestFrame();
-                    if (!currentFrame.isNull())
+                    auto *camera = cameraManager_->getCameraByIndex(index);
+                    if (camera && camera->isConnected())
                     {
-                        videoDisplay_->updateFrame(currentFrame);
-                        logDebugMessage("Updated video display with initial frame");
-                    }
+                        // Give a small delay to allow the camera to start streaming
+                        QApplication::processEvents();
 
-                    // Make sure to update UI after all changes
-                    QApplication::processEvents();
+                        // Try to get a current frame
+                        try
+                        {
+                            QImage currentFrame = camera->getLatestFrame();
+                            if (!currentFrame.isNull())
+                            {
+                                videoDisplay_->updateFrame(currentFrame);
+                                logDebugMessage("Updated video display with initial frame");
+                            }
+                        }
+                        catch (const std::exception &e)
+                        {
+                            logDebugMessage(QString("Exception when getting initial frame: %1").arg(e.what()), "WARNING");
+                        }
+                        catch (...)
+                        {
+                            logDebugMessage("Unknown exception when getting initial frame", "WARNING");
+                        }
+                    }
                 }
+                catch (...)
+                {
+                    logDebugMessage("Exception when accessing camera after connecting", "WARNING");
+                }
+
+                // Make sure to update UI after all changes
+                QApplication::processEvents();
 
                 // Update sync UI to reflect selection changes
                 updateSyncUI();
@@ -716,6 +824,15 @@ namespace cam_matrix::ui
         {
             logDebugMessage(QString("Disconnecting camera at index %1...").arg(index));
 
+            // Update UI state immediately to prevent double-clicks or further interactions
+            disconnectButton_->setEnabled(false);
+            connectButton_->setEnabled(false); // Will be enabled once disconnection is fully complete
+            cameraControl_->setEnabled(false);
+
+            // Clear selected camera index to prevent frame timer from accessing it during disconnect
+            int previousSelectedIndex = selectedCameraIndex_;
+            selectedCameraIndex_ = -1;
+
             // Show loading overlay
             if (loadingOverlay_)
             {
@@ -723,14 +840,71 @@ namespace cam_matrix::ui
                 QApplication::processEvents(); // Ensure overlay appears immediately
             }
 
-            cameraManager_->disconnectCamera(index);
+            // Clear display before disconnect to avoid accessing a disconnecting camera
             videoDisplay_->clear();
 
-            // Hide loading overlay
-            if (loadingOverlay_)
-            {
-                loadingOverlay_->hide();
-            }
+            // Process events to ensure UI updates before disconnecting
+            QApplication::processEvents();
+
+            // Keep a strong reference to parent window to prevent deletion
+            QWidget *parentWindow = window();
+
+            // Disconnect camera using a short QTimer to allow the UI to update first
+            QTimer::singleShot(50, this, [this, index, previousSelectedIndex, parentWindow]()
+                               {
+                // Use try-catch to handle any exceptions
+                try {
+                    bool success = cameraManager_->disconnectCamera(index);
+                    
+                    // Update UI after disconnection
+                    QListWidgetItem *item = cameraList_->item(index);
+                    if (item) {
+                        item->setCheckState(Qt::Unchecked);
+                        item->setIcon(QIcon::fromTheme("network-offline"));
+                        item->setForeground(QBrush(QApplication::palette().text()));
+                    }
+                    
+                    // Hide loading overlay with a brief delay to ensure disconnect completed
+                    QTimer::singleShot(100, this, [this, index, success, parentWindow]() {
+                        if (loadingOverlay_) {
+                            loadingOverlay_->hide();
+                        }
+                        
+                        // Re-enable the connect button
+                        connectButton_->setEnabled(true);
+                        
+                        // Log result
+                        if (success) {
+                            logDebugMessage(QString("Camera %1 successfully disconnected").arg(index), "SUCCESS");
+                        } else {
+                            logDebugMessage(QString("Camera %1 disconnect may have had issues").arg(index), "WARNING");
+                        }
+                        
+                        // Update sync UI after reconnecting the camera item
+                        updateSyncUI();
+                        
+                        // Ensure the main window stays visible
+                        if (parentWindow) {
+                            parentWindow->activateWindow();
+                        }
+                    });
+                }
+                catch (...) {
+                    // Handle exceptions during disconnect
+                    logDebugMessage("Exception during camera disconnect", "ERROR");
+                    if (loadingOverlay_) {
+                        loadingOverlay_->hide();
+                    }
+                    connectButton_->setEnabled(true);
+                    
+                    // Restore selected camera index
+                    selectedCameraIndex_ = previousSelectedIndex;
+                    
+                    // Ensure the main window stays visible
+                    if (parentWindow) {
+                        parentWindow->activateWindow();
+                    }
+                } });
         }
     }
 
@@ -1039,17 +1213,66 @@ namespace cam_matrix::ui
         if (!selectedIndices.empty())
         {
             logDebugMessage(QString("Disconnecting %1 selected cameras...").arg(selectedIndices.size()));
-            // Use the camera manager's functionality to disconnect selected cameras
-            if (cameraManager_->disconnectSelectedCameras())
+
+            // Update UI state and clear selected camera index
+            int previousSelectedIndex = selectedCameraIndex_;
+            selectedCameraIndex_ = -1;
+
+            // Show loading overlay
+            if (loadingOverlay_)
             {
-                logDebugMessage("All selected cameras disconnected successfully", "SUCCESS");
+                loadingOverlay_->show();
+                QApplication::processEvents(); // Ensure overlay appears immediately
             }
-            else
-            {
-                logDebugMessage("Some cameras failed to disconnect", "WARNING");
-            }
+
+            // Clear display before disconnect
             videoDisplay_->clear();
-            updateCameraList(); // Update UI to reflect new connection status
+
+            // Keep a strong reference to parent window to prevent deletion
+            QWidget *parentWindow = window();
+
+            // Use a timer to allow UI to update first
+            QTimer::singleShot(50, this, [this, selectedIndices, previousSelectedIndex, parentWindow]()
+                               {
+                try {
+                    // Use the camera manager's functionality to disconnect selected cameras
+                    bool success = cameraManager_->disconnectSelectedCameras();
+                    
+                    // Hide loading overlay with a brief delay
+                    QTimer::singleShot(100, this, [this, success, previousSelectedIndex, parentWindow]() {
+                        if (loadingOverlay_) {
+                            loadingOverlay_->hide();
+                        }
+                        
+                        if (success) {
+                            logDebugMessage("All selected cameras disconnected successfully", "SUCCESS");
+                        } else {
+                            logDebugMessage("Some cameras failed to disconnect", "WARNING");
+                        }
+                        
+                        updateCameraList(); // Update UI to reflect new connection status
+                        
+                        // Ensure the main window stays visible
+                        if (parentWindow) {
+                            parentWindow->activateWindow();
+                        }
+                    });
+                }
+                catch (...) {
+                    // Handle exceptions during disconnect
+                    logDebugMessage("Exception during camera disconnect", "ERROR");
+                    if (loadingOverlay_) {
+                        loadingOverlay_->hide();
+                    }
+                    
+                    // Restore selected camera index
+                    selectedCameraIndex_ = previousSelectedIndex;
+                    
+                    // Ensure the main window stays visible
+                    if (parentWindow) {
+                        parentWindow->activateWindow();
+                    }
+                } });
         }
     }
 

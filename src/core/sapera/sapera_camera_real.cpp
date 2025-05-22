@@ -20,17 +20,63 @@
 static QImage SapBufferToQImage(SapBuffer *buffer)
 {
     if (!buffer)
+    {
+        qDebug() << "SapBufferToQImage: Null buffer";
         return QImage();
+    }
+
     int width = buffer->GetWidth();
     int height = buffer->GetHeight();
     int format = buffer->GetFormat();
+
+    // Initialize pData to nullptr
     void *pData = nullptr;
-    if (!buffer->GetAddress(&pData) || !pData)
+
+    // Check if GetAddress succeeds and if pData is valid
+    bool addressSuccess = buffer->GetAddress(&pData);
+    if (!addressSuccess || pData == nullptr)
+    {
+        qDebug() << "SapBufferToQImage: Failed to get valid buffer address, success:"
+                 << addressSuccess << ", pData:" << pData;
         return QImage();
+    }
+
+    // Double check pData before using it
+    if (!pData)
+    {
+        qDebug() << "SapBufferToQImage: pData became null after check";
+        return QImage();
+    }
+
+    // Verify we have valid dimensions before proceeding
+    if (width <= 0 || height <= 0)
+    {
+        qDebug() << "SapBufferToQImage: Invalid dimensions:" << width << "x" << height;
+        return QImage();
+    }
+
     if (format == SapFormatRGB888)
     {
-        return QImage(static_cast<const uchar *>(pData), width, height, width * 3, QImage::Format_RGB888).copy();
+        try
+        {
+            // Create a deep copy to ensure safety
+            return QImage(static_cast<const uchar *>(pData), width, height,
+                          width * 3, QImage::Format_RGB888)
+                .copy();
+        }
+        catch (const std::exception &e)
+        {
+            qDebug() << "SapBufferToQImage: Exception during QImage creation:" << e.what();
+            return QImage();
+        }
+        catch (...)
+        {
+            qDebug() << "SapBufferToQImage: Unknown exception during QImage creation";
+            return QImage();
+        }
     }
+
+    qDebug() << "SapBufferToQImage: Unsupported format:" << format;
     return QImage();
 }
 
@@ -355,19 +401,50 @@ bool SaperaCameraReal::capturePhoto(const QString &filePath)
 
     bool saveResult = false;
     bool wasAcquiring = m_isAcquiring;
+    // Declare output buffer pointer early - before any goto statements
+    SapBuffer *outBuffer = nullptr;
+    // Define format options for image saving before any goto statements
+    QString formatOptions;
+
+    // Choose format based on file extension
+    if (savePath.toLower().endsWith(".png"))
+    {
+        formatOptions = "-format png -compression 6"; // PNG with moderate compression
+    }
+    else if (savePath.toLower().endsWith(".jpg") || savePath.toLower().endsWith(".jpeg"))
+    {
+        formatOptions = "-format jpeg -compression 90"; // JPEG with high quality
+    }
+    else
+    {
+        // Default to TIFF with light compression for compatibility
+        formatOptions = "-format tiff -compression 1";
+    }
 
     try
     {
         // Add a delay before any operation to ensure stable state
         QThread::msleep(50);
 
-        // Temporarily pause the continuous acquisition if it's running
-        if (wasAcquiring)
+        // Completely stop the acquisition - we MUST do this
+        // to avoid "Cannot be called during live grab" error
+        if (m_transfer)
         {
-            qCritical() << "Pausing live acquisition for snapshot";
+            qCritical() << "Stopping acquisition before snapshot";
+            // First freeze acquisition
             m_transfer->Freeze();
-            // Give it time to stop completely - avoid resource conflicts
+
+            // Wait for resources to fully release
+            QThread::msleep(300);
+
+            // Abort any pending transfer operations
+            m_transfer->Abort();
+
+            // Wait again to ensure all resources are released
             QThread::msleep(200);
+
+            // Reset acquisition state
+            m_isAcquiring = false;
         }
 
         // Take a fresh snapshot with resource conflict handling
@@ -375,142 +452,170 @@ bool SaperaCameraReal::capturePhoto(const QString &filePath)
 
         int retryCount = 0;
         bool snapSuccess = false;
+
+        // Attempt snapshot with retries
         while (!snapSuccess && retryCount < 3)
         {
             try
             {
+                // Make absolutely sure we're not in grab mode
+                if (retryCount > 0)
+                {
+                    qCritical() << "Retry attempt " << retryCount << " - ensure transfer is reset";
+                    m_transfer->Abort();
+                    QThread::msleep(500);
+                }
+
+                // Now attempt the snapshot
                 snapSuccess = m_transfer->Snap();
+
                 if (!snapSuccess)
                 {
                     retryCount++;
                     qCritical() << "Snap failed, retrying..." << retryCount;
-                    QThread::msleep(200 * retryCount); // Increasing delay with each retry
+                    QThread::msleep(300 * retryCount); // Increasing delay with each retry
                 }
+            }
+            catch (const std::exception &e)
+            {
+                qCritical() << "Exception during Snap operation:" << e.what() << ", retrying..." << retryCount;
+                retryCount++;
+                QThread::msleep(500 * retryCount);
             }
             catch (...)
             {
-                qCritical() << "Exception during Snap operation, retrying..." << retryCount;
+                qCritical() << "Unknown exception during Snap operation, retrying..." << retryCount;
                 retryCount++;
-                QThread::msleep(300 * retryCount);
+                QThread::msleep(500 * retryCount);
             }
         }
 
         if (!snapSuccess)
         {
             qCritical() << "Failed to snap after multiple attempts";
-
-            // Restart acquisition if it was running before
-            if (wasAcquiring)
-            {
-                qCritical() << "Restarting live acquisition";
-                m_transfer->Grab();
-                m_isAcquiring = true;
-            }
-
-            return false;
+            goto cleanup_and_restart;
         }
 
         // Wait for the transfer to complete
         qCritical() << "Waiting for transfer to complete";
-        if (!m_transfer->Wait(3000)) // 3 second timeout
+        if (!m_transfer->Wait(5000)) // Increased timeout to 5 seconds
         {
             qCritical() << "Transfer timeout while capturing frame";
-
-            // Restart acquisition if it was running before
-            if (wasAcquiring)
-            {
-                qCritical() << "Restarting live acquisition";
-                m_transfer->Grab();
-                m_isAcquiring = true;
-            }
-
-            return false;
+            goto cleanup_and_restart;
         }
 
         // Now we should have a fresh frame in the buffer
         qCritical() << "Got fresh frame, processing for capture";
 
         // Add a short delay to stabilize
-        QThread::msleep(50);
+        QThread::msleep(100);
 
         // Check if we have a color conversion object
         if (!m_colorConv)
         {
             qCritical() << "Missing color conversion object for capture";
-
-            // Restart acquisition if it was running before
-            if (wasAcquiring)
-            {
-                qCritical() << "Restarting live acquisition";
-                m_transfer->Grab();
-                m_isAcquiring = true;
-            }
-
-            return false;
+            goto cleanup_and_restart;
         }
 
         // Use the color conversion on the fresh frame
         if (!m_colorConv->Convert())
         {
             qCritical() << "Failed to convert buffer for capture";
-
-            // Restart acquisition if it was running before
-            if (wasAcquiring)
-            {
-                qCritical() << "Restarting live acquisition";
-                m_transfer->Grab();
-                m_isAcquiring = true;
-            }
-
-            return false;
+            goto cleanup_and_restart;
         }
 
-        // Get the output buffer
-        SapBuffer *outBuffer = m_colorConv->GetOutputBuffer();
+        // Get the output buffer - assign to the previously declared pointer
+        outBuffer = m_colorConv->GetOutputBuffer();
         if (!outBuffer)
         {
             qCritical() << "Failed to get output buffer";
-
-            // Restart acquisition if it was running before
-            if (wasAcquiring)
-            {
-                qCritical() << "Restarting live acquisition";
-                m_transfer->Grab();
-                m_isAcquiring = true;
-            }
-
-            return false;
+            goto cleanup_and_restart;
         }
 
         // Save the image
-        qCritical() << "Saving image to:" << savePath;
-        saveResult = outBuffer->Save(savePath.toStdString().c_str(), "-format tiff");
+        qCritical() << "Saving image to:" << savePath << "using format:" << formatOptions;
 
-        if (saveResult)
+        // Use the memory-efficient format options defined earlier
+        try
         {
-            qCritical() << "Image saved successfully";
-            // Also update and emit the last frame
-            QImage image = SapBufferToQImage(outBuffer);
-            if (!image.isNull())
+            // Make sure we have a valid buffer
+            if (!outBuffer)
             {
-                m_lastFrame = image;
-                emit frameReady(image);
+                qCritical() << "Save error: output buffer is null";
+                goto cleanup_and_restart;
+            }
+
+            // Make sure dimensions are reasonable
+            if (outBuffer->GetWidth() <= 0 || outBuffer->GetHeight() <= 0)
+            {
+                qCritical() << "Save error: invalid buffer dimensions";
+                goto cleanup_and_restart;
+            }
+
+            // Save with explicit error handling
+            saveResult = outBuffer->Save(savePath.toStdString().c_str(), formatOptions.toStdString().c_str());
+
+            if (saveResult)
+            {
+                qCritical() << "Image saved successfully";
+                // Also update and emit the last frame
+                QImage image = SapBufferToQImage(outBuffer);
+                if (!image.isNull())
+                {
+                    m_lastFrame = image;
+                    emit frameReady(image);
+                }
+            }
+            else
+            {
+                qCritical() << "Failed to save image";
             }
         }
-        else
+        catch (const std::exception &e)
         {
-            qCritical() << "Failed to save image";
+            qCritical() << "Exception during image save:" << e.what();
+            saveResult = false;
+        }
+        catch (...)
+        {
+            qCritical() << "Unknown exception during image save";
+            saveResult = false;
         }
 
-        // Wait before restarting acquisition
-        QThread::msleep(100);
+        // Wait before restarting acquisition to ensure memory is freed
+        QThread::msleep(400);
 
-        // Restart acquisition if it was running before
-        if (wasAcquiring)
+    cleanup_and_restart:
+        // Always restart acquisition if it was running before
+        if (wasAcquiring && m_transfer)
         {
             qCritical() << "Restarting live acquisition";
-            m_transfer->Grab();
-            m_isAcquiring = true;
+            // Wait to make sure resources are freed
+            QThread::msleep(200);
+
+            try
+            {
+                // Initialize the transfer object first
+                if (m_transfer->Init())
+                {
+                    // Start grabbing frames
+                    bool result = m_transfer->Grab();
+                    m_isAcquiring = result;
+                    qCritical() << "Acquisition restart " << (result ? "successful" : "failed");
+                }
+                else
+                {
+                    qCritical() << "Failed to re-initialize transfer before restart";
+                }
+            }
+            catch (const std::exception &e)
+            {
+                qCritical() << "Exception while restarting acquisition: " << e.what();
+            }
+            catch (...)
+            {
+                qCritical() << "Unknown exception while restarting acquisition";
+            }
         }
 
         qCritical() << "========== CAPTURE PHOTO " << (saveResult ? "SUCCESS" : "FAILED") << " ==========";
@@ -526,9 +631,13 @@ bool SaperaCameraReal::capturePhoto(const QString &filePath)
             try
             {
                 // Add a delay before trying to restart
-                QThread::msleep(200);
-                m_transfer->Grab();
-                m_isAcquiring = true;
+                QThread::msleep(300);
+
+                if (m_transfer->Init())
+                {
+                    bool result = m_transfer->Grab();
+                    m_isAcquiring = result;
+                }
             }
             catch (...)
             {
@@ -548,9 +657,13 @@ bool SaperaCameraReal::capturePhoto(const QString &filePath)
             try
             {
                 // Add a delay before trying to restart
-                QThread::msleep(200);
-                m_transfer->Grab();
-                m_isAcquiring = true;
+                QThread::msleep(300);
+
+                if (m_transfer->Init())
+                {
+                    bool result = m_transfer->Grab();
+                    m_isAcquiring = result;
+                }
             }
             catch (...)
             {
@@ -617,13 +730,27 @@ void SaperaCameraReal::XferCallback(SapXferCallbackInfo *pInfo)
                 // Safely get the output buffer
                 SapBuffer* outputBuffer = self->m_colorConv->GetOutputBuffer();
                 if (outputBuffer) {
-                    QImage img = SapBufferToQImage(outputBuffer);
-                    if (!img.isNull()) {
-                        self->m_lastFrame = img;
-                        emit self->frameReady(img);
-                        return true;
+                    // Validate buffer before conversion
+                    void* testAddr = nullptr;
+                    bool validBuffer = outputBuffer->GetAddress(&testAddr) && testAddr != nullptr;
+                    
+                    if (validBuffer) {
+                        QImage img = SapBufferToQImage(outputBuffer);
+                        if (!img.isNull()) {
+                            self->m_lastFrame = img;
+                            emit self->frameReady(img);
+                            return true;
+                        } else {
+                            qWarning() << "SapBufferToQImage returned null image for camera:" << self->getServerName();
+                        }
+                    } else {
+                        qWarning() << "Output buffer has invalid address for camera:" << self->getServerName();
                     }
+                } else {
+                    qWarning() << "Null output buffer from color conversion for camera:" << self->getServerName();
                 }
+            } else {
+                qWarning() << "Color conversion failed for camera:" << self->getServerName();
             }
         }
         

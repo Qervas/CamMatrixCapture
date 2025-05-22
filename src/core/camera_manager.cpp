@@ -7,6 +7,7 @@
 #include <future>
 #include <chrono>
 #include <QCoreApplication>
+#include <QThread>
 
 namespace cam_matrix::core
 {
@@ -131,10 +132,43 @@ namespace cam_matrix::core
         if (index < cameras_.size())
         {
             auto *camera = cameras_[index].get();
-            disconnect(camera, &SaperaCameraReal::frameReady, this, &CameraManager::newFrameAvailable);
-            camera->disconnectCamera();
-            emit cameraDisconnected(index);
-            return true;
+
+            // Use try-catch to handle any exceptions during disconnect
+            try
+            {
+                // First emit a signal that we're about to disconnect
+                emit cameraStatusChanged(QString("Disconnecting camera %1...").arg(index));
+
+                // Safely disconnect signals first, using correct invokeMethod syntax for Qt6.9
+                disconnect(camera, &SaperaCameraReal::frameReady, this, &CameraManager::newFrameAvailable);
+
+                // Use a direct disconnect instead of invokeMethod to avoid compatibility issues
+                // This is safe because we're already in a try-catch block
+
+                // Give a small delay to ensure signal disconnections propagate
+                QThread::msleep(50);
+
+                // Now disconnect the camera
+                camera->disconnectCamera();
+
+                // Emit signals after the camera is disconnected
+                emit cameraDisconnected(index);
+                emit cameraStatusChanged(QString("Camera %1 disconnected").arg(index));
+
+                return true;
+            }
+            catch (const std::exception &e)
+            {
+                qWarning() << "Exception during camera disconnect:" << e.what();
+                emit error(QString("Error disconnecting camera: %1").arg(e.what()));
+                return false;
+            }
+            catch (...)
+            {
+                qWarning() << "Unknown exception during camera disconnect";
+                emit error("Unknown error disconnecting camera");
+                return false;
+            }
         }
         return false;
     }
@@ -300,55 +334,75 @@ namespace cam_matrix::core
         emit statusChanged(QString("Starting synchronized capture with %1 cameras...").arg(indexesToCapture.size()));
 
         // Use a small delay to ensure all cameras have settled
-        std::this_thread::sleep_for(std::chrono::milliseconds(500)); // Increased for better stability
+        std::this_thread::sleep_for(std::chrono::milliseconds(800)); // Increased for better stability
 
         // Store results for reporting
-        std::vector<std::future<bool>> captureFutures;
         std::vector<QString> capturePaths;
-        captureFutures.reserve(indexesToCapture.size());
         capturePaths.reserve(indexesToCapture.size());
 
         // Generate timestamps with a consistent base timestamp
         QDateTime baseTime = QDateTime::currentDateTime();
         QString timeStamp = baseTime.toString("yyyy-MM-dd_HH-mm-ss");
 
-        // Format pattern for filenames
+        // Format pattern for filenames - use PNG instead of TIFF to reduce memory usage
         for (size_t i = 0; i < indexesToCapture.size(); ++i)
         {
             size_t cameraIndex = indexesToCapture[i];
-            QString filename = captureFolder + QString("/camera_%1_%2_%3.tiff").arg(cameraIndex).arg(i).arg(timeStamp);
+            QString filename = captureFolder + QString("/camera_%1_%2_%3.png").arg(cameraIndex).arg(i).arg(timeStamp);
             capturePaths.push_back(filename);
-
-            // Launch capture in async
-            captureFutures.push_back(std::async(std::launch::async, [this, cameraIndex, filename]()
-                                                {
-            auto* camera = getCameraByIndex(cameraIndex);
-            if (camera) {
-                return camera->capturePhoto(filename);
-            }
-            return false; }));
         }
 
-        // Wait for all captures to complete and gather results
+        // Process ONE camera at a time to avoid buffer overflow
         int successCount = 0;
-        for (size_t i = 0; i < captureFutures.size(); ++i)
+        int totalCameras = static_cast<int>(indexesToCapture.size());
+
+        for (size_t i = 0; i < indexesToCapture.size(); ++i)
         {
-            bool success = captureFutures[i].get();
+            size_t cameraIndex = indexesToCapture[i];
+            QString filename = capturePaths[i];
+
+            emit statusChanged(QString("Capturing camera %1 of %2...").arg(i + 1).arg(totalCameras));
+
+            // Capture one photo synchronously
+            auto *camera = getCameraByIndex(cameraIndex);
+            bool success = false;
+
+            if (camera)
+            {
+                try
+                {
+                    // Add small delay before each camera capture
+                    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+                    success = camera->capturePhoto(filename);
+                    // Add delay after capture to let the system recover
+                    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+                }
+                catch (const std::exception &e)
+                {
+                    qCritical() << "Exception during sync capture:" << e.what();
+                }
+                catch (...)
+                {
+                    qCritical() << "Unknown exception during sync capture";
+                }
+            }
+
             if (success)
             {
                 successCount++;
-                emit photoCaptured(indexesToCapture[i], capturePaths[i]);
+                emit photoCaptured(cameraIndex, filename);
             }
             else
             {
-                emit error(QString("Failed to capture photo from camera %1").arg(indexesToCapture[i]));
+                emit error(QString("Failed to capture photo from camera %1").arg(cameraIndex));
             }
-            emit syncCaptureProgress(static_cast<int>(i + 1), static_cast<int>(captureFutures.size()));
+
+            emit syncCaptureProgress(static_cast<int>(i + 1), totalCameras);
         }
 
-        emit syncCaptureComplete(successCount, static_cast<int>(indexesToCapture.size()));
-        emit statusChanged(QString("Synchronized capture complete: %1 of %2 successful").arg(successCount).arg(indexesToCapture.size()));
-        return successCount == static_cast<int>(indexesToCapture.size());
+        emit syncCaptureComplete(successCount, totalCameras);
+        emit statusChanged(QString("Synchronized capture complete: %1 of %2 successful").arg(successCount).arg(totalCameras));
+        return successCount == totalCameras;
     }
 
     std::vector<std::string> CameraManager::getAvailableCameras() const
