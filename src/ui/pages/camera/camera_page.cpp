@@ -4,7 +4,8 @@
 #include "ui/dialogs/photo_preview_dialog.hpp"
 #include "core/camera_manager.hpp"
 #include "core/settings.hpp"
-#include "core/sapera/sapera_camera_real.hpp"
+#include "core/sapera/sapera_camera_base.hpp"
+#include "core/sapera/sapera_camera_factory.hpp"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QSplitter>
@@ -164,6 +165,22 @@ namespace cam_matrix::ui
         // Show single camera view
         if (syncGroup_) syncGroup_->setVisible(false);
         if (cameraControl_) cameraControl_->setVisible(true);
+        if (connectButton_) connectButton_->setVisible(true);
+        if (disconnectButton_) disconnectButton_->setVisible(true);
+        if (videoDisplay_) {
+            videoDisplay_->setEnabled(true);
+            videoDisplay_->show();
+            // Update display if we have a valid camera selected
+            if (selectedCameraIndex_ >= 0 && cameraManager_->isCameraConnected(selectedCameraIndex_)) {
+                cam_matrix::core::sapera::SaperaCameraBase* camera = cameraManager_->getCameraByIndex(selectedCameraIndex_);
+                if (camera) {
+                    QImage currentFrame = camera->getLatestFrame();
+                    if (!currentFrame.isNull()) {
+                        videoDisplay_->updateFrame(currentFrame);
+                    }
+                }
+            }
+        }
         multiCamMode->setChecked(false); });
 
         connect(multiCamMode, &QPushButton::clicked, [this, singleCamMode]()
@@ -171,6 +188,21 @@ namespace cam_matrix::ui
         // Show multi camera view
         if (syncGroup_) syncGroup_->setVisible(true);
         if (cameraControl_) cameraControl_->setVisible(false);
+        if (connectButton_) connectButton_->setVisible(false);
+        if (disconnectButton_) disconnectButton_->setVisible(false);
+        if (videoDisplay_) {
+            videoDisplay_->clear();
+            videoDisplay_->setEnabled(false);
+            // Display a message indicating that video preview is disabled in multi-camera mode
+            QImage placeholderImage(640, 480, QImage::Format_RGB32);
+            placeholderImage.fill(Qt::black);
+            QPainter painter(&placeholderImage);
+            painter.setPen(Qt::white);
+            painter.setFont(QFont("Arial", 14));
+            painter.drawText(placeholderImage.rect(), Qt::AlignCenter, 
+                             "Video preview disabled in multi-camera mode.\nUse single camera mode for live preview.");
+            videoDisplay_->updateFrame(placeholderImage);
+        }
         singleCamMode->setChecked(false); });
 
         // Camera list in a clean card
@@ -570,6 +602,11 @@ namespace cam_matrix::ui
         connect(frameTimer, &QTimer::timeout, this, [this]()
                 {
         try {
+            // Don't attempt to fetch frames if we're in multi-camera mode (videoDisplay is disabled)
+            if (!videoDisplay_ || !videoDisplay_->isEnabled()) {
+                return;
+            }
+            
             // Safety checks for a valid camera index
             if (selectedCameraIndex_ < 0 || selectedCameraIndex_ >= cameraList_->count()) {
                 return;
@@ -590,7 +627,7 @@ namespace cam_matrix::ui
             }
             
             // Get the camera pointer safely
-            SaperaCameraReal* camera = nullptr;
+            cam_matrix::core::sapera::SaperaCameraBase* camera = nullptr;
             try {
                 camera = cameraManager_->getCameraByIndex(selectedCameraIndex_);
             } catch (...) {
@@ -630,6 +667,11 @@ namespace cam_matrix::ui
         connect(watchdogTimer, &QTimer::timeout, this, [this]()
                 {
             try {
+                // Skip watchdog checks in multi-camera mode
+                if (!videoDisplay_ || !videoDisplay_->isEnabled()) {
+                    return;
+                }
+                
                 // Only proceed if we have a valid selected camera index
                 if (selectedCameraIndex_ < 0) {
                     return;
@@ -675,7 +717,7 @@ namespace cam_matrix::ui
                 
                 // Send a "keepalive" signal/operation to the camera to prevent timeout
                 try {
-                    auto* camera = cameraManager_->getCameraByIndex(selectedCameraIndex_);
+                    cam_matrix::core::sapera::SaperaCameraBase* camera = cameraManager_->getCameraByIndex(selectedCameraIndex_);
                     if (!camera) {
                         logDebugMessage("Watchdog: Camera pointer is null despite being reported as connected", "WARNING");
                         return;
@@ -770,38 +812,41 @@ namespace cam_matrix::ui
                     cameraManager_->selectCameraForSync(index, true);
                 }
 
-                // Get the camera object directly and request an initial frame
-                try
+                // Get the camera object directly and request an initial frame - ONLY if in single camera mode
+                if (videoDisplay_ && videoDisplay_->isEnabled())
                 {
-                    auto *camera = cameraManager_->getCameraByIndex(index);
-                    if (camera && camera->isConnected())
+                    try
                     {
-                        // Give a small delay to allow the camera to start streaming
-                        QApplication::processEvents();
-
-                        // Try to get a current frame
-                        try
+                        cam_matrix::core::sapera::SaperaCameraBase *camera = cameraManager_->getCameraByIndex(index);
+                        if (camera && camera->isConnected())
                         {
-                            QImage currentFrame = camera->getLatestFrame();
-                            if (!currentFrame.isNull())
+                            // Give a small delay to allow the camera to start streaming
+                            QApplication::processEvents();
+
+                            // Try to get a current frame
+                            try
                             {
-                                videoDisplay_->updateFrame(currentFrame);
-                                logDebugMessage("Updated video display with initial frame");
+                                QImage currentFrame = camera->getLatestFrame();
+                                if (!currentFrame.isNull())
+                                {
+                                    videoDisplay_->updateFrame(currentFrame);
+                                    logDebugMessage("Updated video display with initial frame");
+                                }
+                            }
+                            catch (const std::exception &e)
+                            {
+                                logDebugMessage(QString("Exception when getting initial frame: %1").arg(e.what()), "WARNING");
+                            }
+                            catch (...)
+                            {
+                                logDebugMessage("Unknown exception when getting initial frame", "WARNING");
                             }
                         }
-                        catch (const std::exception &e)
-                        {
-                            logDebugMessage(QString("Exception when getting initial frame: %1").arg(e.what()), "WARNING");
-                        }
-                        catch (...)
-                        {
-                            logDebugMessage("Unknown exception when getting initial frame", "WARNING");
-                        }
                     }
-                }
-                catch (...)
-                {
-                    logDebugMessage("Exception when accessing camera after connecting", "WARNING");
+                    catch (...)
+                    {
+                        logDebugMessage("Exception when accessing camera after connecting", "WARNING");
+                    }
                 }
 
                 // Make sure to update UI after all changes
@@ -919,13 +964,14 @@ namespace cam_matrix::ui
         cameraControl_->setEnabled(cameraSelected && cameraManager_->isCameraConnected(index));
         cameraControl_->setCameraIndex(cameraSelected && cameraManager_->isCameraConnected(index) ? index : -1);
 
-        if (cameraSelected)
+        // Only update video display if in single camera mode
+        if (cameraSelected && videoDisplay_ && videoDisplay_->isEnabled())
         {
             logDebugMessage(QString("Camera selected: %1").arg(cameraList_->item(index)->text()));
 
             if (cameraManager_->isCameraConnected(index))
             {
-                auto *camera = cameraManager_->getCameraByIndex(index);
+                cam_matrix::core::sapera::SaperaCameraBase *camera = cameraManager_->getCameraByIndex(index);
                 if (camera)
                 {
                     QImage currentFrame = camera->getLatestFrame();
@@ -942,7 +988,12 @@ namespace cam_matrix::ui
                 logDebugMessage("Selected camera not connected - controls updated, display cleared");
             }
         }
-        else
+        else if (videoDisplay_ && !videoDisplay_->isEnabled())
+        {
+            // We're in multi-camera mode, don't update video display
+            logDebugMessage("Camera selected in multi-camera mode, not updating video display");
+        }
+        else if (videoDisplay_)
         {
             videoDisplay_->clear(); // Clear display if no camera is selected
         }
@@ -1017,7 +1068,7 @@ namespace cam_matrix::ui
                 logDebugMessage(QString("Created directory %1").arg(basePath), "INFO");
             }
 
-            // Send empty path to trigger the auto-save in SaperaCameraReal::capturePhoto
+            // Send empty path to trigger the auto-save in SaperaCameraBase::capturePhoto
             logDebugMessage(QString("Capturing photo from camera %1 (auto-save)").arg(cameraIndex), "ACTION");
             bool success = cameraManager_->capturePhoto(cameraIndex, "");
 

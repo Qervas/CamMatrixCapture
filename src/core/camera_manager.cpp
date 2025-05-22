@@ -70,11 +70,19 @@ namespace cam_matrix::core
         auto cameraFullNames = SaperaCameraReal::enumerateCameras();
         qDebug() << "Found" << cameraFullNames.size() << "cameras through Sapera enumeration";
 
-        // Add cameras with exact names from sample code
+        // Add cameras with exact names from sample code, excluding "System"
         for (const auto &name : cameraFullNames)
         {
-            filteredCameras.append(name);
-            qDebug() << "Added camera:" << name;
+            // Skip if the camera name contains "System"
+            if (!name.contains("System", Qt::CaseInsensitive))
+            {
+                filteredCameras.append(name);
+                qDebug() << "Added camera:" << name;
+            }
+            else
+            {
+                qDebug() << "Skipped system camera:" << name;
+            }
         }
 
         // Create camera objects
@@ -227,16 +235,36 @@ namespace cam_matrix::core
         }
         emit statusChanged(QString("Connecting %1 cameras...").arg(indexesToConnect.size()));
         int connectedCount = 0;
+
+        // Add delay between each camera connection to avoid resource contention
         for (size_t index : indexesToConnect)
         {
             if (index < cameras_.size())
             {
+                // Add delay before connecting each camera
+                QThread::msleep(500); // 500ms delay between connections
+
                 if (connectCamera(index))
+                {
                     connectedCount++;
+                    // Add delay after successful connection
+                    QThread::msleep(200); // 200ms delay after successful connection
+                }
                 else
+                {
                     allConnected = false;
+                    // If connection fails, give system more time to recover
+                    QThread::msleep(1000); // 1 second delay after failure
+
+                    // Try to disconnect and cleanup this camera before continuing
+                    if (auto *camera = getCameraByIndex(index))
+                    {
+                        camera->disconnectCamera();
+                    }
+                }
             }
         }
+
         emit statusChanged(QString("Connected %1 of %2 cameras").arg(connectedCount).arg(indexesToConnect.size()));
         return allConnected;
     }
