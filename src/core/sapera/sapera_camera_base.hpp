@@ -24,6 +24,13 @@ namespace cam_matrix::core::sapera
         virtual bool capturePhoto(const QString &filePath) = 0;
         virtual QImage getLatestFrame() const;
 
+        // High-quality photo capture (with default implementation that calls regular capturePhoto)
+        virtual bool captureHighQualityPhoto(const QString &filePath, const QString &format = "tiff")
+        {
+            // Base implementation just forwards to regular capture for compatibility
+            return capturePhoto(filePath);
+        }
+
         // Common accessors
         QString getServerName() const { return m_serverName; }
         bool isConnected() const { return m_connected; }

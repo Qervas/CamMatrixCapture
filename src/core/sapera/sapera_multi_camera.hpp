@@ -21,6 +21,9 @@ namespace cam_matrix::core::sapera
         // Async version for multi-camera synchronized capture
         void capturePhotoAsync(const QString &filePath, const std::function<void(bool, const QString &)> &callback = nullptr);
 
+        // High-quality photo capture with dedicated resources
+        bool captureHighQualityPhoto(const QString &filePath, const QString &format = "tiff");
+
     private:
         static void XferCallback(SapXferCallbackInfo *pInfo);
 

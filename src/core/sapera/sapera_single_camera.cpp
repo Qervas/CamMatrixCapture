@@ -470,4 +470,171 @@ namespace cam_matrix::core::sapera
         return false; }, "process frame");
     }
 
+    bool SaperaSingleCamera::captureHighQualityPhoto(const QString &filePath, const QString &format)
+    {
+        if (!isConnected())
+        {
+            qDebug() << "Cannot capture high-quality photo - camera not connected";
+            return false;
+        }
+
+        QString finalPath = filePath;
+        if (finalPath.isEmpty())
+        {
+            // Auto-generate file name with timestamp
+            QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd_HH-mm-ss");
+            QString cameraName = m_serverName;
+            cameraName.replace(":", "_").replace(" ", "_");
+            finalPath = QDir::homePath() + "/Pictures/" + cameraName + "_HQ_" + timestamp + "." + format.toLower();
+
+            // Make sure directory exists
+            QFileInfo fileInfo(finalPath);
+            QDir dir = fileInfo.dir();
+            if (!dir.exists())
+            {
+                dir.mkpath(".");
+            }
+        }
+
+        qDebug() << "Starting high-quality photo capture to:" << finalPath;
+        bool success = false;
+
+        try
+        {
+            // Instead of creating new resources which could conflict with existing ones,
+            // we'll temporarily pause the ongoing acquisition and use the existing resources
+
+            // Stop the live acquisition if it's running
+            bool wasAcquiring = m_isAcquiring;
+            if (wasAcquiring)
+            {
+                qDebug() << "Stopping acquisition for high-quality capture";
+                stopAcquisition();
+
+                // Give a brief pause to ensure acquisition is fully stopped and resources released
+                QThread::msleep(500);
+            }
+
+            // Now use the existing resources for a single snapshot
+            if (m_transfer && m_rawBuffer)
+            {
+                // Set new color conversion options to ensure high quality
+                if (m_colorConv)
+                {
+                    m_colorConv->SetOutputFormat(SapFormatRGB888);
+                    m_colorConv->SetAlign(SapColorConversion::AlignRGGB);
+                    m_colorConv->SetMethod(SapColorConversion::Method1); // High-quality conversion
+                }
+
+                // Format-specific options
+                QString saveOptions;
+                if (format.toLower() == "tiff")
+                {
+                    saveOptions = "-format tiff";
+                }
+                else if (format.toLower() == "png")
+                {
+                    saveOptions = "-format png -compression 1"; // Best quality
+                }
+                else if (format.toLower() == "bmp")
+                {
+                    saveOptions = "-format bmp";
+                }
+                else
+                {
+                    // Default to TIFF
+                    saveOptions = "-format tiff";
+                }
+
+                // Perform a single grab
+                qDebug() << "Grabbing high-quality frame";
+                if (m_transfer->Grab())
+                {
+                    // Wait for transfer to complete (with timeout)
+                    if (m_transfer->Wait(4000)) // 4 second timeout
+                    {
+                        // Process with color conversion if available
+                        if (m_colorConv && m_colorConv->Convert())
+                        {
+                            SapBuffer *outputBuffer = m_colorConv->GetOutputBuffer();
+                            if (outputBuffer)
+                            {
+                                // Save the image
+                                qDebug() << "Saving high-quality image to" << finalPath << "with options:" << saveOptions;
+                                if (outputBuffer->Save(finalPath.toLocal8Bit().constData(), saveOptions.toLocal8Bit().constData()))
+                                {
+                                    success = true;
+                                    emit statusChanged(tr("High-quality photo captured to %1").arg(finalPath));
+
+                                    // Create a QImage for preview
+                                    QImage capturedImage;
+                                    void *pData = nullptr;
+                                    if (outputBuffer->GetAddress(&pData) && pData != nullptr)
+                                    {
+                                        int width = outputBuffer->GetWidth();
+                                        int height = outputBuffer->GetHeight();
+                                        capturedImage = QImage(static_cast<const uchar *>(pData), width, height,
+                                                               width * 3, QImage::Format_RGB888)
+                                                            .copy();
+
+                                        // Update last frame for preview
+                                        {
+                                            std::lock_guard<std::mutex> lock(m_frameMutex);
+                                            m_lastFrame = capturedImage;
+                                        }
+                                        emit frameReady(capturedImage);
+                                    }
+                                }
+                                else
+                                {
+                                    qWarning() << "Failed to save high-quality image";
+                                    emit errorOccurred(tr("Failed to save high-quality image"));
+                                }
+                            }
+                        }
+                        else
+                        {
+                            qWarning() << "Color conversion failed for high-quality capture";
+                            emit errorOccurred(tr("Color conversion failed for high-quality capture"));
+                        }
+                    }
+                    else
+                    {
+                        qWarning() << "Timeout waiting for high-quality capture";
+                        emit errorOccurred(tr("Timeout waiting for high-quality capture"));
+                    }
+                }
+                else
+                {
+                    qWarning() << "Failed to grab high-quality frame";
+                    emit errorOccurred(tr("Failed to grab high-quality frame"));
+                }
+            }
+            else
+            {
+                qWarning() << "Transfer or buffer not available for high-quality capture";
+                emit errorOccurred(tr("Transfer or buffer not available for high-quality capture"));
+            }
+
+            // Restart live acquisition if it was active
+            if (wasAcquiring)
+            {
+                qDebug() << "Restarting acquisition after high-quality capture";
+                startAcquisition();
+            }
+        }
+        catch (const std::exception &e)
+        {
+            qWarning() << "Exception in high-quality photo capture:" << e.what();
+            emit errorOccurred(tr("Error in high-quality capture: %1").arg(e.what()));
+        }
+        catch (...)
+        {
+            qWarning() << "Unknown exception in high-quality photo capture";
+            emit errorOccurred(tr("Unknown error in high-quality capture"));
+        }
+
+        return success;
+    }
+
 } // namespace cam_matrix::core::sapera

@@ -21,6 +21,9 @@ namespace cam_matrix::core::sapera
         // Async version of photo capture - better for multi-camera scenarios
         void capturePhotoAsync(const QString &filePath, const std::function<void(bool, const QString &)> &callback = nullptr);
 
+        // High-quality photo capture with dedicated resources
+        bool captureHighQualityPhoto(const QString &filePath, const QString &format = "tiff");
+
         // Additional methods specific to live view
         bool startAcquisition();
         void stopAcquisition();

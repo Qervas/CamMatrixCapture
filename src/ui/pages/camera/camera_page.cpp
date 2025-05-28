@@ -346,7 +346,22 @@ namespace cam_matrix::ui
 
         syncLayout->addLayout(syncConnectionLayout);
 
-        // Capture sync button
+        // HQ Format selection for synchronized captures
+        auto formatSyncLayout = new QHBoxLayout();
+        auto formatLabel = new QLabel("HQ Format:");
+        formatLabel->setStyleSheet("color: white;");
+
+        QComboBox *syncFormatCombo = new QComboBox();
+        syncFormatCombo->addItems({"TIFF",
+                                   "PNG (Best Quality)",
+                                   "BMP"});
+        syncFormatCombo->setStyleSheet("background-color: #444; color: white; padding: 5px;");
+
+        formatSyncLayout->addWidget(formatLabel);
+        formatSyncLayout->addWidget(syncFormatCombo);
+        syncLayout->addLayout(formatSyncLayout);
+
+        // Capture sync buttons
         captureSyncButton_ = new QPushButton("Capture Synchronized Photos");
         captureSyncButton_->setStyleSheet(QString(
                                               "QPushButton { background-color: %1; color: white; border-radius: 6px; padding: 12px 0; font-size: 13px; font-weight: bold; }"
@@ -355,7 +370,19 @@ namespace cam_matrix::ui
                                               "QPushButton:disabled { background-color: #A0A0A0; }")
                                               .arg(successColor, "#2EB250", "#29A147"));
 
+        captureHQSyncButton_ = new QPushButton("Capture High-Quality Synchronized Photos");
+        captureHQSyncButton_->setStyleSheet(QString(
+                                                "QPushButton { background-color: %1; color: white; border-radius: 6px; padding: 12px 0; font-size: 13px; font-weight: bold; }"
+                                                "QPushButton:hover { background-color: %2; }"
+                                                "QPushButton:pressed { background-color: %3; }"
+                                                "QPushButton:disabled { background-color: #A0A0A0; }")
+                                                .arg(successColor, "#2EB250", "#29A147"));
+
         syncLayout->addWidget(captureSyncButton_);
+        syncLayout->addWidget(captureHQSyncButton_);
+
+        // Store the format combo for later access
+        syncFormatCombo_ = syncFormatCombo;
 
         // Progress bar for sync operations
         syncProgressBar_ = new QProgressBar();
@@ -505,6 +532,7 @@ namespace cam_matrix::ui
         connectSelectedButton_->setEnabled(false);
         disconnectSelectedButton_->setEnabled(false);
         captureSyncButton_->setEnabled(false);
+        captureHQSyncButton_->setEnabled(false);
 
         // Create loading overlay
         loadingOverlay_ = new QWidget(this);
@@ -534,6 +562,7 @@ namespace cam_matrix::ui
         connect(connectSelectedButton_, &QPushButton::clicked, this, &CameraPage::onConnectSelectedCameras);
         connect(disconnectSelectedButton_, &QPushButton::clicked, this, &CameraPage::onDisconnectSelectedCameras);
         connect(captureSyncButton_, &QPushButton::clicked, this, &CameraPage::onCaptureSync);
+        connect(captureHQSyncButton_, &QPushButton::clicked, this, &CameraPage::onCaptureHQSync);
 
         // Debug console
         connect(clearConsoleButton_, &QPushButton::clicked, this, &CameraPage::clearDebugConsole);
@@ -574,6 +603,16 @@ namespace cam_matrix::ui
                         onCapturePhotoRequested(selectedCameraIndex_);
                     }
                 });
+
+        // Connect high-quality photo capture signal
+        connect(cameraControl_, &CameraControlWidget::highQualityPhotoCaptureRequested,
+                [this](const QString &format)
+                {
+                    if (selectedCameraIndex_ >= 0)
+                    {
+                        onHighQualityPhotoCaptureRequested(selectedCameraIndex_, format);
+                    }
+                });
     }
 
     void CameraPage::initialize()
@@ -583,6 +622,7 @@ namespace cam_matrix::ui
         connectSelectedButton_->setEnabled(false);
         disconnectSelectedButton_->setEnabled(false);
         captureSyncButton_->setEnabled(false);
+        captureHQSyncButton_->setEnabled(false);
 
         // Load settings and update camera list
         loadSettings();
@@ -1353,6 +1393,51 @@ namespace cam_matrix::ui
         }
     }
 
+    void CameraPage::onCaptureHQSync()
+    {
+        QString timeStamp = QDateTime::currentDateTime().toString("yyyyMMdd_hhmmss");
+        QString basePath = core::Settings::getPhotoSaveDirectory();
+        QString dirPath = basePath + "/hq_sync_" + timeStamp;
+
+        QDir dir;
+        if (!dir.exists(dirPath))
+        {
+            dir.mkpath(dirPath);
+        }
+
+        // Get the selected format from the combo box
+        QString format = "tiff"; // Default
+        if (syncFormatCombo_)
+        {
+            QString selectedFormat = syncFormatCombo_->currentText();
+            if (selectedFormat.contains("TIFF"))
+            {
+                format = "tiff";
+            }
+            else if (selectedFormat.contains("PNG"))
+            {
+                format = "png";
+            }
+            else if (selectedFormat.contains("BMP"))
+            {
+                format = "bmp";
+            }
+        }
+
+        logDebugMessage(QString("Starting high-quality synchronized capture (%1) to %2").arg(format).arg(dirPath), "ACTION");
+        syncProgressBar_->setValue(0);
+        syncProgressBar_->show();
+
+        // Call the captureHighQualityPhotosSync method with the selected format
+        bool success = cameraManager_->captureHighQualityPhotosSync(dirPath, format);
+
+        if (!success)
+        {
+            logDebugMessage("Failed to start high-quality synchronized capture", "ERROR");
+            syncProgressBar_->hide();
+        }
+    }
+
     void CameraPage::onClearSelection()
     {
         for (int i = 0; i < cameraList_->count(); ++i)
@@ -1441,6 +1526,7 @@ namespace cam_matrix::ui
         connectSelectedButton_->setEnabled(selectedCount > 0);
         disconnectSelectedButton_->setEnabled(connectedSelectedCount > 0);
         captureSyncButton_->setEnabled(connectedSelectedCount > 1);
+        captureHQSyncButton_->setEnabled(connectedSelectedCount > 1);
 
         toggleSelectButton_->setText(areAllCamerasSelected() ? tr("Deselect All") : tr("Select All"));
     }
@@ -1592,6 +1678,56 @@ namespace cam_matrix::ui
         if (videoDisplay_)
         {
             videoDisplay_->updateFrame(frame);
+        }
+    }
+
+    void CameraPage::onHighQualityPhotoCaptureRequested(int cameraIndex, const QString &format)
+    {
+        if (cameraIndex >= 0 && cameraManager_->isCameraConnected(cameraIndex))
+        {
+            // Auto-generate filepath to bypass file dialog completely
+            QString timeStamp = QDateTime::currentDateTime().toString("yyyyMMdd_hhmmss");
+            QString basePath = core::Settings::getPhotoSaveDirectory();
+            QString fileName = QString("%1/hq_capture_%2.%3").arg(basePath).arg(timeStamp).arg(format);
+
+            // Make sure the directory exists
+            QDir dir(basePath);
+            if (!dir.exists())
+            {
+                dir.mkpath(".");
+                logDebugMessage(QString("Created directory %1").arg(basePath), "INFO");
+            }
+
+            // Show loading overlay while capturing
+            if (loadingOverlay_)
+            {
+                loadingOverlay_->show();
+                QApplication::processEvents(); // Ensure overlay appears immediately
+            }
+
+            logDebugMessage(QString("Capturing high-quality photo (%1) from camera %2").arg(format).arg(cameraIndex), "ACTION");
+
+            // Use the high-quality capture method
+            bool success = cameraManager_->captureHighQualityPhoto(cameraIndex, fileName, format);
+
+            // Hide loading overlay
+            if (loadingOverlay_)
+            {
+                loadingOverlay_->hide();
+            }
+
+            if (success)
+            {
+                logDebugMessage(QString("High-quality photo capture successful: %1").arg(fileName), "SUCCESS");
+            }
+            else
+            {
+                logDebugMessage(QString("High-quality photo capture failed"), "ERROR");
+            }
+        }
+        else
+        {
+            logDebugMessage(QString("Cannot capture high-quality photo - camera %1 not connected").arg(cameraIndex), "ERROR");
         }
     }
 
