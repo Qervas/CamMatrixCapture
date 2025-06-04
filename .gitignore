@@ -1,0 +1,67 @@
+# ==============================================
+# Clean Sapera Camera System - .gitignore
+# ==============================================
+
+# Build directories
+build/
+build-*/
+Debug/
+Release/
+
+# Executable outputs
+*.exe
+*.dll
+*.lib
+*.obj
+*.pdb
+
+# Captured images and data
+data/captured_images_*/
+data/*.tiff
+data/*.tif
+data/*.jpg
+data/*.png
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+
+# IDE and editor files
+.vs/
+.vscode/
+*.sln
+*.vcxproj*
+*.filters
+*.user
+
+# CMake generated files
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+*.cmake
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.env
+
+# System files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Keep essential files
+!backend/src/
+!web-bridge/web_bridge.py
+!frontend/
+!config/
+!CMakeLists.txt
+!README.md
+!start-system.bat 
