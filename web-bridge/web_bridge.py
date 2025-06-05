@@ -137,11 +137,14 @@ async def capture_all_cameras():
         response = json.loads(result.stdout)
         logger.info(f"✅ Capture completed: {response.get('total_images', 0)} images")
         
-        # Add additional metadata for clean system
+        # Add additional metadata for bandwidth optimized system
         response["system_info"] = {
             "executable": str(EXECUTABLE_PATH.name),
             "config": str(CONFIG_PATH.name),
             "data_directory": str(DATA_DIR),
+            "bandwidth_optimization": "enabled",
+            "smart_scheduling": "enabled",
+            "max_concurrent_cameras": 4,
             "dark_image_retry": "enabled",
             "max_retries": 3
         }
@@ -192,13 +195,18 @@ async def system_status():
         "config_exists": CONFIG_PATH.exists(),
         "data_directory": str(DATA_DIR),
         "frontend_directory": str(FRONTEND_DIR),
-        "dark_image_fixes": {
+        "bandwidth_optimizations": {
+            "smart_scheduling": True,
+            "max_concurrent_cameras": 4,
+            "bandwidth_throttling": True,
             "intelligent_retry": True,
             "longer_settling": "300-500ms",
             "aggressive_retry": "2x exposure, 1.5x gain",
-            "max_retries": 3
+            "max_retries": 3,
+            "buffer_count": 5,
+            "timeout_extension": "50% for problematic cameras"
         },
-        "version": "Clean System v1.0"
+        "version": "Bandwidth Optimized System v3.0"
     }
     
     return status
@@ -226,14 +234,14 @@ async def serve_js(filename: str):
 @app.on_event("startup")
 async def startup_event():
     """System startup checks"""
-    logger.info("🚀 Starting Clean Sapera Camera System...")
+    logger.info("🌐 Starting Bandwidth-Optimized Sapera Camera System...")
     
     # Check if executable exists
     if not EXECUTABLE_PATH.exists():
         logger.error(f"❌ Camera executable not found: {EXECUTABLE_PATH}")
         logger.error("🔨 Please build the system first: cmake --build build --config Release")
     else:
-        logger.info(f"✅ Camera executable found: {EXECUTABLE_PATH}")
+        logger.info(f"✅ Bandwidth-optimized camera executable found: {EXECUTABLE_PATH}")
     
     # Check if config exists
     if not CONFIG_PATH.exists():

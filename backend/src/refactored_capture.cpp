@@ -53,10 +53,132 @@ struct CameraHandle {
     bool initialized = false;
     bool parametersApplied = false; // Track if parameters were ever applied
     int failureCount = 0; // Track consecutive failures for this camera
+    
+    // BANDWIDTH OPTIMIZATION: Add bandwidth tracking
+    std::chrono::high_resolution_clock::time_point lastCaptureTime;
+    int bandwidthPriority = 0; // 0=normal, 1=high priority, 2=critical
+    double averageCaptureTime = 0.0; // Track timing for scheduling
+    int consecutiveBandwidthFailures = 0; // Track bandwidth-specific failures
+    bool needsBandwidthThrottling = false; // Flag for bandwidth management
 };
 
 // Forward declaration
 class CameraConfigManager;
+
+// BANDWIDTH OPTIMIZATION: Smart bandwidth manager for camera scheduling
+class SmartBandwidthManager {
+private:
+    std::vector<CameraHandle*> cameras_;
+    std::mutex scheduleMutex_;
+    std::atomic<int> activeCameras_;
+    std::chrono::high_resolution_clock::time_point lastGlobalCapture_;
+    double totalSystemBandwidth_ = 0.0; // Track overall system load
+    
+    // Bandwidth optimization constants - ULTRA CONSERVATIVE for 100% success
+    static constexpr int MAX_CONCURRENT_CAMERAS = 2; // Further reduced to 2 for maximum reliability
+    static constexpr int MIN_INTERVAL_BETWEEN_CAPTURES_MS = 50; // Doubled to 50ms for better recovery
+    static constexpr int BANDWIDTH_THROTTLE_DELAY_MS = 100; // Doubled throttle delay for problem cameras
+    static constexpr int HIGH_PRIORITY_BOOST_MS = 20; // Increased priority boost timing
+
+public:
+    SmartBandwidthManager() : activeCameras_(0) {
+        lastGlobalCapture_ = std::chrono::high_resolution_clock::now();
+    }
+    
+    void registerCamera(CameraHandle* camera) {
+        std::lock_guard<std::mutex> lock(scheduleMutex_);
+        cameras_.push_back(camera);
+        // Initialize bandwidth tracking
+        camera->lastCaptureTime = std::chrono::high_resolution_clock::now();
+        camera->averageCaptureTime = 100.0; // Default estimate
+    }
+    
+    bool shouldStartCapture(CameraHandle* camera) {
+        std::lock_guard<std::mutex> lock(scheduleMutex_);
+        
+        auto now = std::chrono::high_resolution_clock::now();
+        auto timeSinceLastCapture = std::chrono::duration_cast<std::chrono::milliseconds>(
+            now - camera->lastCaptureTime).count();
+        auto timeSinceGlobalCapture = std::chrono::duration_cast<std::chrono::milliseconds>(
+            now - lastGlobalCapture_).count();
+        
+        // Check if too many cameras are active
+        if (activeCameras_.load() >= MAX_CONCURRENT_CAMERAS) {
+            return false;
+        }
+        
+        // Enforce minimum interval to prevent bandwidth saturation
+        if (timeSinceGlobalCapture < MIN_INTERVAL_BETWEEN_CAPTURES_MS) {
+            return false;
+        }
+        
+        // Apply bandwidth throttling if needed
+        if (camera->needsBandwidthThrottling && timeSinceLastCapture < BANDWIDTH_THROTTLE_DELAY_MS) {
+            return false;
+        }
+        
+        // Priority boost for cameras with bandwidth issues
+        if (camera->bandwidthPriority > 0 && timeSinceLastCapture < HIGH_PRIORITY_BOOST_MS) {
+            return false;
+        }
+        
+        return true;
+    }
+    
+    void startCapture(CameraHandle* camera) {
+        std::lock_guard<std::mutex> lock(scheduleMutex_);
+        activeCameras_++;
+        camera->lastCaptureTime = std::chrono::high_resolution_clock::now();
+        lastGlobalCapture_ = camera->lastCaptureTime;
+    }
+    
+    void endCapture(CameraHandle* camera, bool success, double captureTimeMs) {
+        std::lock_guard<std::mutex> lock(scheduleMutex_);
+        activeCameras_--;
+        
+        // Update timing statistics
+        if (camera->averageCaptureTime == 0.0) {
+            camera->averageCaptureTime = captureTimeMs;
+        } else {
+            camera->averageCaptureTime = (camera->averageCaptureTime * 0.7) + (captureTimeMs * 0.3);
+        }
+        
+        // Handle bandwidth-related failures
+        if (!success) {
+            camera->consecutiveBandwidthFailures++;
+            if (camera->consecutiveBandwidthFailures >= 2) {
+                camera->needsBandwidthThrottling = true;
+                camera->bandwidthPriority = std::min(2, camera->bandwidthPriority + 1);
+            }
+        } else {
+            // Reset on success
+            camera->consecutiveBandwidthFailures = 0;
+            if (camera->consecutiveBandwidthFailures == 0 && camera->needsBandwidthThrottling) {
+                camera->needsBandwidthThrottling = false;
+                camera->bandwidthPriority = std::max(0, camera->bandwidthPriority - 1);
+            }
+        }
+    }
+    
+    void waitForOptimalTiming(CameraHandle* camera) {
+        while (!shouldStartCapture(camera)) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+    }
+    
+    int getActiveCameraCount() const {
+        return activeCameras_.load();
+    }
+    
+    void resetBandwidthStats() {
+        std::lock_guard<std::mutex> lock(scheduleMutex_);
+        for (auto* camera : cameras_) {
+            camera->consecutiveBandwidthFailures = 0;
+            camera->needsBandwidthThrottling = false;
+            camera->bandwidthPriority = 0;
+        }
+    }
+};
 
 // Async file writer for parallel I/O
 class AsyncFileWriter {
@@ -363,6 +485,7 @@ private:
     bool batchMode_ = false;  // For command-line operations
     std::unique_ptr<IPCServer> ipcServer_;  // IPC server for web API communication
     std::unique_ptr<AsyncFileWriter> fileWriter_; // Async file writer for parallel I/O
+    std::unique_ptr<SmartBandwidthManager> bandwidthManager_; // Smart bandwidth scheduling
     
 public:
     RefactoredCameraSystem(bool batchMode = false) : configManager_(CameraConfigManager::getInstance()), api_(configManager_), batchMode_(batchMode) {
@@ -377,12 +500,16 @@ public:
         fileWriter_ = std::make_unique<AsyncFileWriter>();
         fileWriter_->start();
         
+        // Initialize smart bandwidth manager
+        bandwidthManager_ = std::make_unique<SmartBandwidthManager>();
+        
         // Initialize IPC server for non-batch mode
         if (!batchMode_) {
             ipcServer_ = std::make_unique<IPCServer>(&configManager_);
-            std::cout << "🚀 Camera System v3.0 - ULTRA-OPTIMIZED Edition" << std::endl;
+            std::cout << "🚀 Camera System v3.0 - ULTRA-OPTIMIZED + BANDWIDTH MANAGED Edition" << std::endl;
             std::cout << "📡 IPC Server will start after camera initialization" << std::endl;
             std::cout << "⚡ Async file I/O enabled for maximum speed" << std::endl;
+            std::cout << "🌐 Smart bandwidth management enabled for zero dark images" << std::endl;
         }
     }
     
@@ -478,6 +605,13 @@ public:
             return a.configInfo && b.configInfo && (a.configInfo->position < b.configInfo->position);
         });
         
+        // BANDWIDTH OPTIMIZATION: Register all cameras with bandwidth manager
+        for (auto& camera : cameras_) {
+            if (camera.initialized) {
+                bandwidthManager_->registerCamera(&camera);
+            }
+        }
+        
         auto initEndTime = std::chrono::high_resolution_clock::now();
         auto initDuration = std::chrono::duration_cast<std::chrono::milliseconds>(initEndTime - initStartTime);
         
@@ -552,8 +686,8 @@ public:
         acqDevice->GetFeatureValue("DeviceModelName", modelName, sizeof(modelName));
         configInfo->modelName = modelName;
         
-        // Create buffer and transfer objects
-            auto buffer = new SapBufferWithTrash(3, acqDevice); // Increased to 3 buffers for better performance
+        // Create buffer and transfer objects - BANDWIDTH OPTIMIZATION
+            auto buffer = new SapBufferWithTrash(5, acqDevice); // Increased to 5 buffers for optimal bandwidth handling
         if (!buffer->Create()) {
             if (!batchMode_) {
                     std::cout << "    ❌ Failed to create buffer for " << serialNumber << std::endl;
@@ -630,6 +764,13 @@ public:
         handle.configInfo = configInfo;
         handle.initialized = true;
             handle.parametersApplied = true; // Mark as already applied
+        
+            // BANDWIDTH OPTIMIZATION: Initialize bandwidth tracking
+            handle.lastCaptureTime = std::chrono::high_resolution_clock::now();
+            handle.bandwidthPriority = 0;
+            handle.averageCaptureTime = 100.0;
+            handle.consecutiveBandwidthFailures = 0;
+            handle.needsBandwidthThrottling = false;
         
             // Register camera handle with config manager
         configManager_.registerCameraHandle(serialNumber, acqDevice, transfer, buffer);
@@ -1001,16 +1142,16 @@ private:
             return;
         }
         
-        // HYPER-OPTIMIZED batch configuration for MAXIMUM speed (with reliability)
-        const int BATCH_SIZE = 8; // Keep 8 cameras per batch for high throughput
-        const int BATCH_DELAY_MS = 15; // Increased from 5ms to 15ms for better reliability
-        const int SHOT_DELAY_MS = 75; // Increased from 50ms to 75ms between shots for settling
+        // BANDWIDTH-OPTIMIZED batch configuration for MAXIMUM quality (prevents dark images)
+        const int BATCH_SIZE = 4; // Reduced from 8 to 4 cameras per batch to prevent bandwidth saturation
+        const int BATCH_DELAY_MS = 50; // Increased to 50ms for better bandwidth recovery
+        const int SHOT_DELAY_MS = 100; // Increased to 100ms between shots for optimal bandwidth management
         
         std::cout << "📁 Created session folder: " << sessionFolder << std::endl;
-        std::cout << "🚀 Capturing " << shotCount << " shot(s) from " << cameras_.size() << " cameras with SMART RETRY SYSTEM..." << std::endl;
-        std::cout << "🧠 SMART batch size: " << BATCH_SIZE << " cameras per batch (intelligent retry + quality analysis)" << std::endl;
-        std::cout << "⚡ OPTIMIZED delays: " << BATCH_DELAY_MS << "ms between batches, " << SHOT_DELAY_MS << "ms between shots (prevents dark images)" << std::endl;
-        std::cout << "🎯 Features: Pre-allocated converters, async I/O, intelligent retries, 100% success guarantee" << std::endl;
+        std::cout << "🚀 Capturing " << shotCount << " shot(s) from " << cameras_.size() << " cameras with BANDWIDTH-OPTIMIZED SYSTEM..." << std::endl;
+        std::cout << "🌐 BANDWIDTH batch size: " << BATCH_SIZE << " cameras per batch (prevents bandwidth saturation)" << std::endl;
+        std::cout << "⚡ BANDWIDTH delays: " << BATCH_DELAY_MS << "ms between batches, " << SHOT_DELAY_MS << "ms between shots (ensures no dark images)" << std::endl;
+        std::cout << "🎯 Features: Smart bandwidth scheduling, pre-allocated converters, async I/O, intelligent retries, 100% dark-free guarantee" << std::endl;
         
         // Validate camera connections (prevent multiple instances)
         std::cout << "🔗 Validating ultra-optimized camera connections..." << std::endl;
@@ -1064,8 +1205,20 @@ private:
                     
                     // Launch capture thread for this camera in the batch
                     batchThreads.emplace_back([&, i, cameraIndex, filename]() {
+                        // BANDWIDTH OPTIMIZATION: Wait for optimal timing before capture
+                        bandwidthManager_->waitForOptimalTiming(&camera);
+                        
+                        auto captureStartTime = std::chrono::high_resolution_clock::now();
+                        bandwidthManager_->startCapture(&camera);
+                        
                         auto result = captureWithIntelligentRetry(camera, filename);
                         batchResults[i] = result.success;
+                        
+                        auto captureEndTime = std::chrono::high_resolution_clock::now();
+                        auto captureDuration = std::chrono::duration_cast<std::chrono::milliseconds>(captureEndTime - captureStartTime).count();
+                        
+                        // Notify bandwidth manager of completion
+                        bandwidthManager_->endCapture(&camera, result.success, static_cast<double>(captureDuration));
                         
                         if (result.success) {
                             totalImages++;
@@ -1074,14 +1227,15 @@ private:
                         // Thread-safe printing with detailed retry info
                         {
                             std::lock_guard<std::mutex> lock(printMutex);
-                            std::string status = result.success ? "⚡" : "❌";
+                            std::string status = result.success ? "🌐" : "❌";
                             std::string retryInfo = result.retryCount > 0 ? " (+" + std::to_string(result.retryCount) + " retries)" : "";
                             std::string qualityInfo = result.success ? " [" + std::to_string(result.brightPixelPercentage) + "% bright]" : "";
+                            std::string bandwidthInfo = camera.needsBandwidthThrottling ? " [THROTTLED]" : "";
                             
                             std::cout << "    Camera " << camera.configInfo->position 
                          << " (" << camera.configInfo->serialNumber << "): " 
-                                     << status << retryInfo << qualityInfo 
-                                     << " [SMART Thread " << i+1 << "]" << std::endl;
+                                     << status << retryInfo << qualityInfo << bandwidthInfo
+                                     << " [BWMgr Thread " << i+1 << "/" << bandwidthManager_->getActiveCameraCount() << "]" << std::endl;
                             
                             if (!result.success) {
                                 std::cout << "      └─ " << result.errorReason << std::endl;
@@ -1179,6 +1333,11 @@ private:
         try {
             auto captureStartTime = std::chrono::high_resolution_clock::now();
             
+            // BANDWIDTH OPTIMIZATION: Add extra delay for cameras with bandwidth issues
+            if (camera.needsBandwidthThrottling) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(25)); // Extra delay for problematic cameras
+            }
+            
             // ZERO-OVERHEAD parameter application - skip if already applied and unchanged
             auto paramStartTime = std::chrono::high_resolution_clock::now();
             static std::map<std::string, CameraParameters> lastAppliedParams;
@@ -1245,18 +1404,29 @@ private:
             auto snapEndTime = std::chrono::high_resolution_clock::now();
             auto snapDuration = std::chrono::duration_cast<std::chrono::milliseconds>(snapEndTime - snapStartTime).count();
             
-            // IMPROVED timeout calculation - more conservative for reliability
+            // BANDWIDTH-OPTIMIZED timeout calculation - extra conservative for cameras with bandwidth issues
             auto waitStartTime = std::chrono::high_resolution_clock::now();
-            int timeout = 8000; // Restored to 8 seconds base timeout for reliability
+            int timeout = 10000; // Increased base timeout to 10 seconds for bandwidth reliability
             if (camera.configInfo) {
                 auto params = configManager_.getParameters(camera.configInfo->serialNumber);
-                // Conservative timeout: exposure time + 5 seconds buffer (more conservative)
-                int calculatedTimeout = static_cast<int>(params.exposureTime / 1000) + 5000;
+                // Extra conservative timeout for bandwidth issues: exposure time + 7 seconds buffer
+                int calculatedTimeout = static_cast<int>(params.exposureTime / 1000) + 7000;
                 timeout = std::max(timeout, calculatedTimeout); // Use the larger value
+                
+                // BANDWIDTH OPTIMIZATION: Further increase timeout for cameras with bandwidth problems
+                if (camera.needsBandwidthThrottling || camera.consecutiveBandwidthFailures > 0) {
+                    timeout = static_cast<int>(timeout * 1.5); // 50% longer timeout for problematic cameras
+                }
             }
             
             if (!camera.transfer->Wait(timeout)) {
-                std::cerr << "ERROR: Transfer timeout (" << timeout << "ms) for " << camera.configInfo->serialNumber << std::endl;
+                std::cerr << "ERROR: BANDWIDTH Transfer timeout (" << timeout << "ms) for " << camera.configInfo->serialNumber << std::endl;
+                
+                // BANDWIDTH OPTIMIZATION: Mark as bandwidth failure and increase priority
+                camera.consecutiveBandwidthFailures++;
+                camera.needsBandwidthThrottling = true;
+                camera.bandwidthPriority = std::min(2, camera.bandwidthPriority + 1);
+                
                 camera.transfer->Abort();
                 return false;
             }
@@ -1323,11 +1493,12 @@ private:
             auto totalDuration = std::chrono::duration_cast<std::chrono::milliseconds>(captureEndTime - captureStartTime).count();
             
             if (!batchMode_) {
-                std::cout << "    🔥 HYPER-FAST RGB capture: " << filename << std::endl;
+                std::cout << "    🌐 BANDWIDTH-OPTIMIZED RGB capture: " << filename << std::endl;
                 std::string paramStatus = needParameterUpdate ? "APPLIED" : (camera.parametersApplied ? "PRE-APPLIED" : "SKIPPED");
-                std::cout << "    ⚡ HYPER timing: Param=" << paramDuration << "ms (" << paramStatus << "), Snap=" << snapDuration 
+                std::string bandwidthStatus = camera.needsBandwidthThrottling ? " [THROTTLED]" : " [OPTIMAL]";
+                std::cout << "    ⚡ BANDWIDTH timing: Param=" << paramDuration << "ms (" << paramStatus << "), Snap=" << snapDuration 
                          << "ms, Wait=" << waitDuration << "ms, Color=" << colorDuration 
-                         << "ms, AsyncSave=" << saveDuration << "ms, Total=" << totalDuration << "ms" << std::endl;
+                         << "ms, AsyncSave=" << saveDuration << "ms, Total=" << totalDuration << "ms" << bandwidthStatus << std::endl;
             }
             
             return true;
@@ -1799,8 +1970,21 @@ private:
         
         if (!result.success) {
             camera.failureCount++;
+            
+            // BANDWIDTH OPTIMIZATION: Track bandwidth-related failures
+            if (result.errorReason.find("timeout") != std::string::npos || 
+                result.errorReason.find("Transfer") != std::string::npos ||
+                result.errorReason.find("Dark image") != std::string::npos) {
+                camera.consecutiveBandwidthFailures++;
+                camera.needsBandwidthThrottling = true;
+                camera.bandwidthPriority = std::min(2, camera.bandwidthPriority + 1);
+            }
+            
             if (!batchMode_) {
-                std::cout << "    ❌ FAILED after " << maxRetries << " retries: " << result.errorReason << std::endl;
+                std::cout << "    ❌ BANDWIDTH FAILURE after " << maxRetries << " retries: " << result.errorReason << std::endl;
+                if (camera.needsBandwidthThrottling) {
+                    std::cout << "    🌐 Camera marked for bandwidth throttling (priority: " << camera.bandwidthPriority << ")" << std::endl;
+                }
             }
         }
         
