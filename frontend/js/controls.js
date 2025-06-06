@@ -150,14 +150,20 @@ class Controls {
             this.ui.hideLoading();
             this.ui.setButtonLoading('captureBtn', false);
             
-            if (result.success) {
-                const message = `${result.successCount}/${result.totalCameras} cameras captured successfully!`;
+            if (result.status === 'success') {
+                const successCount = result.total_images || 0;
+                const message = `${successCount} image${successCount !== 1 ? 's' : ''} captured successfully!`;
                 this.ui.showSuccess(message);
                 this.logActivity('success', `Capture #${this.captureCount}: ${message}`);
-                this.logActivity('info', `📁 Images saved to: ${result.outputDirectory}/`);
+                this.logActivity('info', `📁 Images saved to: ${result.output_directory}/`);
+                
+                // 🎉 NEW FEATURE: Show folder popup with option to open
+                if (result.output_directory && successCount > 0) {
+                    this.showFolderPopup(result.output_directory, successCount);
+                }
             } else {
-                this.ui.showWarning(`Capture completed with issues: ${result.message}`);
-                this.logActivity('warning', `Capture #${this.captureCount}: ${result.message}`);
+                this.ui.showWarning(`Capture failed: ${result.message || 'Unknown error'}`);
+                this.logActivity('warning', `Capture #${this.captureCount}: ${result.message || 'Unknown error'}`);
             }
             
             // Update last capture time
@@ -472,6 +478,114 @@ class Controls {
         console.log('🔍 Debug: getCurrentOutputFolder() - Raw value:', outputFolder ? outputFolder.value : 'null');
         console.log('🔍 Debug: getCurrentOutputFolder() - Final value:', folderValue);
         return folderValue;
+    }
+
+    // 🎉 Show photo capture success with path hint
+    showFolderPopup(folderPath, imageCount) {
+        // Convert backslashes to Unix-style forward slashes
+        const unixPath = folderPath.replace(/\\/g, '/');
+        
+        const popupContent = `
+            <div class="folder-popup">
+                <div class="popup-header">
+                    <span class="popup-icon">📸✨</span>
+                    <h4>Photos Captured Successfully!</h4>
+                </div>
+                <div class="popup-content">
+                    <div class="capture-summary">
+                        <strong>${imageCount}</strong> new photo${imageCount > 1 ? 's' : ''} saved
+                    </div>
+                    <div class="folder-path">
+                        <span class="folder-icon">📁</span>
+                        <span class="path-text">${unixPath}</span>
+                    </div>
+                    <div class="path-hint">
+                        💡 Tip: Copy the path above to navigate to your photos
+                    </div>
+                </div>
+                <div class="popup-actions">
+                    <button id="copyPathBtn" class="btn btn-primary">
+                        <span class="btn-icon">📋</span>
+                        Copy Path
+                    </button>
+                    <button id="dismissPopupBtn" class="btn btn-secondary">
+                        <span class="btn-icon">✕</span>
+                        Dismiss
+                    </button>
+                </div>
+            </div>
+        `;
+
+        // Show the popup with auto-dismiss after 10 seconds
+        const popup = this.ui.showInfo(popupContent, 10000);
+
+        // Add handlers after a brief delay to ensure DOM is ready
+        setTimeout(() => {
+            const copyPathBtn = document.getElementById('copyPathBtn');
+            const dismissBtn = document.getElementById('dismissPopupBtn');
+
+            if (copyPathBtn) {
+                copyPathBtn.addEventListener('click', () => {
+                    this.copyToClipboard(unixPath);
+                    this.ui.showSuccess('📋 Folder path copied to clipboard!');
+                });
+            }
+
+            if (dismissBtn) {
+                dismissBtn.addEventListener('click', () => {
+                    this.ui.removeNotification(popup);
+                });
+            }
+        }, 100);
+
+        // Log the folder popup event
+        this.logActivity('info', `📸 Capture complete popup shown for ${unixPath}`);
+    }
+
+    // Helper function to open folder in system file explorer
+    openFolder(folderPath) {
+        try {
+            // For Windows - open Explorer
+            if (navigator.platform.toLowerCase().includes('win')) {
+                // Try to open with Windows Explorer
+                const fullPath = folderPath.replace(/\//g, '\\');
+                window.open(`file:///${fullPath}`, '_blank');
+            } else {
+                // For other platforms
+                window.open(`file://${folderPath}`, '_blank');
+            }
+            
+            this.logActivity('success', `📂 Opened folder: ${folderPath}`);
+        } catch (error) {
+            console.error('Failed to open folder:', error);
+            this.ui.showWarning('Unable to open folder directly. Please navigate manually.');
+            this.logActivity('warning', `Failed to open folder: ${error.message}`);
+        }
+    }
+
+    // Helper function to copy text to clipboard
+    async copyToClipboard(text) {
+        try {
+            if (navigator.clipboard && window.isSecureContext) {
+                await navigator.clipboard.writeText(text);
+            } else {
+                // Fallback for older browsers
+                const textArea = document.createElement('textarea');
+                textArea.value = text;
+                textArea.style.position = 'fixed';
+                textArea.style.opacity = '0';
+                document.body.appendChild(textArea);
+                textArea.focus();
+                textArea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textArea);
+            }
+            
+            this.logActivity('info', `📋 Copied to clipboard: ${text}`);
+        } catch (error) {
+            console.error('Failed to copy to clipboard:', error);
+            this.ui.showWarning('Failed to copy path to clipboard');
+        }
     }
 }
 

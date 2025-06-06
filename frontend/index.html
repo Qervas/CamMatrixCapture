@@ -192,6 +192,7 @@
         .btn-warning { background: linear-gradient(135deg, #ffc107, #e0a800); color: #000; }
         .btn-info { background: linear-gradient(135deg, #17a2b8, #117a8b); color: white; }
         .btn-danger { background: linear-gradient(135deg, #dc3545, #c82333); color: white; }
+        .btn-folder { background: linear-gradient(135deg, #28a745, #1e7e34); color: white; }
 
         .camera-grid {
             display: grid;
@@ -480,28 +481,6 @@
 
             <div class="right-panel">
                 <div class="controls-section">
-                    <h3 class="section-title">📊 System Metrics</h3>
-                    <div class="metrics-grid">
-                        <div class="metric-card">
-                            <div class="metric-value" id="avgTemperature">--°C</div>
-                            <div class="metric-label">Avg Temperature</div>
-                        </div>
-                        <div class="metric-card">
-                            <div class="metric-value" id="avgFrameRate">-- fps</div>
-                            <div class="metric-label">Frame Rate</div>
-                        </div>
-                        <div class="metric-card">
-                            <div class="metric-value" id="totalDataSize">-- MB</div>
-                            <div class="metric-label">Data Captured</div>
-                        </div>
-                        <div class="metric-card">
-                            <div class="metric-value" id="systemLoad">--%</div>
-                            <div class="metric-label">System Load</div>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="controls-section">
                     <h3 class="section-title">⚙️ Global Parameters</h3>
                     <div class="parameter-controls">
                         <div class="param-group">
@@ -551,6 +530,7 @@ Ready for camera operations...
         let autoRefreshInterval = null;
         let systemStartTime = Date.now();
         let totalCaptures = 0;
+        let lastCaptureFolder = ''; // Track latest capture folder
         
         // Initialize system
         document.addEventListener('DOMContentLoaded', function() {
@@ -753,24 +733,26 @@ Ready for camera operations...
                 </div>
             `).join('');
 
-            // Update camera count
-            document.getElementById('connectedCamerasCount').textContent = cameras.length;
+            // Update camera count (with null check)
+            const connectedCountEl = document.getElementById('connectedCamerasCount');
+            if (connectedCountEl) {
+                connectedCountEl.textContent = cameras.length;
+            }
         }
 
         function updateSystemStats(data) {
             if (!data || !data.cameras) return;
 
-            // Calculate averages
+            // These elements were removed, so just skip system stats updates
+            // Calculate averages for logging only
             const temps = data.cameras.map(c => c.parameters.temperature || 0);
             const frameRates = data.cameras.map(c => c.parameters.frame_rate || 0);
             
             const avgTemp = temps.length ? (temps.reduce((a, b) => a + b, 0) / temps.length).toFixed(1) : 0;
             const avgFps = frameRates.length ? (frameRates.reduce((a, b) => a + b, 0) / frameRates.length).toFixed(1) : 0;
             
-            document.getElementById('avgTemperature').textContent = `${avgTemp}°C`;
-            document.getElementById('avgFrameRate').textContent = `${avgFps} fps`;
-            document.getElementById('totalDataSize').textContent = `${(data.cameras.length * 47.2).toFixed(1)} MB`;
-            document.getElementById('systemLoad').textContent = '85%'; // Simulated
+            // System metrics elements were removed - just log stats
+            log(`📊 System stats: ${avgTemp}°C avg, ${avgFps} fps avg, ${data.cameras.length} cameras`, 'info');
         }
 
         async function captureAll() {
@@ -782,16 +764,335 @@ Ready for camera operations...
                 
                 if (data && data.status === 'success') {
                     totalCaptures += data.total_images || 0;
-                    document.getElementById('totalCapturesCount').textContent = totalCaptures;
+                    const totalCapturesEl = document.getElementById('totalCapturesCount');
+                    if (totalCapturesEl) {
+                        totalCapturesEl.textContent = totalCaptures;
+                    }
+                    
+                    // Store the latest capture folder
+                    lastCaptureFolder = data.output_directory || '';
                     
                     log(`✅ Capture completed: ${data.total_images} images`, 'success');
+                    log(`📁 Images saved to: ${lastCaptureFolder}`, 'info');
                     showToast(`Captured ${data.total_images} images successfully!`, 'success');
+                    
+                    // 🎉 Show the beautiful folder popup
+                    if (lastCaptureFolder && data.total_images > 0) {
+                        showFolderPopup(lastCaptureFolder, data.total_images);
+                    }
                 } else {
                     throw new Error(data.message || 'Capture failed');
                 }
             } catch (error) {
                 log(`❌ Capture failed: ${error.message}`, 'error');
                 showToast('Capture failed', 'error');
+            }
+        }
+
+        // 🎉 NEW: Open Latest Folder Function
+        function openLatestFolder() {
+            if (!lastCaptureFolder) {
+                showToast('No recent captures found. Capture some photos first!', 'warning');
+                log('⚠️ No recent capture folder available', 'warning');
+                return;
+            }
+            
+            openWindowsFolder(lastCaptureFolder);
+        }
+
+        // 🔧 Windows-specific folder opening - focus on reliable manual method
+        function openWindowsFolder(folderPath) {
+            // Show instructions immediately - this is the reliable method
+            showWindowsInstructions(folderPath);
+            
+            // Give user immediate feedback
+            showToast('📋 Manual folder access instructions shown (most reliable method)', 'info');
+            log(`📂 Showing manual folder access for: ${folderPath}`, 'info');
+        }
+
+        function showWindowsInstructions(folderPath) {
+            // Build absolute Windows path with "data" folder
+            let windowsPath;
+            
+            if (window.location.protocol === 'file:') {
+                // Local file - extract from URL
+                let basePath = decodeURIComponent(window.location.pathname);
+                basePath = basePath.replace('/frontend/index.html', '');
+                basePath = basePath.replace(/^\/([A-Za-z]):/, '$1:'); // Convert /C: to C:
+                basePath = basePath.replace(/\//g, '\\'); // Convert / to \
+                windowsPath = basePath + '\\data\\' + folderPath.replace(/\//g, '\\');
+            } else {
+                // HTTP server - construct known path with data folder
+                windowsPath = `C:\\Users\\djmax\\Desktop\\SaperaCapture\\CleanSaperaSystem\\data\\${folderPath}`;
+            }
+            
+            // Ensure proper backslashes
+            windowsPath = windowsPath.replace(/\//g, '\\');
+            
+            console.log('Debug: folderPath =', folderPath);
+            console.log('Debug: windowsPath =', windowsPath);
+            
+            const instructionHTML = `
+                <div id="instructionPopup" style="
+                    position: fixed;
+                    top: 20px;
+                    right: 20px;
+                    background: #2c3e50;
+                    color: white;
+                    padding: 20px;
+                    border-radius: 10px;
+                    box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+                    z-index: 11000;
+                    max-width: 400px;
+                    animation: slideInRight 0.3s ease;
+                ">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                        <h4 style="margin: 0; color: #3498db;">📂 Windows Folder Access</h4>
+                        <button onclick="closeInstructions()" style="background: none; border: none; color: white; cursor: pointer; font-size: 1.2rem;">✕</button>
+                    </div>
+                    
+                    <div style="margin-bottom: 15px;">
+                        <strong>📍 Manual Method (Always Works):</strong>
+                        <ol style="margin: 10px 0; padding-left: 20px; line-height: 1.6;">
+                            <li>Press <kbd style="background: #34495e; padding: 2px 6px; border-radius: 3px;">Win + E</kbd> to open File Explorer</li>
+                            <li>Click address bar and paste the path</li>
+                            <li>Press Enter</li>
+                        </ol>
+                    </div>
+                    
+                    <div style="background: #34495e; padding: 10px; border-radius: 5px; margin-bottom: 15px;">
+                        <div style="font-size: 0.9rem; color: #bdc3c7; margin-bottom: 5px;">Folder Path:</div>
+                        <div style="font-family: 'Courier New', monospace; background: #2c3e50; padding: 8px; border-radius: 3px; word-break: break-all; border: 1px solid #3498db;">
+                            ${windowsPath}
+                        </div>
+                    </div>
+                    
+                    <div style="display: flex; gap: 10px;">
+                        <button onclick="copyToClipboard('${windowsPath}')" style="
+                            background: #3498db;
+                            color: white;
+                            border: none;
+                            padding: 8px 12px;
+                            border-radius: 5px;
+                            cursor: pointer;
+                            font-size: 0.9rem;
+                            flex: 1;
+                        ">📋 Copy Path</button>
+                        <button onclick="closeInstructions()" style="
+                            background: #95a5a6;
+                            color: white;
+                            border: none;
+                            padding: 8px 12px;
+                            border-radius: 5px;
+                            cursor: pointer;
+                            font-size: 0.9rem;
+                        ">Got it!</button>
+                    </div>
+                </div>
+                
+                <style>
+                    @keyframes slideInRight {
+                        from { transform: translateX(100%); opacity: 0; }
+                        to { transform: translateX(0); opacity: 1; }
+                    }
+                    kbd {
+                        font-family: monospace;
+                        font-weight: bold;
+                    }
+                </style>
+            `;
+            
+            const instructionContainer = document.createElement('div');
+            instructionContainer.innerHTML = instructionHTML;
+            document.body.appendChild(instructionContainer);
+            
+            // Auto-dismiss after 15 seconds
+            setTimeout(() => {
+                closeInstructions();
+            }, 15000);
+            
+            log(`📋 Windows instructions shown for: ${windowsPath}`, 'info');
+        }
+
+        function closeInstructions() {
+            const popup = document.getElementById('instructionPopup');
+            if (popup) popup.parentElement.remove();
+        }
+
+        // 🎉 Show photo capture success with path hint
+        function showFolderPopup(folderPath, imageCount) {
+            // Build Unix-style path
+            let displayPath;
+            if (window.location.protocol === 'file:') {
+                let basePath = decodeURIComponent(window.location.pathname);
+                basePath = basePath.replace('/frontend/index.html', '');
+                basePath = basePath.replace(/^\/([A-Za-z]):/, '$1:');
+                displayPath = basePath + '/data/' + folderPath;
+            } else {
+                displayPath = `C:/Users/djmax/Desktop/SaperaCapture/CleanSaperaSystem/data/${folderPath}`;
+            }
+            // Convert any backslashes to forward slashes
+            displayPath = displayPath.replace(/\\/g, '/');
+            
+            // Create popup HTML
+            const popupHTML = `
+                <div id="folderPopup" style="
+                    position: fixed;
+                    top: 50%;
+                    left: 50%;
+                    transform: translate(-50%, -50%);
+                    background: white;
+                    border-radius: 15px;
+                    padding: 30px;
+                    box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+                    z-index: 10000;
+                    max-width: 500px;
+                    width: 90%;
+                    text-align: center;
+                    animation: popupSlideIn 0.3s ease;
+                ">
+                    <div style="margin-bottom: 20px;">
+                        <div style="font-size: 3rem; margin-bottom: 10px;">📸✨</div>
+                        <h3 style="color: #28a745; margin: 0; font-size: 1.5rem;">Photos Captured Successfully!</h3>
+                    </div>
+                    
+                    <div style="margin-bottom: 25px;">
+                        <div style="font-size: 1.2rem; margin-bottom: 15px; color: #333;">
+                            <strong style="color: #28a745; font-size: 1.4rem;">${imageCount}</strong> 
+                            new photo${imageCount > 1 ? 's' : ''} saved
+                        </div>
+                        <div style="
+                            background: #f8f9fa;
+                            padding: 15px;
+                            border-radius: 8px;
+                            border: 1px solid #dee2e6;
+                            display: flex;
+                            align-items: center;
+                            gap: 10px;
+                        ">
+                            <span style="font-size: 1.2rem;">📁</span>
+                            <span style="
+                                font-family: 'Courier New', monospace;
+                                font-size: 0.9rem;
+                                color: #495057;
+                                word-break: break-all;
+                                flex: 1;
+                                text-align: left;
+                            ">${displayPath}</span>
+                        </div>
+                        <div style="
+                            background: #e3f2fd;
+                            padding: 10px;
+                            border-radius: 6px;
+                            margin-top: 10px;
+                            color: #1976d2;
+                            font-size: 0.9rem;
+                        ">
+                            💡 Tip: Copy the path above to navigate to your photos
+                        </div>
+                    </div>
+                    
+                    <div style="display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;">
+                        <button onclick="copyToClipboard('${displayPath}')" style="
+                            background: linear-gradient(135deg, #28a745, #1e7e34);
+                            color: white;
+                            border: none;
+                            padding: 12px 20px;
+                            border-radius: 8px;
+                            cursor: pointer;
+                            font-weight: 600;
+                            display: flex;
+                            align-items: center;
+                            gap: 8px;
+                            animation: pulseGlow 2s infinite;
+                        ">
+                            <span>📋</span> Copy Path
+                        </button>
+                        <button onclick="closeFolderPopup()" style="
+                            background: transparent;
+                            color: #6c757d;
+                            border: 1px solid #dee2e6;
+                            padding: 12px 20px;
+                            border-radius: 8px;
+                            cursor: pointer;
+                            font-weight: 600;
+                        ">
+                            ✕ Dismiss
+                        </button>
+                    </div>
+                </div>
+                
+                <div id="popupOverlay" onclick="closeFolderPopup()" style="
+                    position: fixed;
+                    top: 0;
+                    left: 0;
+                    width: 100%;
+                    height: 100%;
+                    background: rgba(0,0,0,0.5);
+                    z-index: 9999;
+                    animation: fadeIn 0.3s ease;
+                "></div>
+                
+                <style>
+                    @keyframes popupSlideIn {
+                        from { transform: translate(-50%, -50%) scale(0.7); opacity: 0; }
+                        to { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+                    }
+                    @keyframes fadeIn {
+                        from { opacity: 0; }
+                        to { opacity: 1; }
+                    }
+                    @keyframes pulseGlow {
+                        0%, 100% { box-shadow: 0 2px 10px rgba(40, 167, 69, 0.3); }
+                        50% { box-shadow: 0 2px 20px rgba(40, 167, 69, 0.6); }
+                    }
+                </style>
+            `;
+            
+            // Add popup to body
+            const popupContainer = document.createElement('div');
+            popupContainer.innerHTML = popupHTML;
+            document.body.appendChild(popupContainer);
+            
+            // Auto-dismiss after 10 seconds
+            setTimeout(() => {
+                closeFolderPopup();
+            }, 10000);
+            
+            log(`📸 Folder popup shown for ${folderPath}`, 'info');
+        }
+
+        // Helper functions for popup
+
+        function closeFolderPopup() {
+            const popup = document.getElementById('folderPopup');
+            const overlay = document.getElementById('popupOverlay');
+            if (popup) popup.parentElement.remove();
+            if (overlay) overlay.remove();
+        }
+
+        // Utility function to copy to clipboard
+        async function copyToClipboard(text) {
+            try {
+                if (navigator.clipboard && window.isSecureContext) {
+                    await navigator.clipboard.writeText(text);
+                } else {
+                    // Fallback for older browsers
+                    const textArea = document.createElement('textarea');
+                    textArea.value = text;
+                    textArea.style.position = 'fixed';
+                    textArea.style.opacity = '0';
+                    document.body.appendChild(textArea);
+                    textArea.focus();
+                    textArea.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(textArea);
+                }
+                showToast('📋 Path copied to clipboard!', 'success');
+                log(`📋 Copied to clipboard: ${text}`, 'info');
+            } catch (error) {
+                console.error('Failed to copy to clipboard:', error);
+                showToast('Failed to copy to clipboard', 'error');
             }
         }
 
@@ -805,7 +1106,10 @@ Ready for camera operations...
                 
                 if (data && data.status === 'success') {
                     totalCaptures++;
-                    document.getElementById('totalCapturesCount').textContent = totalCaptures;
+                    const totalCapturesEl = document.getElementById('totalCapturesCount');
+                    if (totalCapturesEl) {
+                        totalCapturesEl.textContent = totalCaptures;
+                    }
                     
                     log(`✅ Camera ${cameraId} capture completed`, 'success');
                     showToast(`Camera ${cameraId} captured successfully!`, 'success');

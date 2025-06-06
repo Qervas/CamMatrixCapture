@@ -776,4 +776,161 @@ input[type="number"]:focus {
     display: flex;
     gap: 0.5rem;
     justify-content: flex-end;
+}
+
+/* 🎉 NEW FEATURE: Folder Popup Styles */
+.folder-popup {
+    max-width: 450px;
+    margin: 0 auto;
+    text-align: center;
+}
+
+.popup-header {
+    margin-bottom: 1.5rem;
+}
+
+.popup-icon {
+    font-size: 2rem;
+    margin-bottom: 0.5rem;
+    display: block;
+}
+
+.popup-header h4 {
+    margin: 0;
+    color: var(--success-color);
+    font-size: 1.4rem;
+    font-weight: 600;
+}
+
+.popup-content {
+    margin-bottom: 2rem;
+}
+
+.capture-summary {
+    font-size: 1.1rem;
+    margin-bottom: 1rem;
+    color: var(--text-dark);
+}
+
+.capture-summary strong {
+    color: var(--success-color);
+    font-size: 1.3rem;
+}
+
+.folder-path {
+    background: var(--light-bg);
+    padding: 1rem;
+    border-radius: var(--radius);
+    border: 1px solid var(--border-color);
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    text-align: left;
+}
+
+.folder-icon {
+    font-size: 1.2rem;
+    color: var(--primary-color);
+}
+
+.path-text {
+    flex: 1;
+    font-family: 'Courier New', monospace;
+    font-size: 0.9rem;
+    color: var(--text-dark);
+    word-break: break-all;
+}
+
+.popup-actions {
+    display: flex;
+    gap: 0.75rem;
+    justify-content: center;
+    flex-wrap: wrap;
+}
+
+.popup-actions .btn {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem 1.25rem;
+    font-size: 0.95rem;
+    font-weight: 500;
+    min-width: 120px;
+    justify-content: center;
+}
+
+.popup-actions .btn-primary {
+    background: var(--success-color);
+    border-color: var(--success-color);
+    animation: pulse-glow 2s infinite;
+}
+
+.popup-actions .btn-primary:hover {
+    background: #219a52;
+    border-color: #219a52;
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(39, 174, 96, 0.3);
+}
+
+.popup-actions .btn-secondary {
+    background: var(--primary-color);
+    border-color: var(--primary-color);
+    color: white;
+}
+
+.popup-actions .btn-secondary:hover {
+    background: #2980b9;
+    border-color: #2980b9;
+    transform: translateY(-1px);
+}
+
+.popup-actions .btn-ghost {
+    background: transparent;
+    border: 1px solid var(--border-color);
+    color: var(--text-light);
+}
+
+.popup-actions .btn-ghost:hover {
+    background: var(--light-bg);
+    border-color: var(--text-light);
+    color: var(--text-dark);
+}
+
+.btn-icon {
+    font-size: 1rem;
+}
+
+@keyframes pulse-glow {
+    0%, 100% {
+        box-shadow: 0 2px 10px rgba(39, 174, 96, 0.2);
+    }
+    50% {
+        box-shadow: 0 2px 20px rgba(39, 174, 96, 0.4);
+    }
+}
+
+/* Responsive adjustments for folder popup */
+@media (max-width: 480px) {
+    .folder-popup {
+        max-width: 100%;
+    }
+    
+    .popup-actions {
+        flex-direction: column;
+        gap: 0.5rem;
+    }
+    
+    .popup-actions .btn {
+        min-width: 100%;
+    }
+    
+    .folder-path {
+        flex-direction: column;
+        text-align: center;
+        gap: 0.5rem;
+    }
+    
+    .path-text {
+        text-align: center;
+    }
 } 

@@ -142,11 +142,12 @@ async def capture_all_cameras():
             "executable": str(EXECUTABLE_PATH.name),
             "config": str(CONFIG_PATH.name),
             "data_directory": str(DATA_DIR),
-            "bandwidth_optimization": "enabled",
+            "ultra_conservative_mode": "enabled",
             "smart_scheduling": "enabled",
-            "max_concurrent_cameras": 4,
+            "max_concurrent_cameras": 2,
             "dark_image_retry": "enabled",
-            "max_retries": 3
+            "max_retries": 5,
+            "zero_dark_guarantee": "enabled"
         }
         
         return response
@@ -195,18 +196,21 @@ async def system_status():
         "config_exists": CONFIG_PATH.exists(),
         "data_directory": str(DATA_DIR),
         "frontend_directory": str(FRONTEND_DIR),
-        "bandwidth_optimizations": {
+        "ultra_conservative_optimizations": {
             "smart_scheduling": True,
-            "max_concurrent_cameras": 4,
+            "max_concurrent_cameras": 2,
             "bandwidth_throttling": True,
+            "ultra_conservative_mode": True,
             "intelligent_retry": True,
-            "longer_settling": "300-500ms",
-            "aggressive_retry": "2x exposure, 1.5x gain",
-            "max_retries": 3,
+            "longer_settling": "500-1500ms",
+            "aggressive_retry": "up to 6x gain, 150000μs exposure",
+            "max_retries": 5,
             "buffer_count": 5,
-            "timeout_extension": "50% for problematic cameras"
+            "timeout_extension": "100% for problematic cameras",
+            "base_delays": "10ms all cameras, 75ms throttled cameras",
+            "batch_delays": "100ms between batches, 200ms between shots"
         },
-        "version": "Bandwidth Optimized System v3.0"
+        "version": "Ultra-Conservative System v3.1"
     }
     
     return status

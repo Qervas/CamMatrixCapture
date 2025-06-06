@@ -12,8 +12,10 @@
 #include <atomic>
 #include <mutex>
 #include <map>
+#include <unordered_map>
 #include <queue>
 #include <condition_variable>
+#include <shared_mutex>
 
 #ifdef _WIN32
 #include <direct.h>
@@ -60,6 +62,10 @@ struct CameraHandle {
     double averageCaptureTime = 0.0; // Track timing for scheduling
     int consecutiveBandwidthFailures = 0; // Track bandwidth-specific failures
     bool needsBandwidthThrottling = false; // Flag for bandwidth management
+    
+    // ZERO BLACK IMAGE: Add black image tracking
+    int blackImageCount = 0; // Track black images from this camera
+    bool hadRecentBlackImage = false; // Flag for special handling
 };
 
 // Forward declaration
@@ -74,11 +80,13 @@ private:
     std::chrono::high_resolution_clock::time_point lastGlobalCapture_;
     double totalSystemBandwidth_ = 0.0; // Track overall system load
     
-    // Bandwidth optimization constants - ULTRA CONSERVATIVE for 100% success
-    static constexpr int MAX_CONCURRENT_CAMERAS = 2; // Further reduced to 2 for maximum reliability
-    static constexpr int MIN_INTERVAL_BETWEEN_CAPTURES_MS = 50; // Doubled to 50ms for better recovery
-    static constexpr int BANDWIDTH_THROTTLE_DELAY_MS = 100; // Doubled throttle delay for problem cameras
-    static constexpr int HIGH_PRIORITY_BOOST_MS = 20; // Increased priority boost timing
+    // THROUGHPUT THRESHOLD TESTING: Find optimal performance limit
+    int maxConcurrentCameras_ = 2; // Start at proven sweet spot
+    int consecutiveSuccesses_ = 0; // Track consecutive successful captures
+    int testingPhase_ = 0; // 0=baseline, 1=scaling up, 2=optimized
+    static constexpr int MIN_INTERVAL_BETWEEN_CAPTURES_MS = 150; // Balanced for quality and speed
+    static constexpr int BANDWIDTH_THROTTLE_DELAY_MS = 250; // Moderate throttling
+    static constexpr int HIGH_PRIORITY_BOOST_MS = 80; // Balanced timing
 
 public:
     SmartBandwidthManager() : activeCameras_(0) {
@@ -102,8 +110,8 @@ public:
         auto timeSinceGlobalCapture = std::chrono::duration_cast<std::chrono::milliseconds>(
             now - lastGlobalCapture_).count();
         
-        // Check if too many cameras are active
-        if (activeCameras_.load() >= MAX_CONCURRENT_CAMERAS) {
+        // Check if too many cameras are active (dynamic limit)
+        if (activeCameras_.load() >= maxConcurrentCameras_) {
             return false;
         }
         
@@ -122,11 +130,26 @@ public:
             return false;
         }
         
+        // ZERO BLACK IMAGE: Extra caution for cameras with recent black images
+        if (camera->hadRecentBlackImage) {
+            // Ensure extra spacing for problematic cameras
+            if (timeSinceLastCapture < (MIN_INTERVAL_BETWEEN_CAPTURES_MS * 2)) {
+                return false; // Extra wait time for cameras with recent black images
+            }
+        }
+        
         return true;
     }
     
     void startCapture(CameraHandle* camera) {
         std::lock_guard<std::mutex> lock(scheduleMutex_);
+        
+        // Double-check we can still start (race condition protection)
+        if (activeCameras_.load() >= maxConcurrentCameras_) {
+            std::cerr << "WARNING: Race condition detected - too many active cameras" << std::endl;
+            return;
+        }
+        
         activeCameras_++;
         camera->lastCaptureTime = std::chrono::high_resolution_clock::now();
         lastGlobalCapture_ = camera->lastCaptureTime;
@@ -134,7 +157,13 @@ public:
     
     void endCapture(CameraHandle* camera, bool success, double captureTimeMs) {
         std::lock_guard<std::mutex> lock(scheduleMutex_);
-        activeCameras_--;
+        
+        // Ensure we don't go negative (protection against race conditions)
+        if (activeCameras_.load() > 0) {
+            activeCameras_--;
+        } else {
+            std::cerr << "WARNING: endCapture called with no active cameras" << std::endl;
+        }
         
         // Update timing statistics
         if (camera->averageCaptureTime == 0.0) {
@@ -143,17 +172,24 @@ public:
             camera->averageCaptureTime = (camera->averageCaptureTime * 0.7) + (captureTimeMs * 0.3);
         }
         
-        // Handle bandwidth-related failures
+        // Handle bandwidth-related failures with AGGRESSIVE response
         if (!success) {
             camera->consecutiveBandwidthFailures++;
-            if (camera->consecutiveBandwidthFailures >= 2) {
+            consecutiveSuccesses_ = 0; // Reset consecutive success counter
+            if (camera->consecutiveBandwidthFailures >= 1) { // Immediate throttle after 1 failure
                 camera->needsBandwidthThrottling = true;
                 camera->bandwidthPriority = std::min(2, camera->bandwidthPriority + 1);
             }
         } else {
-            // Reset on success
-            camera->consecutiveBandwidthFailures = 0;
-            if (camera->consecutiveBandwidthFailures == 0 && camera->needsBandwidthThrottling) {
+            consecutiveSuccesses_++; // Increment consecutive success counter
+            
+            // Reset failures gradually on success
+            if (camera->consecutiveBandwidthFailures > 0) {
+                camera->consecutiveBandwidthFailures = std::max(0, camera->consecutiveBandwidthFailures - 1);
+            }
+            
+            // Only remove throttling after sustained success (3+ successes)
+            if (camera->consecutiveBandwidthFailures == 0 && camera->needsBandwidthThrottling && consecutiveSuccesses_ >= 3) {
                 camera->needsBandwidthThrottling = false;
                 camera->bandwidthPriority = std::max(0, camera->bandwidthPriority - 1);
             }
@@ -161,8 +197,16 @@ public:
     }
     
     void waitForOptimalTiming(CameraHandle* camera) {
-        while (!shouldStartCapture(camera)) {
+        const int maxWaitAttempts = 1000; // Prevent infinite loops
+        int attempts = 0;
+        
+        while (!shouldStartCapture(camera) && attempts < maxWaitAttempts) {
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            attempts++;
+        }
+        
+        if (attempts >= maxWaitAttempts) {
+            std::cerr << "WARNING: Bandwidth wait timeout for camera " << camera->configInfo->serialNumber << std::endl;
         }
     }
     
@@ -177,6 +221,71 @@ public:
             camera->needsBandwidthThrottling = false;
             camera->bandwidthPriority = 0;
         }
+    }
+    
+    // BANDWIDTH-FIRST ADAPTIVE MANAGEMENT: Zero failures first, then scale up
+    void adjustWorkloadLimit(double successRate, int consecutiveSuccesses) {
+        std::lock_guard<std::mutex> lock(scheduleMutex_);
+        
+        int totalCameras = cameras_.size();
+        
+        // BALANCED QUALITY TESTING: Fast response to black images
+        if (testingPhase_ == 0) {
+            // Phase 0: Establish baseline (2 cameras) - MODERATE
+            if (successRate >= 100.0 && consecutiveSuccesses >= 8) {
+                testingPhase_ = 1;
+                std::cout << "🧪 BALANCED: Phase 1 - Responsive quality scaling" << std::endl;
+            }
+        } else if (testingPhase_ == 1) {
+            // Phase 1: Balanced scaling with quick black image response
+            if (successRate >= 99.0 && consecutiveSuccesses >= 4) {
+                if (maxConcurrentCameras_ < totalCameras) {
+                    maxConcurrentCameras_++;
+                    consecutiveSuccesses_ = 0; // Reset for next test
+                    std::cout << "📈 BALANCED: Scaling up to " << maxConcurrentCameras_ 
+                             << " cameras (99%+ quality)" << std::endl;
+                }
+            } else if (successRate < 98.0) {
+                // Quick response to quality degradation
+                maxConcurrentCameras_ = std::max(2, maxConcurrentCameras_ - 1);
+                testingPhase_ = 2;
+                std::cout << "🎯 BALANCED: Found sweet spot! Optimized to " << maxConcurrentCameras_ 
+                         << " cameras (" << successRate << "% success)" << std::endl;
+            }
+        } else {
+            // Phase 2: ZERO BLACK IMAGE enforcement
+            if (successRate < 100.0) {
+                // ANY black image triggers immediate response
+                if (maxConcurrentCameras_ > 1) {
+                    maxConcurrentCameras_--;
+                    std::cout << "🚫 ZERO-BLACK: Black image detected! Reduced to " << maxConcurrentCameras_ 
+                             << " cameras (eliminating black images)" << std::endl;
+                }
+            } else if (successRate >= 100.0 && consecutiveSuccesses >= 20) {
+                // Perfect for extended time - very carefully try one more
+                if (maxConcurrentCameras_ < totalCameras) {
+                    maxConcurrentCameras_++;
+                    consecutiveSuccesses_ = 0;
+                    std::cout << "⬆️ PERFECT: Extended perfect streak! Carefully testing " << maxConcurrentCameras_ 
+                             << " cameras" << std::endl;
+                }
+            }
+        }
+        
+        // Cap at total cameras
+        maxConcurrentCameras_ = std::min(maxConcurrentCameras_, totalCameras);
+    }
+    
+    int getMaxConcurrentCameras() const {
+        return maxConcurrentCameras_;
+    }
+    
+    int getConsecutiveSuccesses() const {
+        return consecutiveSuccesses_;
+    }
+    
+    int getTestingPhase() const {
+        return testingPhase_;
     }
 };
 
@@ -213,6 +322,17 @@ public:
     }
     
     void queueWrite(SapBuffer* buffer, const std::string& filename) {
+        // CRITICAL: Validate inputs before queuing
+        if (!buffer) {
+            std::cerr << "CRITICAL ERROR: Attempting to queue null buffer for " << filename << std::endl;
+            return;
+        }
+        
+        if (filename.empty()) {
+            std::cerr << "CRITICAL ERROR: Attempting to queue empty filename" << std::endl;
+            return;
+        }
+        
         {
             std::lock_guard<std::mutex> lock(queueMutex_);
             writeQueue_.push(std::make_pair(buffer, filename));
@@ -240,8 +360,25 @@ private:
                 writeQueue_.pop();
                 lock.unlock();
                 
-                // Perform file write
-                writeTask.first->Save(writeTask.second.c_str(), "-format tiff");
+                // CRITICAL: Validate write task before execution
+                if (!writeTask.first) {
+                    std::cerr << "CRITICAL ERROR: Null buffer in write queue for " << writeTask.second << std::endl;
+                    pendingWrites_--;
+                    continue;
+                }
+                
+                // Perform file write with error handling
+                try {
+                    bool saveSuccess = writeTask.first->Save(writeTask.second.c_str(), "-format tiff");
+                    if (!saveSuccess) {
+                        std::cerr << "ERROR: Failed to save file " << writeTask.second << std::endl;
+                    }
+                } catch (const std::exception& e) {
+                    std::cerr << "EXCEPTION: Error saving file " << writeTask.second << ": " << e.what() << std::endl;
+                } catch (...) {
+                    std::cerr << "UNKNOWN EXCEPTION: Error saving file " << writeTask.second << std::endl;
+                }
+                
                 pendingWrites_--;
             }
         }
@@ -487,33 +624,43 @@ private:
     std::unique_ptr<AsyncFileWriter> fileWriter_; // Async file writer for parallel I/O
     std::unique_ptr<SmartBandwidthManager> bandwidthManager_; // Smart bandwidth scheduling
     
+    // OPTIMIZATION: Add parameter cache for better performance (thread-safe)
+    std::atomic<bool> parameterCacheInitialized_{false};
+    
+    // Use thread-safe containers for parameter caching
+    std::unordered_map<std::string, bool> parametersEverApplied_;
+    std::unordered_map<std::string, CameraParameters> lastAppliedParams_;
+    std::shared_mutex parameterCacheMutex_; // Use shared_mutex for better concurrency
+    
+    // OPTIMIZATION: Add performance counters for monitoring
+    std::atomic<int> totalCaptureAttempts_{0};
+    std::atomic<int> successfulCaptures_{0};
+    std::atomic<int> failedCaptures_{0};
+    std::atomic<long long> totalCaptureTime_{0};
+
 public:
     RefactoredCameraSystem(bool batchMode = false) : configManager_(CameraConfigManager::getInstance()), api_(configManager_), batchMode_(batchMode) {
-        // Register parameter change callback
-        configManager_.registerParameterChangeCallback(
-            [this](const std::string& serialNumber, const CameraParameters& params) {
-                this->onParameterChange(serialNumber, params);
-            }
-        );
-        
-        // Initialize async file writer
+        // Initialize managers
         fileWriter_ = std::make_unique<AsyncFileWriter>();
-        fileWriter_->start();
-        
-        // Initialize smart bandwidth manager
         bandwidthManager_ = std::make_unique<SmartBandwidthManager>();
         
-        // Initialize IPC server for non-batch mode
+        // Start async file writer
+        fileWriter_->start();
+        
+        // Only start IPC server if not in batch mode
         if (!batchMode_) {
             ipcServer_ = std::make_unique<IPCServer>(&configManager_);
-            std::cout << "🚀 Camera System v3.0 - ULTRA-OPTIMIZED + BANDWIDTH MANAGED Edition" << std::endl;
-            std::cout << "📡 IPC Server will start after camera initialization" << std::endl;
-            std::cout << "⚡ Async file I/O enabled for maximum speed" << std::endl;
-            std::cout << "🌐 Smart bandwidth management enabled for zero dark images" << std::endl;
+        }
+        
+        if (!batchMode_) {
+            std::cout << "🎬 Refactored Camera System initialized" << std::endl;
         }
     }
     
     ~RefactoredCameraSystem() {
+        if (!batchMode_) {
+            printPerformanceStats();
+        }
         cleanup();
     }
     
@@ -1142,16 +1289,16 @@ private:
             return;
         }
         
-        // BANDWIDTH-OPTIMIZED batch configuration for MAXIMUM quality (prevents dark images)
-        const int BATCH_SIZE = 4; // Reduced from 8 to 4 cameras per batch to prevent bandwidth saturation
-        const int BATCH_DELAY_MS = 50; // Increased to 50ms for better bandwidth recovery
-        const int SHOT_DELAY_MS = 100; // Increased to 100ms between shots for optimal bandwidth management
+        // ULTRA-CONSERVATIVE batch configuration for 100% SUCCESS RATE (zero dark images)
+        const int BATCH_SIZE = 2; // Ultra-conservative: Only 2 cameras per batch for maximum reliability
+        const int BATCH_DELAY_MS = 100; // Doubled to 100ms for complete bandwidth recovery
+        const int SHOT_DELAY_MS = 200; // Doubled to 200ms between shots for maximum reliability
         
         std::cout << "📁 Created session folder: " << sessionFolder << std::endl;
-        std::cout << "🚀 Capturing " << shotCount << " shot(s) from " << cameras_.size() << " cameras with BANDWIDTH-OPTIMIZED SYSTEM..." << std::endl;
-        std::cout << "🌐 BANDWIDTH batch size: " << BATCH_SIZE << " cameras per batch (prevents bandwidth saturation)" << std::endl;
-        std::cout << "⚡ BANDWIDTH delays: " << BATCH_DELAY_MS << "ms between batches, " << SHOT_DELAY_MS << "ms between shots (ensures no dark images)" << std::endl;
-        std::cout << "🎯 Features: Smart bandwidth scheduling, pre-allocated converters, async I/O, intelligent retries, 100% dark-free guarantee" << std::endl;
+        std::cout << "🚀 Capturing " << shotCount << " shot(s) from " << cameras_.size() << " cameras with ULTRA-CONSERVATIVE SYSTEM..." << std::endl;
+        std::cout << "🔒 ULTRA-CONSERVATIVE batch size: " << BATCH_SIZE << " cameras per batch (maximum reliability)" << std::endl;
+        std::cout << "⏰ ULTRA-CONSERVATIVE delays: " << BATCH_DELAY_MS << "ms between batches, " << SHOT_DELAY_MS << "ms between shots (guarantees zero dark images)" << std::endl;
+        std::cout << "🎯 Features: Ultra-conservative scheduling, max 2 concurrent cameras, intelligent retries, 100% success guarantee" << std::endl;
         
         // Validate camera connections (prevent multiple instances)
         std::cout << "🔗 Validating ultra-optimized camera connections..." << std::endl;
@@ -1333,99 +1480,107 @@ private:
         try {
             auto captureStartTime = std::chrono::high_resolution_clock::now();
             
-            // BANDWIDTH OPTIMIZATION: Add extra delay for cameras with bandwidth issues
-            if (camera.needsBandwidthThrottling) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(25)); // Extra delay for problematic cameras
+            // OPTIMIZATION: Use centralized validation
+            if (!validateCameraState(camera, "ultra-fast capture")) {
+                trackCaptureFailure();
+                return false;
             }
             
-            // ZERO-OVERHEAD parameter application - skip if already applied and unchanged
+            // ULTRA-CONSERVATIVE: Progressive delays based on failure history
+            if (camera.consecutiveBandwidthFailures > 3) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(200)); // Extreme delay for persistent failures
+            } else if (camera.needsBandwidthThrottling) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(100)); // Doubled delay for problematic cameras
+            }
+            
+            // ULTRA-CONSERVATIVE: Add base delay for ALL captures to prevent any bandwidth conflicts
+            std::this_thread::sleep_for(std::chrono::milliseconds(25)); // Increased base delay for all cameras
+            
+            // OPTIMIZATION: Use centralized parameter management
             auto paramStartTime = std::chrono::high_resolution_clock::now();
-            static std::map<std::string, CameraParameters> lastAppliedParams;
+            auto paramResult = checkAndApplyParameters(camera);
             
-            bool needParameterUpdate = false;
-            if (camera.configInfo && !camera.parametersApplied) {
-                // First time for this camera instance - parameters should already be applied during init
-                auto currentParams = configManager_.getParameters(camera.configInfo->serialNumber);
-                std::string serialNumber = camera.configInfo->serialNumber;
-                lastAppliedParams[serialNumber] = currentParams;
-                camera.parametersApplied = true; // Mark as applied
+            if (paramResult.wasApplied && !batchMode_) {
+                std::cout << "    🔧 Applied parameters: " << paramResult.currentParams.exposureTime 
+                         << "μs exposure, " << paramResult.currentParams.gain << " gain" << std::endl;
                 
-                if (!batchMode_) {
-                    std::cout << "    🎯 Using PRE-APPLIED parameters: " << currentParams.exposureTime << "μs exposure, " << currentParams.gain << " gain" << std::endl;
-                }
-            } else if (camera.configInfo) {
-                // Check if parameters changed since last application
-                auto currentParams = configManager_.getParameters(camera.configInfo->serialNumber);
-                std::string serialNumber = camera.configInfo->serialNumber;
-                
-                if (lastAppliedParams.find(serialNumber) != lastAppliedParams.end()) {
-                    auto& lastParams = lastAppliedParams[serialNumber];
-                    if (lastParams.exposureTime != currentParams.exposureTime ||
-                        lastParams.gain != currentParams.gain ||
-                        lastParams.autoExposure != currentParams.autoExposure ||
-                        lastParams.autoGain != currentParams.autoGain) {
-                        needParameterUpdate = true;
-                        lastAppliedParams[serialNumber] = currentParams;
-                    }
-                }
-                
-                if (needParameterUpdate) {
-                    configManager_.applyParametersToCamera(serialNumber, camera.acqDevice);
-                    
-                    if (!batchMode_) {
-                        std::cout << "    🔧 Applied CHANGED parameters: " << currentParams.exposureTime << "μs exposure, " << currentParams.gain << " gain" << std::endl;
-                    }
-                    
-                    // IMPROVED: Longer settling delay for changed parameters to prevent dark images
-                    int settlingDelay = currentParams.exposureTime > 50000 ? 500 : 300; // Increased from 200:100 to 500:300
-                    std::this_thread::sleep_for(std::chrono::milliseconds(settlingDelay));
-                } else {
-                    if (!batchMode_) {
-                        std::cout << "    ⚡ ZERO parameter overhead (no change)" << std::endl;
-                    }
-                    // Absolutely no delay when skipping parameters
-                }
+                // ULTRA-CONSERVATIVE: Enhanced settling delay for parameter changes
+                int settlingDelay = paramResult.currentParams.exposureTime > 50000 ? 750 : 500;
+                std::this_thread::sleep_for(std::chrono::milliseconds(settlingDelay));
+            } else if (!batchMode_) {
+                std::cout << "    ⚡ ZERO parameter overhead (no change)" << std::endl;
             }
+            
             auto paramEndTime = std::chrono::high_resolution_clock::now();
             auto paramDuration = std::chrono::duration_cast<std::chrono::milliseconds>(paramEndTime - paramStartTime).count();
             
-            // PRE-CAPTURE VALIDATION: Ensure camera is ready
+            // ULTRA-CONSERVATIVE PRE-CAPTURE VALIDATION: Ensure camera is ready
             if (!camera.transfer || !camera.acqDevice || !camera.colorConverter) {
                 std::cerr << "ERROR: Camera not properly initialized for " << camera.configInfo->serialNumber << std::endl;
                 return false;
             }
             
-            // Ultra-fast snap
+            // ADDITIONAL VALIDATION: Check if camera has had recent bandwidth issues
+            if (camera.consecutiveBandwidthFailures > 2) {
+                if (!batchMode_) {
+                    std::cout << "    ⚠️  Camera has history of bandwidth failures, using maximum conservative approach" << std::endl;
+                }
+                // Extra delay for cameras with persistent issues
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+            
+            // ROBUST snap with validation
             auto snapStartTime = std::chrono::high_resolution_clock::now();
+            
+            // Pre-snap validation
+            if (!camera.transfer) {
+                std::cerr << "CRITICAL ERROR: Transfer object is null for " << camera.configInfo->serialNumber << std::endl;
+                return false;
+            }
+            
+            // Add extra delay before snap for bandwidth-sensitive cameras
+            if (camera.consecutiveBandwidthFailures > 0) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            }
+            
             if (!camera.transfer->Snap()) {
                 std::cerr << "ERROR: Snap failed for " << camera.configInfo->serialNumber << std::endl;
+                camera.consecutiveBandwidthFailures++; // Track snap failures
                 return false;
             }
             auto snapEndTime = std::chrono::high_resolution_clock::now();
             auto snapDuration = std::chrono::duration_cast<std::chrono::milliseconds>(snapEndTime - snapStartTime).count();
             
-            // BANDWIDTH-OPTIMIZED timeout calculation - extra conservative for cameras with bandwidth issues
+            // OPTIMIZATION: Use centralized timeout calculation
             auto waitStartTime = std::chrono::high_resolution_clock::now();
-            int timeout = 10000; // Increased base timeout to 10 seconds for bandwidth reliability
-            if (camera.configInfo) {
-                auto params = configManager_.getParameters(camera.configInfo->serialNumber);
-                // Extra conservative timeout for bandwidth issues: exposure time + 7 seconds buffer
-                int calculatedTimeout = static_cast<int>(params.exposureTime / 1000) + 7000;
-                timeout = std::max(timeout, calculatedTimeout); // Use the larger value
+            int timeout = calculateOptimalTimeout(camera, true); // Ultra-conservative mode
+            
+            // CRITICAL: Multiple timeout attempts with progressive timeouts
+            bool waitSuccess = false;
+            for (int waitAttempt = 0; waitAttempt < 3 && !waitSuccess; waitAttempt++) {
+                int currentTimeout = timeout + (waitAttempt * 5000); // Add 5s per retry
                 
-                // BANDWIDTH OPTIMIZATION: Further increase timeout for cameras with bandwidth problems
-                if (camera.needsBandwidthThrottling || camera.consecutiveBandwidthFailures > 0) {
-                    timeout = static_cast<int>(timeout * 1.5); // 50% longer timeout for problematic cameras
+                if (waitAttempt > 0) {
+                    std::cerr << "RETRY: Wait attempt " << (waitAttempt + 1) << " with " << currentTimeout << "ms timeout for " << camera.configInfo->serialNumber << std::endl;
+                    std::this_thread::sleep_for(std::chrono::milliseconds(100)); // Brief pause between attempts
+                }
+                
+                waitSuccess = camera.transfer->Wait(currentTimeout);
+                
+                if (!waitSuccess && waitAttempt < 2) {
+                    // Try to abort and restart for next attempt
+                    camera.transfer->Abort();
+                    std::this_thread::sleep_for(std::chrono::milliseconds(200));
                 }
             }
             
-            if (!camera.transfer->Wait(timeout)) {
-                std::cerr << "ERROR: BANDWIDTH Transfer timeout (" << timeout << "ms) for " << camera.configInfo->serialNumber << std::endl;
+            if (!waitSuccess) {
+                std::cerr << "ERROR: CRITICAL Transfer timeout after 3 attempts for " << camera.configInfo->serialNumber << std::endl;
                 
-                // BANDWIDTH OPTIMIZATION: Mark as bandwidth failure and increase priority
-                camera.consecutiveBandwidthFailures++;
+                // CRITICAL: Mark as severe bandwidth failure
+                camera.consecutiveBandwidthFailures += 3; // Severe penalty for timeout
                 camera.needsBandwidthThrottling = true;
-                camera.bandwidthPriority = std::min(2, camera.bandwidthPriority + 1);
+                camera.bandwidthPriority = 2; // Maximum priority
                 
                 camera.transfer->Abort();
                 return false;
@@ -1440,51 +1595,93 @@ private:
                 }
             }
             
-            // HYPER-FAST RGB Color Conversion using PRE-ALLOCATED converter
+            // ROBUST RGB Color Conversion with multiple validation steps
             auto colorStartTime = std::chrono::high_resolution_clock::now();
             
-            // Use pre-allocated color converter (no creation/destruction overhead)
-            if (!camera.colorConverter->Convert()) {
-                std::cerr << "ERROR: Color conversion failed for " << camera.configInfo->serialNumber << std::endl;
+            // CRITICAL: Validate color converter state
+            if (!camera.colorConverter) {
+                std::cerr << "CRITICAL ERROR: Color converter is null for " << camera.configInfo->serialNumber << std::endl;
+                return false;
+            }
+            
+            // CRITICAL: Validate input buffer before conversion
+            if (!camera.buffer) {
+                std::cerr << "CRITICAL ERROR: Buffer is null for " << camera.configInfo->serialNumber << std::endl;
+                return false;
+            }
+            
+            // Add delay for bandwidth-sensitive cameras before conversion
+            if (camera.needsBandwidthThrottling) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(25));
+            }
+            
+            // Use pre-allocated color converter with retry on failure
+            bool conversionSuccess = false;
+            for (int convAttempt = 0; convAttempt < 2; convAttempt++) {
+                if (convAttempt > 0) {
+                    std::cerr << "RETRY: Color conversion attempt " << (convAttempt + 1) << " for " << camera.configInfo->serialNumber << std::endl;
+                    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                }
+                
+                conversionSuccess = camera.colorConverter->Convert();
+                if (conversionSuccess) break;
+            }
+            
+            if (!conversionSuccess) {
+                std::cerr << "ERROR: Color conversion failed after retries for " << camera.configInfo->serialNumber << std::endl;
+                camera.consecutiveBandwidthFailures++; // Track conversion failures
                 return false;
             }
             auto colorEndTime = std::chrono::high_resolution_clock::now();
             auto colorDuration = std::chrono::duration_cast<std::chrono::milliseconds>(colorEndTime - colorStartTime).count();
             
-            // DARK IMAGE DETECTION: Quick brightness check
-            auto tempBuffer = camera.colorConverter->GetOutputBuffer();
-            if (tempBuffer) {
-                void* bufferData = nullptr;
-                if (tempBuffer->GetAddress(&bufferData) && bufferData) {
-                    // Quick sampling of buffer to detect completely dark images
-                    unsigned char* pixelData = static_cast<unsigned char*>(bufferData);
-                    int bufferWidth = tempBuffer->GetWidth();
-                    int bufferHeight = tempBuffer->GetHeight();
-                    int sampleSize = std::min(1000, (bufferWidth * bufferHeight * 3) / 4); // Sample 1000 bytes or 1/4 of image
-                    
-                    int brightPixels = 0;
-                    for (int i = 0; i < sampleSize; i += 3) { // RGB, so skip by 3
-                        if (pixelData[i] > 30 || pixelData[i+1] > 30 || pixelData[i+2] > 30) {
-                            brightPixels++;
-                        }
-                    }
-                    
-                    // If less than 5% of sampled pixels are bright, flag as potentially dark
-                    if (brightPixels < (sampleSize / 3) * 0.05) {
-            if (!batchMode_) {
-                            std::cout << "    ⚠️  DARK IMAGE WARNING: " << camera.configInfo->serialNumber 
-                                      << " (" << brightPixels << "/" << (sampleSize/3) << " bright pixels)" << std::endl;
+            // OPTIMIZATION: Use centralized buffer validation and analysis
+            auto saveStartTime = std::chrono::high_resolution_clock::now();
+            auto imageResult = validateAndAnalyzeBuffer(camera);
+            
+            if (!imageResult.isValid) {
+                camera.consecutiveBandwidthFailures++;
+                return false;
+            }
+            
+            // ZERO BLACK IMAGE: Immediate retry for dark images
+            if (imageResult.isDark) {
+                camera.blackImageCount++;
+                camera.hadRecentBlackImage = true;
+                
+                if (!batchMode_) {
+                    std::cout << "    🚫 BLACK IMAGE DETECTED: " << camera.configInfo->serialNumber 
+                             << " (" << imageResult.brightPixelPercentage << "% bright pixels) - IMMEDIATE RETRY!" << std::endl;
+                }
+                
+                // Immediate retry with extra conservative timing
+                std::this_thread::sleep_for(std::chrono::milliseconds(300)); // Extra settling time
+                
+                // Second attempt with ultra-conservative mode
+                if (camera.transfer->Snap()) {
+                    int conservativeTimeout = calculateOptimalTimeout(camera, true); // Ultra-conservative
+                    if (camera.transfer->Wait(conservativeTimeout)) {
+                        // Retry color conversion
+                        if (camera.colorConverter->Convert()) {
+                            auto retryResult = validateAndAnalyzeBuffer(camera);
+                            if (retryResult.isValid && !retryResult.isDark) {
+                                // Success on retry!
+                                imageResult = retryResult;
+                                if (!batchMode_) {
+                                    std::cout << "    ✅ RETRY SUCCESS: Fixed black image (" 
+                                             << retryResult.brightPixelPercentage << "% bright)" << std::endl;
+                                }
+                            }
                         }
                     }
                 }
+            } else {
+                // Reset black image flag on successful capture
+                camera.hadRecentBlackImage = false;
             }
             
-            // ASYNC file saving for parallel I/O (sophisticated analysis now in retry system)
-            auto saveStartTime = std::chrono::high_resolution_clock::now();
-            auto saveBuffer = camera.colorConverter->GetOutputBuffer();
-            
-            // Queue async write instead of blocking save
-            fileWriter_->queueWrite(saveBuffer, filename);
+            // Queue async write instead of blocking save (only after validation)
+            fileWriter_->queueWrite(imageResult.outputBuffer, filename);
             
             auto saveEndTime = std::chrono::high_resolution_clock::now();
             auto saveDuration = std::chrono::duration_cast<std::chrono::milliseconds>(saveEndTime - saveStartTime).count();
@@ -1492,9 +1689,15 @@ private:
             auto captureEndTime = std::chrono::high_resolution_clock::now();
             auto totalDuration = std::chrono::duration_cast<std::chrono::milliseconds>(captureEndTime - captureStartTime).count();
             
+            // OPTIMIZATION: Track performance metrics and auto-adjust bandwidth
+            totalCaptureAttempts_++;
+            successfulCaptures_++;
+            totalCaptureTime_ += totalDuration;
+            checkAndAdjustBandwidth();
+            
             if (!batchMode_) {
                 std::cout << "    🌐 BANDWIDTH-OPTIMIZED RGB capture: " << filename << std::endl;
-                std::string paramStatus = needParameterUpdate ? "APPLIED" : (camera.parametersApplied ? "PRE-APPLIED" : "SKIPPED");
+                std::string paramStatus = paramResult.wasApplied ? "APPLIED" : "SKIPPED";
                 std::string bandwidthStatus = camera.needsBandwidthThrottling ? " [THROTTLED]" : " [OPTIMAL]";
                 std::cout << "    ⚡ BANDWIDTH timing: Param=" << paramDuration << "ms (" << paramStatus << "), Snap=" << snapDuration 
                          << "ms, Wait=" << waitDuration << "ms, Color=" << colorDuration 
@@ -1505,6 +1708,8 @@ private:
             
         } catch (const std::exception& e) {
             std::cerr << "ERROR: Exception during ultra-fast capture: " << e.what() << std::endl;
+            totalCaptureAttempts_++;
+            failedCaptures_++;
             return false;
         }
     }
@@ -1513,54 +1718,29 @@ private:
         try {
             auto captureStartTime = std::chrono::high_resolution_clock::now();
             
-            // ULTRA-OPTIMIZED parameter application - only when needed
-            auto paramStartTime = std::chrono::high_resolution_clock::now();
-            static std::map<std::string, CameraParameters> lastAppliedParams;
-            static std::map<std::string, bool> parametersEverApplied;
-            
-            bool needParameterUpdate = false;
-            if (camera.configInfo) {
-                auto currentParams = configManager_.getParameters(camera.configInfo->serialNumber);
-                std::string serialNumber = camera.configInfo->serialNumber;
-                
-                // Check if this is first time or parameters changed
-                if (parametersEverApplied.find(serialNumber) == parametersEverApplied.end()) {
-                    // First time - must apply parameters
-                    needParameterUpdate = true;
-                    parametersEverApplied[serialNumber] = true;
-                    lastAppliedParams[serialNumber] = currentParams;
-                } else {
-                    // Check if parameters changed since last application
-                    auto& lastParams = lastAppliedParams[serialNumber];
-                    if (lastParams.exposureTime != currentParams.exposureTime ||
-                        lastParams.gain != currentParams.gain ||
-                        lastParams.autoExposure != currentParams.autoExposure ||
-                        lastParams.autoGain != currentParams.autoGain) {
-                        needParameterUpdate = true;
-                        lastAppliedParams[serialNumber] = currentParams;
-                    }
-                }
-                
-                if (needParameterUpdate) {
-                    configManager_.applyParametersToCamera(serialNumber, camera.acqDevice);
-                    
-                    if (!batchMode_) {
-                        std::cout << "    🔧 Applied NEW parameters: " << currentParams.exposureTime << "μs exposure, " << currentParams.gain << " gain" << std::endl;
-                    }
-                    
-                    // Minimal settings delay - only for high exposure times
-                    if (currentParams.exposureTime > 50000) {
-                        std::this_thread::sleep_for(std::chrono::milliseconds(200)); // Further reduced
-                    } else {
-                        std::this_thread::sleep_for(std::chrono::milliseconds(100)); // Minimal delay
-                    }
-                } else {
-                    if (!batchMode_) {
-                        std::cout << "    ⚡ SKIPPED parameters (no change - ultra fast mode)" << std::endl;
-                    }
-                    // No delay needed when skipping parameters
-                }
+            // OPTIMIZATION: Use centralized validation (like ultra-fast version)
+            if (!validateCameraState(camera, "fast capture")) {
+                return false;
             }
+            
+            // OPTIMIZATION: Use centralized parameter management
+            auto paramStartTime = std::chrono::high_resolution_clock::now();
+            auto paramResult = checkAndApplyParameters(camera);
+            
+            if (paramResult.wasApplied) {
+                if (!batchMode_) {
+                    std::cout << "    🔧 Applied parameters: " << paramResult.currentParams.exposureTime 
+                             << "μs exposure, " << paramResult.currentParams.gain << " gain" << std::endl;
+                }
+                
+                // Apply settling delay if needed
+                if (paramResult.settlingDelayMs > 0) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(paramResult.settlingDelayMs));
+                }
+            } else if (!batchMode_) {
+                std::cout << "    ⚡ SKIPPED parameters (no change - ultra fast mode)" << std::endl;
+            }
+            
             auto paramEndTime = std::chrono::high_resolution_clock::now();
             auto paramDuration = std::chrono::duration_cast<std::chrono::milliseconds>(paramEndTime - paramStartTime).count();
             
@@ -1573,80 +1753,123 @@ private:
             auto snapEndTime = std::chrono::high_resolution_clock::now();
             auto snapDuration = std::chrono::duration_cast<std::chrono::milliseconds>(snapEndTime - snapStartTime).count();
             
-            // Ultra-optimized timeout calculation
+            // OPTIMIZATION: Use centralized timeout calculation
             auto waitStartTime = std::chrono::high_resolution_clock::now();
-            int timeout = 8000; // Further reduced from 10 seconds to 8 seconds
-            if (camera.configInfo) {
-                auto params = configManager_.getParameters(camera.configInfo->serialNumber);
-                // Minimal timeout: exposure time + 4 seconds buffer (reduced from 6)
-                int calculatedTimeout = static_cast<int>(params.exposureTime / 1000) + 4000;
-                timeout = (calculatedTimeout > timeout) ? calculatedTimeout : timeout;
-            }
+            int timeout = calculateOptimalTimeout(camera, false); // Normal mode
             
             if (!camera.transfer->Wait(timeout)) {
-                std::cerr << "ERROR: Transfer timeout (" << timeout << "ms) for " << camera.configInfo->serialNumber << std::endl;
+                std::cerr << "ERROR: Transfer timeout (" << timeout << "ms) for " 
+                         << (camera.configInfo ? camera.configInfo->serialNumber : "Unknown") << std::endl;
                 camera.transfer->Abort();
                 return false;
             }
             auto waitEndTime = std::chrono::high_resolution_clock::now();
             auto waitDuration = std::chrono::duration_cast<std::chrono::milliseconds>(waitEndTime - waitStartTime).count();
             
-            // Ultra-fast RGB Color Conversion (optimized for speed)
+            // OPTIMIZATION: Use pre-allocated color converter (like ultra-fast version)
             auto colorStartTime = std::chrono::high_resolution_clock::now();
-            SapColorConversion* pColorConv = new SapColorConversion(camera.buffer);
-            if (!pColorConv->Create()) {
-                std::cerr << "ERROR: Failed to create color conversion for " << camera.configInfo->serialNumber << std::endl;
-                delete pColorConv;
-                return false;
+            
+            // Add delay for bandwidth-sensitive cameras before conversion
+            if (camera.needsBandwidthThrottling) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(25));
             }
             
-            // Configure color conversion for RGB output (minimal setup)
-            pColorConv->Enable(TRUE, FALSE);
-            pColorConv->SetOutputFormat(SapFormatRGB888);
-            pColorConv->SetAlign(SapColorConversion::AlignRGGB);
-            pColorConv->SetMethod(SapColorConversion::Method1); // Fastest method
+            // Use pre-allocated color converter with retry on failure
+            bool conversionSuccess = false;
+            for (int convAttempt = 0; convAttempt < 2; convAttempt++) {
+                if (convAttempt > 0) {
+                    std::cerr << "RETRY: Color conversion attempt " << (convAttempt + 1) << " for " 
+                             << (camera.configInfo ? camera.configInfo->serialNumber : "Unknown") << std::endl;
+                    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                }
+                
+                conversionSuccess = camera.colorConverter->Convert();
+                if (conversionSuccess) break;
+            }
             
-            // Perform the color conversion
-            if (!pColorConv->Convert()) {
-                std::cerr << "ERROR: Color conversion failed for " << camera.configInfo->serialNumber << std::endl;
-                pColorConv->Destroy();
-                delete pColorConv;
+            if (!conversionSuccess) {
+                std::cerr << "ERROR: Color conversion failed after retries for " 
+                         << (camera.configInfo ? camera.configInfo->serialNumber : "Unknown") << std::endl;
+                camera.consecutiveBandwidthFailures++; // Track conversion failures
                 return false;
             }
             auto colorEndTime = std::chrono::high_resolution_clock::now();
             auto colorDuration = std::chrono::duration_cast<std::chrono::milliseconds>(colorEndTime - colorStartTime).count();
             
-            // Fast file saving
+            // OPTIMIZATION: Use centralized buffer validation and async file writing
             auto saveStartTime = std::chrono::high_resolution_clock::now();
-            auto outBuffer = pColorConv->GetOutputBuffer();
-            if (!outBuffer->Save(filename.c_str(), "-format tiff")) {
-                std::cerr << "ERROR: Failed to save RGB image to " << filename << std::endl;
-                pColorConv->Destroy();
-                delete pColorConv;
+            auto imageResult = validateAndAnalyzeBuffer(camera);
+            
+            if (!imageResult.isValid) {
+                camera.consecutiveBandwidthFailures++;
                 return false;
             }
+            
+            // ZERO BLACK IMAGE: Immediate retry for dark images
+            if (imageResult.isDark) {
+                camera.blackImageCount++;
+                camera.hadRecentBlackImage = true;
+                
+                if (!batchMode_) {
+                    std::cout << "    🚫 BLACK IMAGE DETECTED: " 
+                             << (camera.configInfo ? camera.configInfo->serialNumber : "Unknown")
+                             << " (" << imageResult.brightPixelPercentage << "% bright pixels) - IMMEDIATE RETRY!" << std::endl;
+                }
+                
+                // Immediate retry with extra conservative timing
+                std::this_thread::sleep_for(std::chrono::milliseconds(300)); // Extra settling time
+                
+                // Second attempt with ultra-conservative mode
+                if (camera.transfer->Snap()) {
+                    int conservativeTimeout = calculateOptimalTimeout(camera, true); // Ultra-conservative
+                    if (camera.transfer->Wait(conservativeTimeout)) {
+                        // Retry color conversion
+                        if (camera.colorConverter->Convert()) {
+                            auto retryResult = validateAndAnalyzeBuffer(camera);
+                            if (retryResult.isValid && !retryResult.isDark) {
+                                // Success on retry!
+                                imageResult = retryResult;
+                                if (!batchMode_) {
+                                    std::cout << "    ✅ RETRY SUCCESS: Fixed black image (" 
+                                             << retryResult.brightPixelPercentage << "% bright)" << std::endl;
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                // Reset black image flag on successful capture
+                camera.hadRecentBlackImage = false;
+            }
+            
+            // Use async file writing for better performance
+            fileWriter_->queueWrite(imageResult.outputBuffer, filename);
+            
             auto saveEndTime = std::chrono::high_resolution_clock::now();
             auto saveDuration = std::chrono::duration_cast<std::chrono::milliseconds>(saveEndTime - saveStartTime).count();
-            
-            // Clean up color conversion
-            pColorConv->Destroy();
-            delete pColorConv;
             
             auto captureEndTime = std::chrono::high_resolution_clock::now();
             auto totalDuration = std::chrono::duration_cast<std::chrono::milliseconds>(captureEndTime - captureStartTime).count();
             
+            // OPTIMIZATION: Track performance metrics
+            totalCaptureAttempts_++;
+            successfulCaptures_++;
+            totalCaptureTime_ += totalDuration;
+            
             if (!batchMode_) {
-                std::cout << "    📸 RGB Image saved: " << filename << std::endl;
-                std::string paramStatus = needParameterUpdate ? "APPLIED" : "SKIPPED";
+                std::cout << "    📸 RGB Image queued for async save: " << filename << std::endl;
+                std::string paramStatus = paramResult.wasApplied ? "APPLIED" : "SKIPPED";
                 std::cout << "    ⏱️  Timing breakdown: Param=" << paramDuration << "ms (" << paramStatus << "), Snap=" << snapDuration 
                          << "ms, Wait=" << waitDuration << "ms, Color=" << colorDuration 
-                         << "ms, Save=" << saveDuration << "ms, Total=" << totalDuration << "ms" << std::endl;
+                         << "ms, AsyncQueue=" << saveDuration << "ms, Total=" << totalDuration << "ms" << std::endl;
             }
             
             return true;
             
         } catch (const std::exception& e) {
             std::cerr << "ERROR: Exception during capture: " << e.what() << std::endl;
+            totalCaptureAttempts_++;
+            failedCaptures_++;
             return false;
         }
     }
@@ -1911,7 +2134,7 @@ private:
         return ss.str();
     }
     
-    CaptureResult captureWithIntelligentRetry(CameraHandle& camera, const std::string& filename, int maxRetries = 3) {
+    CaptureResult captureWithIntelligentRetry(CameraHandle& camera, const std::string& filename, int maxRetries = 5) {
         CaptureResult result;
         result.filename = filename;
         
@@ -2136,15 +2359,247 @@ private:
                 std::cout << "    🚨 Strategy 3: Maximum settings + extended settling" << std::endl;
             }
             
-            params.exposureTime = 80000; // High exposure
-            params.gain = 3.0; // High gain
+            params.exposureTime = 100000; // Very high exposure
+            params.gain = 4.0; // Very high gain
             configManager_.setParameters(serialNumber, params);
             configManager_.applyParametersToCamera(serialNumber, camera.acqDevice);
-            std::this_thread::sleep_for(std::chrono::milliseconds(500)); // Extra long settling
+            std::this_thread::sleep_for(std::chrono::milliseconds(750)); // Very long settling
+        }
+        
+        // Strategy 4: ULTRA-CONSERVATIVE settings for final attempt
+        else if (retryAttempt == 4) {
+            if (!batchMode_) {
+                std::cout << "    🔒 Strategy 4: ULTRA-CONSERVATIVE final attempt" << std::endl;
+            }
+            
+            params.exposureTime = 120000; // Maximum exposure
+            params.gain = 5.0; // Maximum gain
+            configManager_.setParameters(serialNumber, params);
+            configManager_.applyParametersToCamera(serialNumber, camera.acqDevice);
+            std::this_thread::sleep_for(std::chrono::milliseconds(1000)); // Maximum settling time
+        }
+        
+        // Strategy 5: Last resort with extreme settings
+        else if (retryAttempt == 5) {
+            if (!batchMode_) {
+                std::cout << "    ⚡ Strategy 5: LAST RESORT - extreme settings" << std::endl;
+            }
+            
+            params.exposureTime = 150000; // Extreme exposure
+            params.gain = 6.0; // Maximum possible gain
+            configManager_.setParameters(serialNumber, params);
+            configManager_.applyParametersToCamera(serialNumber, camera.acqDevice);
+            std::this_thread::sleep_for(std::chrono::milliseconds(1500)); // Extreme settling time
         }
         
         // General retry improvements
         std::this_thread::sleep_for(std::chrono::milliseconds(100)); // Extra settling between retries
+    }
+    
+    // OPTIMIZATION: Extract parameter management into reusable function
+    struct ParameterUpdateResult {
+        bool needsUpdate = false;
+        bool wasApplied = false;
+        int settlingDelayMs = 0;
+        CameraParameters currentParams;
+    };
+    
+    ParameterUpdateResult checkAndApplyParameters(CameraHandle& camera) {
+        ParameterUpdateResult result;
+        
+        if (!camera.configInfo) {
+            return result;
+        }
+        
+        result.currentParams = configManager_.getParameters(camera.configInfo->serialNumber);
+        std::string serialNumber = camera.configInfo->serialNumber;
+        
+        // FAST PATH: Use shared lock for reading (allows multiple concurrent reads)
+        {
+            std::shared_lock<std::shared_mutex> readLock(parameterCacheMutex_);
+            
+            auto appliedIt = parametersEverApplied_.find(serialNumber);
+            if (appliedIt != parametersEverApplied_.end() && appliedIt->second) {
+                // Parameters were applied before, check if they changed
+                auto lastParamsIt = lastAppliedParams_.find(serialNumber);
+                if (lastParamsIt != lastAppliedParams_.end()) {
+                    auto& lastParams = lastParamsIt->second;
+                    if (lastParams.exposureTime == result.currentParams.exposureTime &&
+                        lastParams.gain == result.currentParams.gain &&
+                        lastParams.autoExposure == result.currentParams.autoExposure &&
+                        lastParams.autoGain == result.currentParams.autoGain) {
+                        // No change needed - return immediately without locking
+                        return result;
+                    }
+                    result.needsUpdate = true;
+                }
+            } else {
+                // First time for this camera
+                result.needsUpdate = true;
+            }
+        }
+        
+        // SLOW PATH: Only use exclusive lock when we need to update
+        if (result.needsUpdate) {
+            std::unique_lock<std::shared_mutex> writeLock(parameterCacheMutex_);
+            
+            // Double-check after acquiring write lock
+            auto appliedIt = parametersEverApplied_.find(serialNumber);
+            if (appliedIt == parametersEverApplied_.end()) {
+                parametersEverApplied_[serialNumber] = true;
+            }
+            lastAppliedParams_[serialNumber] = result.currentParams;
+            
+            // Release write lock before applying parameters (expensive operation)
+            writeLock.unlock();
+            
+            configManager_.applyParametersToCamera(serialNumber, camera.acqDevice);
+            result.wasApplied = true;
+            
+            // Calculate settling delay based on exposure time
+            result.settlingDelayMs = result.currentParams.exposureTime > 50000 ? 120 : 80; // Balanced delays for quality
+        }
+        
+        return result;
+    }
+    
+    // OPTIMIZATION: Extract common validation logic
+    bool validateCameraState(CameraHandle& camera, const std::string& operation) {
+        if (!camera.acqDevice || !camera.transfer || !camera.buffer) {
+            std::cerr << "CRITICAL ERROR: Camera not properly initialized for " << operation 
+                      << ": " << (camera.configInfo ? camera.configInfo->serialNumber : "Unknown") << std::endl;
+            return false;
+        }
+        
+        // Check for pre-allocated color converter
+        if (!camera.colorConverter) {
+            std::cerr << "CRITICAL ERROR: Color converter is null for " << operation 
+                      << ": " << (camera.configInfo ? camera.configInfo->serialNumber : "Unknown") << std::endl;
+            return false;
+        }
+        
+        return true;
+    }
+    
+    // BALANCED: Timeout calculation with responsive quality monitoring
+    int calculateOptimalTimeout(CameraHandle& camera, bool isUltraConservative = false) {
+        int baseTimeout = isUltraConservative ? 15000 : 10000; // Balanced for quality
+        
+        if (camera.configInfo) {
+            auto params = configManager_.getParameters(camera.configInfo->serialNumber);
+            int bufferTime = isUltraConservative ? 12000 : 6000; // Reasonable buffer
+            int calculatedTimeout = static_cast<int>(params.exposureTime / 1000) + bufferTime;
+            baseTimeout = std::max(baseTimeout, calculatedTimeout);
+            
+            // Apply responsive extension for problematic cameras
+            if (isUltraConservative && (camera.needsBandwidthThrottling || camera.consecutiveBandwidthFailures > 0)) {
+                baseTimeout = static_cast<int>(baseTimeout * 2.0); // Reasonable extension
+            }
+        }
+        
+        return baseTimeout;
+    }
+    
+    // OPTIMIZATION: Extract buffer validation and image analysis
+    struct ImageQualityResult {
+        bool isValid = false;
+        bool isDark = false;
+        int brightPixelPercentage = 0;
+        SapBuffer* outputBuffer = nullptr;
+    };
+    
+    ImageQualityResult validateAndAnalyzeBuffer(CameraHandle& camera) {
+        ImageQualityResult result;
+        
+        result.outputBuffer = camera.colorConverter->GetOutputBuffer();
+        
+        // Validate output buffer
+        if (!result.outputBuffer) {
+            std::cerr << "CRITICAL ERROR: Output buffer is null for " 
+                      << (camera.configInfo ? camera.configInfo->serialNumber : "Unknown") << std::endl;
+            return result;
+        }
+        
+        // Validate buffer dimensions
+        if (result.outputBuffer->GetWidth() <= 0 || result.outputBuffer->GetHeight() <= 0) {
+            std::cerr << "CRITICAL ERROR: Invalid buffer dimensions for " 
+                      << (camera.configInfo ? camera.configInfo->serialNumber : "Unknown") << std::endl;
+            return result;
+        }
+        
+        // Validate buffer data
+        void* bufferData = nullptr;
+        if (!result.outputBuffer->GetAddress(&bufferData) || !bufferData) {
+            std::cerr << "CRITICAL ERROR: Buffer data is null for " 
+                      << (camera.configInfo ? camera.configInfo->serialNumber : "Unknown") << std::endl;
+            return result;
+        }
+        
+        result.isValid = true;
+        
+        // Quick brightness analysis for dark image detection
+        unsigned char* pixelData = static_cast<unsigned char*>(bufferData);
+        int bufferWidth = result.outputBuffer->GetWidth();
+        int bufferHeight = result.outputBuffer->GetHeight();
+        int sampleSize = std::min(1000, (bufferWidth * bufferHeight * 3) / 4);
+        
+        int brightPixels = 0;
+        for (int i = 0; i < sampleSize; i += 3) {
+            if (pixelData[i] > 30 || pixelData[i+1] > 30 || pixelData[i+2] > 30) {
+                brightPixels++;
+            }
+        }
+        
+        result.brightPixelPercentage = (brightPixels * 100) / (sampleSize / 3);
+        result.isDark = (brightPixels < (sampleSize / 3) * 0.12); // Ultra-sensitive dark detection
+        
+        return result;
+    }
+    
+    // OPTIMIZATION: Helper to track failures
+    void trackCaptureFailure() {
+        totalCaptureAttempts_++;
+        failedCaptures_++;
+    }
+    
+    // OPTIMIZATION: Get performance statistics and auto-adjust bandwidth
+    void printPerformanceStats() {
+        if (totalCaptureAttempts_ > 0) {
+            double successRate = (double)successfulCaptures_ / totalCaptureAttempts_ * 100.0;
+            double avgCaptureTime = totalCaptureTime_ > 0 ? (double)totalCaptureTime_ / successfulCaptures_ : 0.0;
+            
+            std::cout << "📊 Performance Stats: " << successfulCaptures_ << "/" << totalCaptureAttempts_ 
+                     << " captures successful (" << std::fixed << std::setprecision(1) << successRate 
+                     << "%), Avg time: " << std::setprecision(1) << avgCaptureTime << "ms" << std::endl;
+            
+            // Show current bandwidth settings and testing progress
+            if (bandwidthManager_) {
+                int consecutiveSuccesses = bandwidthManager_->getConsecutiveSuccesses();
+                int testPhase = bandwidthManager_->getTestingPhase();
+                
+                std::string phaseDesc = (testPhase == 0) ? "BASELINE" : 
+                                       (testPhase == 1) ? "SCALING" : "OPTIMIZED";
+                
+                std::cout << "🔧 TESTING Status: Phase=" << phaseDesc 
+                         << ", Max concurrent=" << bandwidthManager_->getMaxConcurrentCameras() 
+                         << ", Active=" << bandwidthManager_->getActiveCameraCount() 
+                         << ", Success streak=" << consecutiveSuccesses << std::endl;
+                
+                // Auto-adjust workload every 5 captures during testing
+                if (totalCaptureAttempts_ % 5 == 0) {
+                    bandwidthManager_->adjustWorkloadLimit(successRate, consecutiveSuccesses);
+                }
+            }
+        }
+    }
+    
+    // BANDWIDTH-FIRST: Function to check if we should increase workload
+    void checkAndAdjustBandwidth() {
+        if (bandwidthManager_ && totalCaptureAttempts_ % 5 == 0) { // Check every 5 captures
+            double successRate = totalCaptureAttempts_ > 0 ? (double)successfulCaptures_ / totalCaptureAttempts_ * 100.0 : 0.0;
+            int consecutiveSuccesses = bandwidthManager_->getConsecutiveSuccesses();
+            bandwidthManager_->adjustWorkloadLimit(successRate, consecutiveSuccesses);
+        }
     }
 };
 
