@@ -1,108 +1,78 @@
-cmake_minimum_required(VERSION 3.15)
+cmake_minimum_required(VERSION 3.16)
 
-project(CleanSaperaSystem)
+project(SaperaCapturePro 
+    VERSION 1.0.0
+    LANGUAGES CXX
+)
 
+# Use C++17 for better compatibility
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Sapera SDK Paths
-set(SAPERA_SDK_ROOT "C:/Program Files/Teledyne DALSA/Sapera")
-set(SAPERA_SDK_INCLUDE "${SAPERA_SDK_ROOT}/Include")
-set(SAPERA_SDK_CLASSES_BASIC "${SAPERA_SDK_ROOT}/Classes/Basic")
-set(SAPERA_SDK_LIB "${SAPERA_SDK_ROOT}/Lib/Win64")
+# =============================================================================
+# SAPERA SDK CONFIGURATION
+# =============================================================================
 
-# Check if Sapera SDK exists
-if(NOT EXISTS "${SAPERA_SDK_INCLUDE}")
-    message(FATAL_ERROR "Sapera SDK not found at: ${SAPERA_SDK_INCLUDE}")
+# Find Sapera SDK - Updated correct paths
+set(SAPERA_ROOT "C:/Program Files/Teledyne DALSA/Sapera")
+set(SAPERA_INCLUDE "${SAPERA_ROOT}/Include")
+set(SAPERA_LIB "${SAPERA_ROOT}/Lib/Win64")
+
+# Validate SDK
+if(NOT EXISTS "${SAPERA_INCLUDE}")
+    message(FATAL_ERROR "❌ Sapera SDK not found at: ${SAPERA_INCLUDE}")
 endif()
 
-# Include directories
-include_directories(${SAPERA_SDK_INCLUDE})
-include_directories(${SAPERA_SDK_CLASSES_BASIC})
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/backend/src)
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/backend/src/lib)
+message(STATUS "✅ Sapera SDK found: ${SAPERA_ROOT}")
+message(STATUS "✅ Include: ${SAPERA_INCLUDE}")
+message(STATUS "✅ Lib: ${SAPERA_LIB}")
 
-# ==============================================
-# CLEAN SAPERA CAMERA SYSTEM - WORKING VERSION
-# ==============================================
+# =============================================================================
+# COMPILER CONFIGURATION
+# =============================================================================
 
-# Main camera capture system with improved dark image handling
-set(CAPTURE_SOURCES
-    backend/src/refactored_capture.cpp
-    backend/src/CameraConfigManager.cpp
-    backend/src/CameraAPI.cpp
-)
-
-# Build the camera capture executable
-add_executable(refactored_capture ${CAPTURE_SOURCES})
-
-# Link Sapera SDK libraries
-target_link_libraries(refactored_capture
-    ${SAPERA_SDK_LIB}/SapClassBasic.lib
-    ${SAPERA_SDK_LIB}/corapi.lib
-    user32.lib
-    gdi32.lib
-    advapi32.lib
-    ole32.lib
-    oleaut32.lib
-    uuid.lib
-    comdlg32.lib
-    kernel32.lib
-    winmm.lib
-    ws2_32.lib
-)
-
-# Set output directory
-set_target_properties(refactored_capture PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
-)
-
-# Add compiler warnings
-target_compile_options(refactored_capture PRIVATE
-    $<$<CXX_COMPILER_ID:MSVC>:/W3>
-)
-
-# ==============================================
-# POST-BUILD: ORGANIZE SYSTEM STRUCTURE
-# ==============================================
-
-add_custom_command(TARGET refactored_capture POST_BUILD
-    COMMENT "🚀 Organizing Clean Sapera System..."
+# MSVC specific settings
+if(MSVC)
+    add_compile_definitions(
+        NOMINMAX
+        WIN32_LEAN_AND_MEAN
+        _CRT_SECURE_NO_WARNINGS
+    )
     
-    # Copy executable to backend directory
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "$<TARGET_FILE:refactored_capture>"
-        "${CMAKE_CURRENT_SOURCE_DIR}/backend/refactored_capture.exe"
-        
-    # Copy configuration
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${CMAKE_CURRENT_SOURCE_DIR}/config/camera_config.json"
-        "${CMAKE_BINARY_DIR}/camera_config.json"
-        
-    COMMAND ${CMAKE_COMMAND} -E echo "✅ Clean Sapera System ready!"
-    COMMAND ${CMAKE_COMMAND} -E echo "📁 Backend: backend/refactored_capture.exe"
-    COMMAND ${CMAKE_COMMAND} -E echo "🌐 Web: python web-bridge/web_bridge.py"
-    COMMAND ${CMAKE_COMMAND} -E echo "🖥️  Frontend: frontend/index.html"
+    add_compile_options(
+        /W3                 # Warning level 3
+        /MP                 # Multi-processor compilation
+    )
+endif()
+
+# =============================================================================
+# EXECUTABLES - Keep it simple and working
+# =============================================================================
+
+# Main working application
+add_executable(sapera_capture_pro
+    src/main.cpp
+    src/hardware/CameraTypes.hpp
+    src/hardware/CameraTypes.cpp
 )
 
-# ==============================================
-# BUILD INFORMATION
-# ==============================================
+target_include_directories(sapera_capture_pro
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${SAPERA_INCLUDE}
+        ${SAPERA_ROOT}/Classes/Basic
+)
 
-message(STATUS "==============================================")
-message(STATUS "Clean Sapera Camera System - Simplified Build")
-message(STATUS "==============================================")
-message(STATUS "Sapera SDK: ${SAPERA_SDK_ROOT}")
-message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
-message(STATUS "")
-message(STATUS "🎯 Building ONLY working components:")
-message(STATUS "   📸 refactored_capture.exe - Camera system with improved retry")
-message(STATUS "   🌐 web_bridge.py - FastAPI server")
-message(STATUS "   🖥️  index.html - Frontend dashboard")
-message(STATUS "")
-message(STATUS "🔧 Features:")
-message(STATUS "   • Intelligent dark image retry (2x exposure, 1.5x gain)")
-message(STATUS "   • Longer settling times (300-500ms)")
-message(STATUS "   • Quality analysis and auto-retry")
-message(STATUS "   • Clean modular structure")
-message(STATUS "==============================================") 
+target_link_libraries(sapera_capture_pro
+    PRIVATE
+        "${SAPERA_LIB}/SapClassBasic.lib"
+        "${SAPERA_LIB}/corapi.lib"
+)
+
+# =============================================================================
+# INSTALLATION
+# =============================================================================
+
+install(TARGETS sapera_capture_pro
+    RUNTIME DESTINATION bin
+) 
