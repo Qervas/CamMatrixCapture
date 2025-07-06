@@ -14,6 +14,8 @@
 #include <iomanip>
 #include <sstream>
 #include <thread>
+#include <fstream>
+#include <ctime>
 
 // Include Sapera headers directly
 #include "SapClassBasic.h"
@@ -43,6 +45,270 @@ struct ConnectedCamera {
     int cameraIndex = 0; // For neural rendering dataset naming (cam_01, cam_02, etc.)
 };
 
+// Enhanced camera parameter controller using Sapera SDK
+class ParameterController {
+private:
+    std::map<std::string, ConnectedCamera*> cameras_;
+    
+    // Common parameter definitions
+    struct ParameterInfo {
+        std::string name;
+        std::string description;
+        double minValue;
+        double maxValue;
+        double defaultValue;
+        std::string unit;
+        bool isReadOnly;
+    };
+    
+    // Parameter definitions for Nano-C4020 cameras
+    std::map<std::string, ParameterInfo> parameterDefinitions_ = {
+        {"ExposureTime", {"ExposureTime", "Exposure time", 1000, 100000, 40000, "μs", false}},
+        {"Gain", {"Gain", "Analog gain", 1.0, 10.0, 1.0, "dB", false}},
+        {"BlackLevel", {"BlackLevel", "Black level offset", 0, 255, 0, "counts", false}},
+        {"Gamma", {"Gamma", "Gamma correction", 0.1, 3.0, 1.0, "", false}},
+        {"OffsetX", {"OffsetX", "Horizontal offset", 0, 1024, 0, "pixels", false}},
+        {"OffsetY", {"OffsetY", "Vertical offset", 0, 768, 0, "pixels", false}},
+        {"Width", {"Width", "Image width", 64, 4112, 4112, "pixels", false}},
+        {"Height", {"Height", "Image height", 64, 3008, 3008, "pixels", false}},
+        {"PixelFormat", {"PixelFormat", "Pixel format", 0, 0, 0, "", false}},
+        {"TriggerMode", {"TriggerMode", "Trigger mode", 0, 0, 0, "", false}},
+        {"TriggerSource", {"TriggerSource", "Trigger source", 0, 0, 0, "", false}},
+        {"AcquisitionMode", {"AcquisitionMode", "Acquisition mode", 0, 0, 0, "", false}},
+        {"DeviceTemperature", {"DeviceTemperature", "Device temperature", -40, 85, 25, "°C", true}},
+        {"DeviceSerialNumber", {"DeviceSerialNumber", "Device serial number", 0, 0, 0, "", true}},
+        {"DeviceModelName", {"DeviceModelName", "Device model name", 0, 0, 0, "", true}},
+        {"DeviceVendorName", {"DeviceVendorName", "Device vendor name", 0, 0, 0, "", true}},
+        {"DeviceVersion", {"DeviceVersion", "Device version", 0, 0, 0, "", true}},
+        {"SensorWidth", {"SensorWidth", "Sensor width", 0, 0, 0, "pixels", true}},
+        {"SensorHeight", {"SensorHeight", "Sensor height", 0, 0, 0, "pixels", true}},
+        {"AcquisitionFrameRate", {"AcquisitionFrameRate", "Frame rate", 0.1, 30.0, 1.0, "fps", false}},
+        {"WhiteBalanceRed", {"WhiteBalanceRed", "White balance red", 0.1, 4.0, 1.0, "", false}},
+        {"WhiteBalanceGreen", {"WhiteBalanceGreen", "White balance green", 0.1, 4.0, 1.0, "", false}},
+        {"WhiteBalanceBlue", {"WhiteBalanceBlue", "White balance blue", 0.1, 4.0, 1.0, "", false}}
+    };
+    
+public:
+    void setCameras(std::map<std::string, ConnectedCamera>& cameras) {
+        cameras_.clear();
+        for (auto& [id, camera] : cameras) {
+            cameras_[id] = &camera;
+        }
+    }
+    
+    // Get parameter value from a specific camera
+    bool getParameter(const std::string& cameraId, const std::string& paramName, std::string& value) {
+        auto it = cameras_.find(cameraId);
+        if (it == cameras_.end() || !it->second->acqDevice) {
+            return false;
+        }
+        
+        try {
+            char buffer[512];
+            if (it->second->acqDevice->GetFeatureValue(paramName.c_str(), buffer, sizeof(buffer))) {
+                value = buffer;
+                return true;
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "❌ Exception getting parameter " << paramName << ": " << e.what() << std::endl;
+        }
+        return false;
+    }
+    
+    // Set parameter value on a specific camera
+    bool setParameter(const std::string& cameraId, const std::string& paramName, const std::string& value) {
+        auto it = cameras_.find(cameraId);
+        if (it == cameras_.end() || !it->second->acqDevice) {
+            return false;
+        }
+        
+        try {
+            if (it->second->acqDevice->SetFeatureValue(paramName.c_str(), value.c_str())) {
+                return true;
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "❌ Exception setting parameter " << paramName << ": " << e.what() << std::endl;
+        }
+        return false;
+    }
+    
+    // Set parameter on all cameras
+    bool setParameterAll(const std::string& paramName, const std::string& value) {
+        bool success = true;
+        int successCount = 0;
+        
+        for (auto& [cameraId, camera] : cameras_) {
+            if (setParameter(cameraId, paramName, value)) {
+                successCount++;
+            } else {
+                success = false;
+            }
+        }
+        
+        std::cout << "📝 Parameter '" << paramName << "' set to '" << value << "' on " 
+                  << successCount << "/" << cameras_.size() << " cameras" << std::endl;
+        return success;
+    }
+    
+    // Get parameter info
+    bool getParameterInfo(const std::string& paramName, ParameterInfo& info) {
+        auto it = parameterDefinitions_.find(paramName);
+        if (it != parameterDefinitions_.end()) {
+            info = it->second;
+            return true;
+        }
+        return false;
+    }
+    
+    // List all available parameters
+    void listParameters() {
+        std::cout << "\n=== Available Camera Parameters ===" << std::endl;
+        std::cout << "Parameter Name           | Description                | Range/Options        | Unit | RW" << std::endl;
+        std::cout << "-------------------------|----------------------------|---------------------|------|----" << std::endl;
+        
+        for (const auto& [name, info] : parameterDefinitions_) {
+            std::string range;
+            if (info.name == "PixelFormat" || info.name == "TriggerMode" || 
+                info.name == "TriggerSource" || info.name == "AcquisitionMode") {
+                range = "Enum";
+            } else if (info.isReadOnly) {
+                range = "Read-only";
+            } else {
+                range = std::to_string(info.minValue) + " - " + std::to_string(info.maxValue);
+            }
+            
+            std::cout << std::setw(24) << std::left << info.name << " | "
+                      << std::setw(26) << std::left << info.description << " | "
+                      << std::setw(19) << std::left << range << " | "
+                      << std::setw(4) << std::left << info.unit << " | "
+                      << (info.isReadOnly ? "R" : "RW") << std::endl;
+        }
+        std::cout << std::endl;
+    }
+    
+    // Get parameter status from all cameras
+    void getParameterStatus(const std::string& paramName) {
+        std::cout << "\n=== Parameter Status: " << paramName << " ===" << std::endl;
+        
+        ParameterInfo info;
+        if (getParameterInfo(paramName, info)) {
+            std::cout << "Description: " << info.description << std::endl;
+            if (!info.isReadOnly) {
+                std::cout << "Range: " << info.minValue << " - " << info.maxValue << " " << info.unit << std::endl;
+            }
+            std::cout << std::endl;
+        }
+        
+        for (const auto& [cameraId, camera] : cameras_) {
+            std::string value;
+            if (getParameter(cameraId, paramName, value)) {
+                std::cout << "📸 " << cameraId << ": " << value << std::endl;
+            } else {
+                std::cout << "📸 " << cameraId << ": ❌ Failed to read" << std::endl;
+            }
+        }
+        std::cout << std::endl;
+    }
+    
+    // Advanced parameter operations
+    bool setROI(int offsetX, int offsetY, int width, int height) {
+        std::cout << "📐 Setting ROI: " << offsetX << "," << offsetY << " " << width << "x" << height << std::endl;
+        
+        bool success = true;
+        success &= setParameterAll("OffsetX", std::to_string(offsetX));
+        success &= setParameterAll("OffsetY", std::to_string(offsetY));
+        success &= setParameterAll("Width", std::to_string(width));
+        success &= setParameterAll("Height", std::to_string(height));
+        
+        if (success) {
+            std::cout << "✅ ROI set successfully" << std::endl;
+        } else {
+            std::cout << "❌ ROI setting failed on some cameras" << std::endl;
+        }
+        return success;
+    }
+    
+    bool setWhiteBalance(double red, double green, double blue) {
+        std::cout << "⚪ Setting white balance: R=" << red << " G=" << green << " B=" << blue << std::endl;
+        
+        bool success = true;
+        success &= setParameterAll("WhiteBalanceRed", std::to_string(red));
+        success &= setParameterAll("WhiteBalanceGreen", std::to_string(green));
+        success &= setParameterAll("WhiteBalanceBlue", std::to_string(blue));
+        
+        if (success) {
+            std::cout << "✅ White balance set successfully" << std::endl;
+        } else {
+            std::cout << "❌ White balance setting failed on some cameras" << std::endl;
+        }
+        return success;
+    }
+    
+    void showCameraInfo() {
+        std::cout << "\n=== Camera Information ===" << std::endl;
+        
+        for (const auto& [cameraId, camera] : cameras_) {
+            std::cout << "📸 " << cameraId << ":" << std::endl;
+            
+            std::vector<std::string> infoParams = {
+                "DeviceSerialNumber", "DeviceModelName", "DeviceVendorName", 
+                "DeviceVersion", "DeviceTemperature", "SensorWidth", "SensorHeight"
+            };
+            
+            for (const auto& param : infoParams) {
+                std::string value;
+                if (getParameter(cameraId, param, value)) {
+                    std::cout << "  " << param << ": " << value << std::endl;
+                }
+            }
+            std::cout << std::endl;
+        }
+    }
+    
+    // Show current camera settings
+    void showCurrentSettings() {
+        std::cout << "\n=== Current Camera Settings ===" << std::endl;
+        
+        std::vector<std::string> settingParams = {
+            "ExposureTime", "Gain", "BlackLevel", "Gamma", "OffsetX", "OffsetY", 
+            "Width", "Height", "PixelFormat", "TriggerMode", "AcquisitionFrameRate"
+        };
+        
+        for (const auto& param : settingParams) {
+            std::cout << std::setw(20) << std::left << param << ": ";
+            
+            std::string firstValue;
+            bool allSame = true;
+            bool first = true;
+            
+            for (const auto& [cameraId, camera] : cameras_) {
+                std::string value;
+                if (getParameter(cameraId, param, value)) {
+                    if (first) {
+                        firstValue = value;
+                        first = false;
+                    } else if (value != firstValue) {
+                        allSame = false;
+                        break;
+                    }
+                }
+            }
+            
+            if (allSame && !first) {
+                std::cout << firstValue;
+                ParameterInfo info;
+                if (getParameterInfo(param, info)) {
+                    std::cout << " " << info.unit;
+                }
+            } else {
+                std::cout << "❌ Inconsistent values";
+            }
+            std::cout << std::endl;
+        }
+        std::cout << std::endl;
+    }
+};
+
 class NeuralRenderingCaptureSystem {
 private:
     std::vector<CameraInfo> discoveredCameras_;
@@ -52,17 +318,18 @@ private:
     int captureCounter_;
     std::string currentSessionName_;
     int exposureTime_; // Exposure time in microseconds
+    ParameterController parameterController_; // Enhanced parameter control
 
 public:
     NeuralRenderingCaptureSystem(const std::string& datasetPath = "neural_dataset") 
         : datasetPath_(datasetPath), currentFormat_(CaptureFormat::TIFF), captureCounter_(1), exposureTime_(40000) {
         
-        // Create dataset directory structure
+        // Ensure dataset directory structure exists
         std::filesystem::create_directories(datasetPath_);
         std::filesystem::create_directories(datasetPath_ + "/images");
         std::filesystem::create_directories(datasetPath_ + "/metadata");
         
-        std::cout << "📁 Dataset directory: " << datasetPath_ << std::endl;
+        std::cout << "📁 Neural dataset initialized: " << datasetPath_ << std::endl;
         std::cout << "⏱️ Default exposure time: " << exposureTime_ << "μs" << std::endl;
     }
 
@@ -161,22 +428,25 @@ public:
     }
     
     bool connectAllCameras() {
-        std::cout << "🔗 Connecting to all cameras..." << std::endl;
+        if (discoveredCameras_.empty()) {
+            std::cerr << "❌ No cameras discovered. Run camera discovery first." << std::endl;
+            return false;
+        }
         
-        int successCount = 0;
-        int totalCameras = discoveredCameras_.size();
+        std::cout << "🔌 Connecting to all discovered cameras..." << std::endl;
         
-        for (const auto& cameraInfo : discoveredCameras_) {
-            if (connectCamera(cameraInfo.id)) {
-                successCount++;
-                std::cout << "  ✅ " << cameraInfo.name << " connected" << std::endl;
-            } else {
-                std::cout << "  ❌ " << cameraInfo.name << " failed to connect" << std::endl;
+        int connectedCount = 0;
+        for (const auto& camera : discoveredCameras_) {
+            if (connectCamera(camera.id)) {
+                connectedCount++;
             }
         }
         
-        std::cout << "🎯 Connected " << successCount << "/" << totalCameras << " cameras" << std::endl;
-        return successCount == totalCameras;
+        // Initialize parameter controller with connected cameras
+        parameterController_.setCameras(connectedCameras_);
+        
+        std::cout << "✅ Connected " << connectedCount << "/" << discoveredCameras_.size() << " cameras" << std::endl;
+        return connectedCount > 0;
     }
     
     bool connectCamera(const std::string& cameraId) {
@@ -390,49 +660,61 @@ public:
                 return false;
             }
             
-            // 3. Create fresh color converter for this capture
-            SapColorConversion colorConverter(cam.buffer);
-            if (!colorConverter.Create()) {
-                std::cerr << "❌ Failed to create color converter for " << cam.info.name << std::endl;
-                return false;
-            }
-            
-            // 4. Configure converter
-            colorConverter.Enable(TRUE, FALSE);
-            colorConverter.SetOutputFormat(SapFormatRGB888);
-            colorConverter.SetAlign(SapColorConversion::AlignRGGB);
-            
-            // 5. Convert the image
-            if (!colorConverter.Convert()) {
-                std::cerr << "❌ Color conversion failed for " << cam.info.name << std::endl;
-                colorConverter.Destroy();
-                return false;
-            }
-            
-            // 6. Get output buffer
-            SapBuffer* outputBuffer = colorConverter.GetOutputBuffer();
-            if (!outputBuffer) {
-                std::cerr << "❌ No output buffer for " << cam.info.name << std::endl;
-                colorConverter.Destroy();
-                return false;
-            }
-            
-            // 7. Generate filename and save
+            // 3. Generate filename (already has correct extension based on format)
             std::string filename = generateImageFilename(cam.info.name, captureCounter_);
             std::string fullPath = sessionPath + "/" + filename;
             
             bool saveSuccess = false;
-            if (currentFormat_ == CaptureFormat::TIFF) {
-                saveSuccess = outputBuffer->Save(fullPath.c_str(), "-format tiff");
-            } else {
-                // Save as RAW Sapera format
-                std::string rawPath = fullPath;
-                rawPath.replace(rawPath.find(".tiff"), 5, ".raw");
-                saveSuccess = outputBuffer->Save(rawPath.c_str(), "-format raw");
-            }
             
-            // 8. Clean up converter
-            colorConverter.Destroy();
+            if (currentFormat_ == CaptureFormat::RAW) {
+                // RAW FORMAT: Use Sapera SDK's FileFormatRAW directly
+                // This saves the original sensor data without any processing
+                saveSuccess = cam.buffer->Save(fullPath.c_str(), "-format raw");
+                
+                if (saveSuccess) {
+                    std::cout << "💾 Saved RAW format: " << fullPath << std::endl;
+                } else {
+                    std::cerr << "❌ Failed to save RAW format: " << fullPath << std::endl;
+                }
+                
+            } else {
+                // TIFF FORMAT: Apply color conversion to get RGB image
+                
+                // Create color converter for TIFF format
+                SapColorConversion colorConverter(cam.buffer);
+                if (!colorConverter.Create()) {
+                    std::cerr << "❌ Failed to create color converter for " << cam.info.name << std::endl;
+                    return false;
+                }
+                
+                // Configure converter for RGB output
+                colorConverter.Enable(TRUE, FALSE);
+                colorConverter.SetOutputFormat(SapFormatRGB888);
+                colorConverter.SetAlign(SapColorConversion::AlignRGGB);
+                
+                // Convert the image to RGB
+                if (!colorConverter.Convert()) {
+                    std::cerr << "❌ Color conversion failed for " << cam.info.name << std::endl;
+                    colorConverter.Destroy();
+                    return false;
+                }
+                
+                // Get converted RGB buffer
+                SapBuffer* outputBuffer = colorConverter.GetOutputBuffer();
+                if (!outputBuffer) {
+                    std::cerr << "❌ No output buffer for " << cam.info.name << std::endl;
+                    colorConverter.Destroy();
+                    return false;
+                }
+                
+                // Save converted RGB buffer as TIFF
+                saveSuccess = outputBuffer->Save(fullPath.c_str(), "-format tiff");
+                
+                std::cout << "💾 Saved TIFF (RGB converted): " << fullPath << std::endl;
+                
+                // Clean up converter
+                colorConverter.Destroy();
+            }
             
             if (!saveSuccess) {
                 std::cerr << "❌ Failed to save " << fullPath << std::endl;
@@ -484,6 +766,15 @@ public:
         std::cout << "  exposure <time>      - Set exposure time in microseconds (1000-100000)" << std::endl;
         std::cout << "  reset                - Reset capture counter to 1" << std::endl;
         std::cout << "  status               - Show system status" << std::endl;
+        std::cout << "  param list           - List all available parameters" << std::endl;
+        std::cout << "  param get <name>     - Get parameter value from all cameras" << std::endl;
+        std::cout << "  param set <name> <value> - Set parameter value on all cameras" << std::endl;
+        std::cout << "  param info <name>    - Show parameter information" << std::endl;
+        std::cout << "  gain <value>         - Set gain on all cameras (1.0-10.0)" << std::endl;
+        std::cout << "  roi <x> <y> <w> <h>  - Set region of interest" << std::endl;
+        std::cout << "  wb <r> <g> <b>       - Set white balance (0.1-4.0)" << std::endl;
+        std::cout << "  show settings        - Show current camera settings" << std::endl;
+        std::cout << "  show info            - Show camera hardware information" << std::endl;
         std::cout << "  help                 - Show this help" << std::endl;
         std::cout << "  quit                 - Exit application" << std::endl;
         std::cout << std::endl;
@@ -532,6 +823,78 @@ public:
                 resetCaptureCounter();
             } else if (cmd == "status") {
                 printCameraStatus();
+            } else if (cmd == "param") {
+                std::string subCmd;
+                if (iss >> subCmd) {
+                    if (subCmd == "list") {
+                        parameterController_.listParameters();
+                    } else if (subCmd == "get") {
+                        std::string paramName;
+                        if (iss >> paramName) {
+                            parameterController_.getParameterStatus(paramName);
+                        } else {
+                            std::cout << "❌ Usage: param get <parameter_name>" << std::endl;
+                        }
+                    } else if (subCmd == "set") {
+                        std::string paramName, value;
+                        if (iss >> paramName >> value) {
+                            parameterController_.setParameterAll(paramName, value);
+                        } else {
+                            std::cout << "❌ Usage: param set <parameter_name> <value>" << std::endl;
+                        }
+                    } else if (subCmd == "info") {
+                        std::string paramName;
+                        if (iss >> paramName) {
+                            parameterController_.getParameterStatus(paramName);
+                        } else {
+                            std::cout << "❌ Usage: param info <parameter_name>" << std::endl;
+                        }
+                    } else {
+                        std::cout << "❌ Unknown param command. Use: list, get, set, info" << std::endl;
+                    }
+                } else {
+                    std::cout << "❌ Usage: param <list|get|set|info>" << std::endl;
+                }
+            } else if (cmd == "gain") {
+                double gainValue;
+                if (iss >> gainValue) {
+                    if (gainValue >= 1.0 && gainValue <= 10.0) {
+                        parameterController_.setParameterAll("Gain", std::to_string(gainValue));
+                    } else {
+                        std::cout << "❌ Gain must be between 1.0 and 10.0" << std::endl;
+                    }
+                } else {
+                    parameterController_.getParameterStatus("Gain");
+                }
+            } else if (cmd == "roi") {
+                int x, y, w, h;
+                if (iss >> x >> y >> w >> h) {
+                    parameterController_.setROI(x, y, w, h);
+                } else {
+                    std::cout << "❌ Usage: roi <x> <y> <width> <height>" << std::endl;
+                    std::cout << "   Example: roi 0 0 4112 3008" << std::endl;
+                }
+            } else if (cmd == "wb") {
+                double r, g, b;
+                if (iss >> r >> g >> b) {
+                    parameterController_.setWhiteBalance(r, g, b);
+                } else {
+                    std::cout << "❌ Usage: wb <red> <green> <blue>" << std::endl;
+                    std::cout << "   Example: wb 1.2 1.0 1.5" << std::endl;
+                }
+            } else if (cmd == "show") {
+                std::string what;
+                if (iss >> what) {
+                    if (what == "settings") {
+                        parameterController_.showCurrentSettings();
+                    } else if (what == "info") {
+                        parameterController_.showCameraInfo();
+                    } else {
+                        std::cout << "❌ Usage: show <settings|info>" << std::endl;
+                    }
+                } else {
+                    std::cout << "❌ Usage: show <settings|info>" << std::endl;
+                }
             } else if (cmd == "help") {
                 std::cout << "Available commands:" << std::endl;
                 std::cout << "  capture              - Capture all cameras (current position)" << std::endl;
@@ -539,11 +902,25 @@ public:
                 std::cout << "  exposure <time>      - Set exposure time in microseconds (1000-100000)" << std::endl;
                 std::cout << "  reset                - Reset capture counter to 1" << std::endl;
                 std::cout << "  status               - Show system status" << std::endl;
+                std::cout << "  param list           - List all available parameters" << std::endl;
+                std::cout << "  param get <name>     - Get parameter value from all cameras" << std::endl;
+                std::cout << "  param set <name> <value> - Set parameter value on all cameras" << std::endl;
+                std::cout << "  param info <name>    - Show parameter information" << std::endl;
+                std::cout << "  gain <value>         - Set gain on all cameras (1.0-10.0)" << std::endl;
+                std::cout << "  roi <x> <y> <w> <h>  - Set region of interest" << std::endl;
+                std::cout << "  wb <r> <g> <b>       - Set white balance (0.1-4.0)" << std::endl;
+                std::cout << "  show settings        - Show current camera settings" << std::endl;
+                std::cout << "  show info            - Show camera hardware information" << std::endl;
                 std::cout << "  help                 - Show this help" << std::endl;
                 std::cout << "  quit                 - Exit application" << std::endl;
                 std::cout << std::endl;
                 std::cout << "💡 Workflow: Manually position object → type 'capture' → repeat" << std::endl;
-                std::cout << "⏱️ Default exposure: 40000μs (40ms)" << std::endl;
+                std::cout << "💡 Parameter Tips:" << std::endl;
+                std::cout << "   - Use 'param list' to see all available parameters" << std::endl;
+                std::cout << "   - Use 'show settings' to see current camera configuration" << std::endl;
+                std::cout << "   - Exposure: 40000μs default (40ms)" << std::endl;
+                std::cout << "   - Gain: 1.0-10.0 (1.0 = no gain)" << std::endl;
+                std::cout << "   - ROI: Full sensor is 4112x3008" << std::endl;
             } else {
                 std::cout << "❌ Unknown command. Type 'help' for available commands." << std::endl;
             }
@@ -584,11 +961,14 @@ private:
     std::string generateImageFilename(const std::string& cameraName, int captureNumber) {
         std::ostringstream oss;
         oss << cameraName << "_capture_" << std::setfill('0') << std::setw(3) << captureNumber;
-        if (currentFormat_ == CaptureFormat::TIFF) {
-            oss << ".tiff";
+        
+        // Add appropriate extension based on format (Sapera SDK standard)
+        if (currentFormat_ == CaptureFormat::RAW) {
+            oss << ".raw";   // Sapera SDK RAW format
         } else {
-            oss << ".raw";
+            oss << ".tiff";  // Color-processed TIFF
         }
+        
         return oss.str();
     }
     
