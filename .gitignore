@@ -22,6 +22,9 @@ data/*.tif
 data/*.jpg
 data/*.png
 
+# Neural dataset (captured images)
+neural_dataset/
+
 # Temporary files
 *.tmp
 *.temp
@@ -56,6 +59,9 @@ venv/
 Thumbs.db
 *.swp
 *.swo
+
+# ImGui user preferences
+imgui.ini
 
 # Keep essential files
 !backend/src/
