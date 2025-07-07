@@ -9,6 +9,9 @@
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
 
+// Include our capture system
+#include "capture/NeuralCaptureSystem.hpp"
+
 // Forward declarations
 class CameraControlPanel;
 class ParameterPanel;
@@ -60,10 +63,25 @@ public:
     void AddLogMessage(const std::string& message, const std::string& level = "INFO");
 
 private:
-    GLFWwindow* window_;
-    bool show_demo_window_ = false;
-    bool show_about_window_ = false;
+    GLFWwindow* window_ = nullptr;
+    bool running_ = true;
     
+    // UI state
+    bool show_camera_panel_ = true;
+    bool show_parameter_panel_ = true;
+    bool show_capture_panel_ = true;
+    bool show_log_panel_ = true;
+    
+    // REAL capture system integration
+    std::unique_ptr<NeuralRenderingCaptureSystem> capture_system_;
+    
+    // Log messages
+    std::vector<std::string> log_messages_;
+    
+    // Folder management
+    std::string current_image_folder_;
+    char image_folder_buffer_[512];
+
     // GUI Panels
     std::unique_ptr<CameraControlPanel> camera_panel_;
     std::unique_ptr<ParameterPanel> parameter_panel_;
@@ -73,7 +91,6 @@ private:
     // Application state
     std::vector<CameraInfo> cameras_;
     CaptureSession current_session_;
-    std::vector<std::pair<std::string, std::string>> log_messages_;
     std::string system_status_ = "Initializing...";
     
     // GUI state
@@ -90,4 +107,14 @@ private:
     
     static void GlfwErrorCallback(int error, const char* description);
     static void GlfwFramebufferSizeCallback(GLFWwindow* window, int width, int height);
+
+    // REAL system operations
+    void DiscoverCameras();
+    void ConnectAllCameras();
+    void CaptureAllCameras();
+    void ShowCameraStatus();
+    
+    // Utility methods
+    std::string GetCurrentTimestamp();
+    void OpenFolderInExplorer(const std::string& path);
 }; 

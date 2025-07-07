@@ -734,6 +734,11 @@ public:
         std::cout << "📷 Format set to: " << (format == CaptureFormat::TIFF ? "TIFF" : "RAW") << std::endl;
     }
     
+    void setDatasetPath(const std::string& path) {
+        datasetPath_ = path;
+        std::cout << "📁 Dataset path set to: " << datasetPath_ << std::endl;
+    }
+    
     void resetCaptureCounter() {
         captureCounter_ = 1;
         std::cout << "🔄 Capture counter reset to 1" << std::endl;

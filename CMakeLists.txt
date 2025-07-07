@@ -6,20 +6,32 @@ project(NeuralRenderingCapture)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Find packages
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(SAPERA REQUIRED)
+# Windows-specific settings
+if(WIN32)
+    add_definitions(-D_CRT_SECURE_NO_WARNINGS)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
 
-# Dear ImGui and GLFW for GUI
-find_package(glfw3 REQUIRED)
+# Find OpenGL
 find_package(OpenGL REQUIRED)
 
-# Dear ImGui - using FetchContent for latest version
+# GLFW - Download and build
 include(FetchContent)
+FetchContent_Declare(
+    glfw
+    GIT_REPOSITORY https://github.com/glfw/glfw.git
+    GIT_TAG 3.3.9
+)
+set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(glfw)
+
+# Dear ImGui - Download and build
 FetchContent_Declare(
     imgui
     GIT_REPOSITORY https://github.com/ocornut/imgui.git
-    GIT_TAG v1.92.0
+    GIT_TAG v1.90.1
 )
 FetchContent_MakeAvailable(imgui)
 
@@ -78,48 +90,88 @@ if(MSVC)
 endif()
 
 # =============================================================================
-# EXECUTABLES - Keep it simple and working
+# EXECUTABLES
 # =============================================================================
 
-# Main executable
-add_executable(neural_capture_gui
+# Console version (original working)
+add_executable(neural_capture_console
     src/main.cpp
     src/hardware/CameraTypes.cpp
-    src/gui/NeuralCaptureGUI.cpp
-    src/gui/CameraControlPanel.cpp
-    src/gui/ParameterPanel.cpp
-    src/gui/StatusPanel.cpp
-    src/gui/CapturePanel.cpp
 )
 
-target_include_directories(neural_capture_gui PRIVATE
+target_include_directories(neural_capture_console PRIVATE
     src
     "C:/Program Files/Teledyne DALSA/Sapera/Classes/Basic"
     "C:/Program Files/Teledyne DALSA/Sapera/Include"
 )
 
-target_link_directories(neural_capture_gui PRIVATE
+target_link_directories(neural_capture_console PRIVATE
     "C:/Program Files/Teledyne DALSA/Sapera/Lib/Win64"
 )
 
-target_link_libraries(neural_capture_gui PRIVATE
-    imgui
-    glfw
-    OpenGL::GL
+target_link_libraries(neural_capture_console PRIVATE
     SapClassBasic
 )
 
-# Copy required DLLs to output directory
-add_custom_command(TARGET neural_capture_gui POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-    "C:/Program Files/Teledyne DALSA/Sapera/Bin/Win64/SapClassBasic.dll"
-    $<TARGET_FILE_DIR:neural_capture_gui>
+# INTEGRATED GUI version (REAL Sapera SDK integration)
+add_executable(neural_capture_integrated
+    src/main_gui_integrated.cpp
+    src/gui/NeuralCaptureGUI.cpp
+    src/capture/NeuralCaptureSystem.cpp
+    src/capture/ParameterController.cpp
+    src/hardware/CameraTypes.cpp
 )
+
+target_include_directories(neural_capture_integrated PRIVATE
+    src
+    "C:/Program Files/Teledyne DALSA/Sapera/Classes/Basic"
+    "C:/Program Files/Teledyne DALSA/Sapera/Include"
+    ${imgui_SOURCE_DIR}
+    ${imgui_SOURCE_DIR}/backends
+)
+
+target_link_directories(neural_capture_integrated PRIVATE
+    "C:/Program Files/Teledyne DALSA/Sapera/Lib/Win64"
+)
+
+target_link_libraries(neural_capture_integrated PRIVATE
+    imgui
+    SapClassBasic
+)
+
+# Set the INTEGRATED version as the default target
+set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT neural_capture_integrated)
+
+# DIRECT GUI version (Simple, everything in one file)
+add_executable(neural_capture_direct
+    src/main_gui_direct.cpp
+    src/hardware/CameraTypes.cpp
+)
+
+target_include_directories(neural_capture_direct PRIVATE
+    src
+    "C:/Program Files/Teledyne DALSA/Sapera/Classes/Basic"
+    "C:/Program Files/Teledyne DALSA/Sapera/Include"
+    ${imgui_SOURCE_DIR}
+    ${imgui_SOURCE_DIR}/backends
+)
+
+target_link_directories(neural_capture_direct PRIVATE
+    "C:/Program Files/Teledyne DALSA/Sapera/Lib/Win64"
+)
+
+target_link_libraries(neural_capture_direct PRIVATE
+    imgui
+    SapClassBasic
+)
+
+# Set the DIRECT version as the default target
+set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT neural_capture_direct)
 
 # =============================================================================
 # INSTALLATION
 # =============================================================================
 
-install(TARGETS neural_capture_gui
+install(TARGETS neural_capture_console neural_capture_integrated
     RUNTIME DESTINATION bin
 ) 
