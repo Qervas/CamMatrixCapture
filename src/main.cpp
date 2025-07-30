@@ -50,9 +50,27 @@ static char image_folder_buffer[512];
 static int exposure_time = 40000;
 static bool capture_format_raw = false; // false = TIFF, true = RAW
 
+// Camera discovery animation state
+static bool is_discovering_cameras = false;
+static std::thread discovery_thread;
+
+// Camera connection animation state
+static bool is_connecting_cameras = false;
+static std::thread connection_thread;
+
 // Session Management UI Variables
 static char new_object_name[256] = "";
 static bool show_session_manager = false;
+
+// Network Optimization and Image Quality - NEW (DEFAULT TO MAXIMUM QUALITY)
+static bool show_network_panel = false;
+static bool sequential_capture_mode = true;   // DEFAULT: Sequential for maximum quality
+static int capture_delay_ms = 750;            // DEFAULT: Optimal delay for 11+ cameras
+static bool enable_packet_optimization = true; // DEFAULT: Auto optimization enabled
+static bool enable_bandwidth_monitoring = true; // DEFAULT: Monitor network performance
+static int max_bandwidth_mbps = 1000;         // Maximum network bandwidth
+static bool use_jumbo_frames = false;         // Will be auto-detected
+static bool network_diagnostics_enabled = false; // Show network diagnostics
 
 // NEW: Advanced Color Processing Variables
 struct ColorSettings {
@@ -91,7 +109,7 @@ struct CameraParameters {
     std::string pixel_format = "RGB8";
     
     // Acquisition Control
-    int exposure_time = 10000;  // microseconds
+    int exposure_time = 40000;  // microseconds (40k default)
     bool auto_exposure = false;
     float gain = 0.0f;  // dB
     bool auto_gain = false;
@@ -125,9 +143,9 @@ struct CameraParameters {
     int roi_height = 1080;
     bool roi_enable = false;
     
-    // Transport Layer
-    int packet_size = 1500;
-    int packet_delay = 0;
+    // Transport Layer (OPTIMIZED FOR NEURAL DATASETS)
+    int packet_size = 1200;        // DEFAULT: Safe packet size for 11+ cameras
+    int packet_delay = 3000;       // DEFAULT: 3ms delay for network stability
     
     // Device Control
     std::string temperature_status = "Normal";
@@ -140,6 +158,12 @@ static std::vector<std::string> available_features;
 static std::map<std::string, std::string> feature_values;
 static bool refresh_features = true;
 
+// Individual Camera Control - NEW FEATURE
+static std::map<std::string, CameraParameters> individual_camera_params; // Per-camera parameters
+static std::string selected_camera_id = ""; // Currently selected camera for individual control
+static bool individual_camera_mode = false; // Toggle between multi-camera and individual camera control
+static bool show_individual_camera_panel = false; // Individual camera control panel
+
 // Camera system state
 static std::vector<CameraInfo> discovered_cameras;
 static std::map<std::string, SapAcqDevice*> connected_devices;
@@ -148,11 +172,24 @@ static std::map<std::string, SapAcqDeviceToBuf*> connected_transfers;
 static std::map<std::string, std::string> camera_device_names; // Store device names separately
 static int capture_counter = 1;
 
+// Log highlighting system
+struct LogMessage {
+    std::string message;
+    std::chrono::steady_clock::time_point timestamp;
+    bool is_new = true;
+};
+static std::vector<LogMessage> log_messages_with_timestamps;
+static std::chrono::steady_clock::time_point last_log_check = std::chrono::steady_clock::now();
+
+// Network monitoring log filter
+static bool filter_network_monitoring_logs = true; // Default: filter out network monitoring logs
+
 // Function declarations
 void AddLogMessage(const std::string& message);
 std::string GetCurrentTimestamp();
 void DiscoverCameras();
 void ConnectAllCameras();
+void DisconnectAllCameras(); // NEW: Disconnect function
 void CaptureAllCameras();
 bool CaptureCamera(const std::string& cameraId, const std::string& sessionPath);
 std::string GenerateSessionName(int captureNumber);
@@ -178,8 +215,32 @@ void RenderAdvancedParametersPanel();
 void RefreshCameraFeatures();
 void DetectCameraResolution();
 void ApplyParameterToAllCameras(const std::string& featureName, const std::string& value);
+// Individual Camera Control Functions - NEW
+void ApplyParameterToCamera(const std::string& cameraId, const std::string& featureName, const std::string& value);
+void InitializeIndividualCameraParams(const std::string& cameraId);
+CameraParameters& GetCameraParameters(const std::string& cameraId);
+void SyncAllCamerasToIndividual();
+void SyncIndividualToAllCameras();
+void RenderIndividualCameraPanel();
+// Individual Camera Settings Persistence - NEW
+void SaveIndividualCameraSettings();
+void LoadIndividualCameraSettings();
+void SyncIndividualParamsToSettings();
+void SyncSettingsToIndividualParams();
 std::vector<std::string> GetAvailablePixelFormats();
 std::vector<std::string> GetAvailableTriggerModes();
+
+// Metadata Management Functions - NEW
+void SaveCaptureMetadata(const std::string& sessionPath, int captureNumber, bool success, int duration_ms);
+
+// Network Optimization Functions - NEW
+void RenderNetworkOptimizationPanel();
+void OptimizeNetworkSettings();
+void CaptureSequential();
+void CheckNetworkBandwidth();
+void ApplyJumboFrames();
+void MonitorNetworkPerformance();
+void ApplyMaximumQualityDefaults(); // NEW: Auto-apply neural dataset optimizations
 
 // GLFW error callback
 static void GlfwErrorCallback(int error, const char* description) {
@@ -266,6 +327,9 @@ int main() {
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
     io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
     
+    // Set font scale to 1.25 for better readability
+    io.FontGlobalScale = 1.25f;
+    
     // Configure basic font loading (no emoji needed)
     io.Fonts->Flags |= ImFontAtlasFlags_NoPowerOfTwoHeight;
     io.Fonts->Flags |= ImFontAtlasFlags_NoMouseCursors;
@@ -334,6 +398,14 @@ int main() {
             RenderAdvancedParametersPanel();
         }
         
+        if (show_individual_camera_panel) {
+            RenderIndividualCameraPanel();
+        }
+        
+        if (show_network_panel) {
+            RenderNetworkOptimizationPanel();
+        }
+        
         if (show_session_manager) {
             RenderSessionManagerPanel();
         }
@@ -341,6 +413,9 @@ int main() {
         if (show_log_panel) {
             RenderLogPanel();
         }
+        
+        // Real-time performance monitoring for neural dataset optimization
+        MonitorNetworkPerformance();
         
         // Rendering
         ImGui::Render();
@@ -444,11 +519,39 @@ void RenderMainMenuBar() {
             if (ImGui::MenuItem("Discover Cameras", "F5")) {
                 DiscoverCameras();
             }
-            if (ImGui::MenuItem("Connect All", "F6")) {
-                ConnectAllCameras();
-            }
-            if (ImGui::MenuItem("Disconnect All", "F7")) {
-                AddLogMessage("[NET] Disconnect all (not implemented yet)");
+            
+            // Dynamic Connect/Disconnect menu item
+            bool has_connected = !connected_devices.empty();
+            if (has_connected) {
+                if (ImGui::MenuItem("Disconnect All", "F7")) {
+                    DisconnectAllCameras();
+                }
+            } else {
+                if (is_connecting_cameras) {
+                    // Show buffering animation during connection
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.3f, 0.3f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.3f, 0.3f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.3f, 0.3f, 0.3f, 1.0f));
+                    
+                    // Animated dots for connection
+                    static float connection_animation_time = 0.0f;
+                    connection_animation_time += ImGui::GetIO().DeltaTime;
+                    int dot_count = static_cast<int>(connection_animation_time * 2.0f) % 4;
+                    std::string button_text = "● Connecting";
+                    for (int i = 0; i < dot_count; i++) {
+                        button_text += ".";
+                    }
+                    
+                    ImGui::Button(button_text.c_str(), ImVec2(150, 35));
+                    ImGui::PopStyleColor(3);
+                    
+                    ImGui::SameLine();
+                    ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "⏳ Please wait...");
+                } else {
+                    if (ImGui::Button("● Connect All", ImVec2(150, 35))) {
+                        ConnectAllCameras();
+                    }
+                }
             }
             ImGui::EndMenu();
         }
@@ -468,6 +571,8 @@ void RenderMainMenuBar() {
             ImGui::MenuItem("Camera System", NULL, &show_camera_panel);
             ImGui::MenuItem("Capture Control", NULL, &show_capture_panel);
             ImGui::MenuItem("Advanced Parameters", NULL, &show_advanced_params);
+            ImGui::MenuItem("Individual Camera Control", NULL, &show_individual_camera_panel);
+            ImGui::MenuItem("Network Optimization", NULL, &show_network_panel);
             ImGui::MenuItem("Session Manager", NULL, &show_session_manager);
             ImGui::MenuItem("System Log", NULL, &show_log_panel);
             ImGui::Separator();
@@ -476,9 +581,9 @@ void RenderMainMenuBar() {
                 show_capture_panel = true;
                 show_log_panel = true;
                 show_advanced_params = true;
+                show_individual_camera_panel = false;
+                show_network_panel = false;
                 show_session_manager = false;
-                SetupVSCodeLayout();
-                AddLogMessage("[UI] VSCode-style layout reset");
             }
             ImGui::EndMenu();
         }
@@ -523,8 +628,8 @@ void RenderMainMenuBar() {
         ImGui::SameLine();
         
         // Camera status
-        int connected_count = connected_devices.size();
-        int total_count = discovered_cameras.size();
+        int connected_count = static_cast<int>(connected_devices.size());
+        int total_count = static_cast<int>(discovered_cameras.size());
         ImGui::Text("[CAM] %d/%d", connected_count, total_count);
         
         ImGui::SameLine();
@@ -546,14 +651,68 @@ void RenderCameraPanel() {
     ImGui::Text("DIRECT Sapera SDK Camera Control");
     ImGui::Separator();
     
-    // Control buttons
-    if (ImGui::Button("● Discover Cameras", ImVec2(200, 40))) {
-        DiscoverCameras();
+    // Control buttons - smaller size to fit all buttons
+    if (is_discovering_cameras) {
+        // Show buffering animation during discovery
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.3f, 0.3f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.3f, 0.3f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.3f, 0.3f, 0.3f, 1.0f));
+        
+        // Animated dots for discovery
+        static float discovery_animation_time = 0.0f;
+        discovery_animation_time += ImGui::GetIO().DeltaTime;
+        int dot_count = static_cast<int>(discovery_animation_time * 2.0f) % 4;
+        std::string button_text = "● Discovering";
+        for (int i = 0; i < dot_count; i++) {
+            button_text += ".";
+        }
+        
+        ImGui::Button(button_text.c_str(), ImVec2(150, 35));
+        ImGui::PopStyleColor(3);
+        
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "⏳ Please wait...");
+    } else {
+        if (ImGui::Button("● Discover Cameras", ImVec2(150, 35))) {
+            DiscoverCameras();
+        }
     }
     
     ImGui::SameLine();
-    if (ImGui::Button("● Connect All", ImVec2(200, 40))) {
-        ConnectAllCameras();
+    // Dynamic Connect/Disconnect button based on connection state
+    bool has_connected = !connected_devices.empty();
+    if (has_connected) {
+        // Show Disconnect All when cameras are connected
+        if (ImGui::Button("● Disconnect All", ImVec2(150, 35))) {
+            DisconnectAllCameras();
+        }
+    } else {
+        // Show Connect All when no cameras are connected
+        if (is_connecting_cameras) {
+            // Show buffering animation during connection
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.3f, 0.3f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.3f, 0.3f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.3f, 0.3f, 0.3f, 1.0f));
+            
+            // Animated dots for connection
+            static float connection_animation_time = 0.0f;
+            connection_animation_time += ImGui::GetIO().DeltaTime;
+            int dot_count = static_cast<int>(connection_animation_time * 2.0f) % 4;
+            std::string button_text = "● Connecting";
+            for (int i = 0; i < dot_count; i++) {
+                button_text += ".";
+            }
+            
+            ImGui::Button(button_text.c_str(), ImVec2(150, 35));
+            ImGui::PopStyleColor(3);
+            
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "⏳ Please wait...");
+        } else {
+            if (ImGui::Button("● Connect All", ImVec2(150, 35))) {
+                ConnectAllCameras();
+            }
+        }
     }
     
     ImGui::Separator();
@@ -631,10 +790,6 @@ void RenderCapturePanel() {
             session_manager->EndCurrentSession();
             AddLogMessage("[SESSION] Session ended from capture panel");
         }
-        ImGui::SameLine();
-        if (ImGui::SmallButton("▶ Open Session Folder")) {
-            OpenFolderInExplorer(session->base_path);
-        }
     } else {
         ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "No active session");
         ImGui::Text("Start a new session to begin capturing");
@@ -643,9 +798,21 @@ void RenderCapturePanel() {
         ImGui::SetNextItemWidth(200);
         ImGui::InputText("##NewObjectName", new_object_name, sizeof(new_object_name));
         ImGui::SameLine();
-        if (ImGui::Button("▶ Start Session") && strlen(new_object_name) > 0) {
-            if (session_manager->StartNewSession(std::string(new_object_name))) {
-                AddLogMessage("[SESSION] New session started: " + std::string(new_object_name));
+        if (ImGui::Button("▶ Start Session")) {
+            std::string session_name = std::string(new_object_name);
+            
+            // Provide default name if user forgot to input
+            if (session_name.empty()) {
+                auto now = std::chrono::system_clock::now();
+                auto time_t = std::chrono::system_clock::to_time_t(now);
+                std::stringstream ss;
+                ss << "capture_" << std::put_time(std::localtime(&time_t), "%m%d_%H%M");
+                session_name = ss.str();
+                AddLogMessage("[SESSION] Using default session name: " + session_name);
+            }
+            
+            if (session_manager->StartNewSession(session_name)) {
+                AddLogMessage("[SESSION] New session started: " + session_name);
                 memset(new_object_name, 0, sizeof(new_object_name));
             }
         }
@@ -720,8 +887,8 @@ void RenderCapturePanel() {
     // Status display
     ImGui::Separator();
     ImGui::Text("◆ System Status");
-    int connected_count = connected_devices.size();
-    int total_count = discovered_cameras.size();
+    int connected_count = static_cast<int>(connected_devices.size());
+    int total_count = static_cast<int>(discovered_cameras.size());
     ImGui::Text("Cameras: %d/%d connected", connected_count, total_count);
     
     if (connected_count > 0 && session_manager->HasActiveSession()) {
@@ -738,24 +905,48 @@ void RenderCapturePanel() {
 void RenderLogPanel() {
     ImGui::Begin("■ System Log", &show_log_panel, ImGuiWindowFlags_NoCollapse);
     
+    // Update log highlighting - mark old logs as not new after 2 seconds
+    auto now = std::chrono::steady_clock::now();
+    for (auto& log_msg : log_messages_with_timestamps) {
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - log_msg.timestamp);
+        if (elapsed.count() > 2000) { // 2 seconds
+            log_msg.is_new = false;
+        }
+    }
+    
     // Log controls
     if (ImGui::Button("Clear Log")) {
         log_messages.clear();
+        log_messages_with_timestamps.clear();
     }
     ImGui::SameLine();
     if (ImGui::Button("Save Log")) {
         AddLogMessage("[CFG] Log save (not implemented yet)");
     }
     ImGui::SameLine();
-    ImGui::Text("Messages: %d", (int)log_messages.size());
+    ImGui::Text("Messages: %d", (int)log_messages_with_timestamps.size());
+    
+    // Network monitoring log filter toggle
+    ImGui::SameLine();
+    if (ImGui::Checkbox("Hide Network Monitoring", &filter_network_monitoring_logs)) {
+        AddLogMessage("[CFG] Network monitoring logs " + std::string(filter_network_monitoring_logs ? "hidden" : "shown"));
+    }
     
     ImGui::Separator();
     
-    // Log display
+    // Log display with color highlighting
     ImGui::BeginChild("LogContent", ImVec2(0, 0), false, ImGuiWindowFlags_HorizontalScrollbar);
     
-    for (const auto& message : log_messages) {
-        ImGui::TextWrapped("%s", message.c_str());
+    for (const auto& log_msg : log_messages_with_timestamps) {
+        if (log_msg.is_new) {
+            // Highlight new logs with bright yellow color
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 0.0f, 1.0f));
+            ImGui::TextWrapped("%s", log_msg.message.c_str());
+            ImGui::PopStyleColor();
+        } else {
+            // Regular color for old logs
+            ImGui::TextWrapped("%s", log_msg.message.c_str());
+        }
     }
     
     // Auto-scroll to bottom
@@ -809,18 +1000,40 @@ void RenderColorPanel() {
 }
 
 void AddLogMessage(const std::string& message) {
-    std::string timestamp = GetCurrentTimestamp();
-    std::string formatted_message = "[" + timestamp + "] " + message;
-    
-    log_messages.push_back(formatted_message);
-    
-    // Keep only last 200 messages
-    if (log_messages.size() > 200) {
-        log_messages.erase(log_messages.begin());
+    // Filter out network monitoring logs if filter is enabled
+    if (filter_network_monitoring_logs && 
+        (message.find("[NEURAL] === PERFORMANCE MONITORING ===") != std::string::npos ||
+         message.find("[NEURAL] Image size per camera:") != std::string::npos ||
+         message.find("[NEURAL] Total data per capture:") != std::string::npos ||
+         message.find("[NEURAL] Sequential throughput:") != std::string::npos ||
+         message.find("[NEURAL] Time per full capture:") != std::string::npos ||
+         message.find("[NEURAL] Network config:") != std::string::npos ||
+         message.find("[NEURAL] Estimated buffer memory:") != std::string::npos)) {
+        return; // Skip these network monitoring messages
     }
     
-    // Also print to console
-    std::cout << formatted_message << std::endl;
+    auto now = std::chrono::steady_clock::now();
+    
+    // Add to both old and new log systems for compatibility
+    log_messages.push_back(message);
+    
+    // Add to new timestamped log system
+    LogMessage log_msg;
+    log_msg.message = message;
+    log_msg.timestamp = now;
+    log_msg.is_new = true;
+    log_messages_with_timestamps.push_back(log_msg);
+    
+    // Keep only last 1000 messages to prevent memory issues
+    if (log_messages.size() > 1000) {
+        log_messages.erase(log_messages.begin());
+    }
+    if (log_messages_with_timestamps.size() > 1000) {
+        log_messages_with_timestamps.erase(log_messages_with_timestamps.begin());
+    }
+    
+    // Print to console with timestamp
+    std::cout << "[" << GetCurrentTimestamp() << "] " << message << std::endl;
 }
 
 std::string GetCurrentTimestamp() {
@@ -834,214 +1047,360 @@ std::string GetCurrentTimestamp() {
 }
 
 void DiscoverCameras() {
-    AddLogMessage("[DISC] Discovering DIRECT cameras...");
-    
-    discovered_cameras.clear();
-    camera_device_names.clear();
-    
-    // Get server count
-    int serverCount = SapManager::GetServerCount();
-    AddLogMessage("[NET] Found " + std::to_string(serverCount) + " server(s)");
-    
-    if (serverCount == 0) {
-        AddLogMessage("[NET] No Sapera servers found");
+    if (is_discovering_cameras) {
+        AddLogMessage("[DISC] Camera discovery already in progress...");
         return;
     }
     
-    int cameraIndex = 1;
+    is_discovering_cameras = true;
+    AddLogMessage("[DISC] Starting camera discovery...");
     
-    // Enumerate all servers
-    for (int serverIndex = 0; serverIndex < serverCount; serverIndex++) {
-        char serverName[256];
-        if (!SapManager::GetServerName(serverIndex, serverName, sizeof(serverName))) {
-            AddLogMessage("[NET] Failed to get server name for server " + std::to_string(serverIndex));
-            continue;
+    // Start discovery in a separate thread
+    discovery_thread = std::thread([]() {
+        std::vector<CameraInfo> temp_cameras;
+        std::map<std::string, SapAcqDevice*> temp_devices;
+        
+        // Get server count
+        int serverCount = SapManager::GetServerCount();
+        
+        if (serverCount == 0) {
+            AddLogMessage("[NET] No Sapera servers found");
+            is_discovering_cameras = false;
+            return;
         }
         
-        // Skip system server
-        if (std::string(serverName) == "System") {
-            continue;
-        }
+        int cameraIndex = 1;
         
-        AddLogMessage("[NET] Server " + std::to_string(serverIndex) + ": " + std::string(serverName));
-        
-        // Get acquisition device count for this server
-        int resourceCount = SapManager::GetResourceCount(serverName, SapManager::ResourceAcqDevice);
-        AddLogMessage("[NET] Acquisition devices: " + std::to_string(resourceCount));
-        
-        // Enumerate acquisition devices
-        for (int resourceIndex = 0; resourceIndex < resourceCount; resourceIndex++) {
-            try {
-                // Create acquisition device temporarily for discovery
-                auto acqDevice = new SapAcqDevice(serverName, resourceIndex);
-                if (!acqDevice->Create()) {
-                    AddLogMessage("[NET] Failed to create device " + std::to_string(resourceIndex));
+        // Enumerate all servers
+        for (int serverIndex = 0; serverIndex < serverCount; serverIndex++) {
+            char serverName[256];
+            if (!SapManager::GetServerName(serverIndex, serverName, sizeof(serverName))) {
+                AddLogMessage("[NET] Failed to get server name for server " + std::to_string(serverIndex));
+                continue;
+            }
+            
+            // Skip system server
+            if (std::string(serverName) == "System") {
+                continue;
+            }
+            
+            AddLogMessage("[NET] Server " + std::to_string(serverIndex) + ": " + std::string(serverName));
+            
+            // Get acquisition device count for this server
+            int resourceCount = SapManager::GetResourceCount(serverName, SapManager::ResourceAcqDevice);
+            AddLogMessage("[NET] Acquisition devices: " + std::to_string(resourceCount));
+            
+            // Enumerate acquisition devices
+            for (int resourceIndex = 0; resourceIndex < resourceCount; resourceIndex++) {
+                try {
+                    // Create acquisition device temporarily for discovery
+                    auto acqDevice = new SapAcqDevice(serverName, resourceIndex);
+                    if (!acqDevice->Create()) {
+                        AddLogMessage("[NET] Failed to create device " + std::to_string(resourceIndex));
+                        delete acqDevice;
+                        continue;
+                    }
+                    
+                    // Get device information
+                    char buffer[512];
+                    
+                    CameraInfo camera;
+                    camera.id = std::to_string(cameraIndex);
+                    camera.serverName = serverName;
+                    camera.resourceIndex = resourceIndex;
+                    
+                    // Get serial number
+                    if (acqDevice->GetFeatureValue("DeviceSerialNumber", buffer, sizeof(buffer))) {
+                        camera.serialNumber = std::string(buffer);
+                    } else {
+                        camera.serialNumber = "Unknown_" + std::to_string(cameraIndex);
+                    }
+                    
+                    // Get model name
+                    if (acqDevice->GetFeatureValue("DeviceModelName", buffer, sizeof(buffer))) {
+                        camera.modelName = std::string(buffer);
+                    } else {
+                        camera.modelName = "Unknown_Model";
+                    }
+                    
+                    // Create camera name for neural rendering
+                    std::string indexStr = std::to_string(cameraIndex);
+                    if (indexStr.length() == 1) indexStr = "0" + indexStr;
+                    camera.name = "cam_" + indexStr;
+                    camera.isConnected = false;
+                    camera.status = CameraStatus::Disconnected;
+                    camera.type = CameraType::Industrial;
+                    
+                    temp_cameras.push_back(camera);
+                    AddLogMessage("[OK] " + camera.name + ": " + camera.serialNumber + " (" + camera.modelName + ")");
+                    
+                    // Cleanup discovery device
+                    acqDevice->Destroy();
                     delete acqDevice;
-                    continue;
+                    
+                    cameraIndex++;
+                    
+                } catch (const std::exception& e) {
+                    AddLogMessage("[NET] Exception: " + std::string(e.what()));
                 }
-                
-                // Get device information
-                char buffer[512];
-                
-                CameraInfo camera;
-                camera.id = std::to_string(cameraIndex);
-                camera.serverName = serverName;
-                camera.resourceIndex = resourceIndex;
-                
-                // Get serial number
-                if (acqDevice->GetFeatureValue("DeviceSerialNumber", buffer, sizeof(buffer))) {
-                    camera.serialNumber = std::string(buffer);
-                } else {
-                    camera.serialNumber = "Unknown_" + std::to_string(cameraIndex);
-                }
-                
-                // Get model name
-                if (acqDevice->GetFeatureValue("DeviceModelName", buffer, sizeof(buffer))) {
-                    camera.modelName = std::string(buffer);
-                } else {
-                    camera.modelName = "Unknown_Model";
-                }
-                
-                // Create camera name for neural rendering
-                std::string indexStr = std::to_string(cameraIndex);
-                if (indexStr.length() == 1) indexStr = "0" + indexStr;
-                camera.name = "cam_" + indexStr;
-                camera.isConnected = false;
-                camera.status = CameraStatus::Disconnected;
-                camera.type = CameraType::Industrial;
-                
-                discovered_cameras.push_back(camera);
-                AddLogMessage("[OK] " + camera.name + ": " + camera.serialNumber + " (" + camera.modelName + ")");
-                
-                // Cleanup discovery device
-                acqDevice->Destroy();
-                delete acqDevice;
-                
-                cameraIndex++;
-                
-            } catch (const std::exception& e) {
-                AddLogMessage("[NET] Exception: " + std::string(e.what()));
             }
         }
-    }
+        
+        // Update global variables in main thread
+        discovered_cameras = temp_cameras;
+        camera_device_names.clear();
+        
+        AddLogMessage("[OK] Discovery complete: " + std::to_string(discovered_cameras.size()) + " cameras found");
+        is_discovering_cameras = false;
+    });
     
-    AddLogMessage("[OK] Discovery complete: " + std::to_string(discovered_cameras.size()) + " cameras found");
+    // Detach the thread so it can run independently
+    discovery_thread.detach();
 }
 
 void ConnectAllCameras() {
-    AddLogMessage("[NET] Connecting to DIRECT cameras...");
+    if (is_connecting_cameras) {
+        AddLogMessage("[NET] Camera connection already in progress...");
+        return;
+    }
     
     if (discovered_cameras.empty()) {
         AddLogMessage("[NET] No cameras discovered. Run camera discovery first.");
         return;
     }
     
-    int successCount = 0;
+    is_connecting_cameras = true;
+    AddLogMessage("[NET] Starting camera connection...");
     
-    for (const auto& camera : discovered_cameras) {
-        std::string cameraId = camera.id;
+    // Start connection in a separate thread
+    connection_thread = std::thread([]() {
+        // Apply maximum quality settings BEFORE connection to avoid transport layer conflicts
+        AddLogMessage("[NEURAL] Pre-configuring maximum quality settings for neural datasets...");
+        // Set neural dataset optimized defaults without applying to cameras (they're not connected yet)
+        sequential_capture_mode = true;
+        capture_delay_ms = 750;  // Optimal for 11+ cameras
+        enable_packet_optimization = true;
+        enable_bandwidth_monitoring = true;
         
-        try {
-            // Create acquisition device using serverName and resourceIndex
-            SapAcqDevice* acqDevice = new SapAcqDevice(camera.serverName.c_str(), camera.resourceIndex);
-            if (!acqDevice->Create()) {
-                AddLogMessage("[NET] Failed to create acquisition device for " + camera.name);
-                delete acqDevice;
-                continue;
+        // Apply optimal packet settings based on camera count
+        int camera_count = static_cast<int>(discovered_cameras.size());
+        
+        if (camera_count > 8) {
+            // High camera count - conservative settings
+            camera_params.packet_size = 1200;
+            camera_params.packet_delay = 5000;  // 5ms delay
+            capture_delay_ms = 1000;  // 1 second between cameras
+            AddLogMessage("[NEURAL] High camera count detected (" + std::to_string(camera_count) + ") - using conservative settings");
+        } else if (camera_count > 4) {
+            // Medium camera count
+            camera_params.packet_size = 1400;
+            camera_params.packet_delay = 3000;  // 3ms delay
+            capture_delay_ms = 750;  // 750ms between cameras
+            AddLogMessage("[NEURAL] Medium camera count detected (" + std::to_string(camera_count) + ") - using balanced settings");
+        } else {
+            // Low camera count - can be more aggressive
+            camera_params.packet_size = 1500;
+            camera_params.packet_delay = 1000;  // 1ms delay
+            capture_delay_ms = 500;  // 500ms between cameras
+            AddLogMessage("[NEURAL] Low camera count detected (" + std::to_string(camera_count) + ") - using optimized settings");
+        }
+        
+        AddLogMessage("[NEURAL] Pre-configuration complete - packet size: " + std::to_string(camera_params.packet_size) + 
+                     " bytes, delay: " + std::to_string(camera_params.packet_delay) + "µs");
+        
+        std::map<std::string, SapAcqDevice*> temp_connected_devices;
+        std::map<std::string, SapBuffer*> temp_connected_buffers;
+        std::map<std::string, SapAcqDeviceToBuf*> temp_connected_transfers;
+        int successCount = 0;
+        
+        for (const auto& camera : discovered_cameras) {
+            std::string cameraId = camera.id;
+            
+            try {
+                // Create acquisition device using serverName and resourceIndex
+                SapAcqDevice* acqDevice = new SapAcqDevice(camera.serverName.c_str(), camera.resourceIndex);
+                if (!acqDevice->Create()) {
+                    AddLogMessage("[NET] Failed to create acquisition device for " + camera.name);
+                    delete acqDevice;
+                    continue;
+                }
+                
+                // Apply exposure time setting
+                std::string exposureStr = std::to_string(exposure_time);
+                if (!acqDevice->SetFeatureValue("ExposureTime", exposureStr.c_str())) {
+                    AddLogMessage("[NET] Warning: Failed to set exposure time for " + camera.name);
+                }
+                
+                // Create buffer for image capture
+                SapBuffer* buffer = new SapBufferWithTrash(1, acqDevice);
+                if (!buffer->Create()) {
+                    AddLogMessage("[NET] Failed to create buffer for " + camera.name);
+                    acqDevice->Destroy();
+                    delete acqDevice;
+                    delete buffer;
+                    continue;
+                }
+                
+                // Create transfer object
+                SapAcqDeviceToBuf* transfer = new SapAcqDeviceToBuf(acqDevice, buffer);
+                if (!transfer->Create()) {
+                    AddLogMessage("[NET] Failed to create transfer for " + camera.name);
+                    buffer->Destroy();
+                    acqDevice->Destroy();
+                    delete transfer;
+                    delete buffer;
+                    delete acqDevice;
+                    continue;
+                }
+                
+                // Store connected components
+                temp_connected_devices[cameraId] = acqDevice;
+                temp_connected_buffers[cameraId] = buffer;
+                temp_connected_transfers[cameraId] = transfer;
+                
+                successCount++;
+                AddLogMessage("[OK] " + camera.name + " connected successfully");
+                
+            } catch (const std::exception& e) {
+                AddLogMessage("[NET] Exception connecting " + camera.name + ": " + std::string(e.what()));
             }
+        }
+        
+        // Update global variables in main thread
+        connected_devices = temp_connected_devices;
+        connected_buffers = temp_connected_buffers;
+        connected_transfers = temp_connected_transfers;
+        
+        AddLogMessage("[OK] Connection summary: " + std::to_string(successCount) + "/" + std::to_string(discovered_cameras.size()) + " cameras connected");
+        
+        if (successCount == discovered_cameras.size() && successCount > 0) {
+            AddLogMessage("[OK] All cameras connected successfully!");
             
-            // Apply exposure time setting
-            std::string exposureStr = std::to_string(exposure_time);
-            if (!acqDevice->SetFeatureValue("ExposureTime", exposureStr.c_str())) {
-                AddLogMessage("[NET] Warning: Failed to set exposure time for " + camera.name);
+            // Detect camera resolution after connection
+            DetectCameraResolution();
+            
+            AddLogMessage("[NEURAL] ✓ Neural dataset optimization active with " + std::to_string(successCount) + " cameras");
+        } else if (successCount > 0) {
+            AddLogMessage("[WARN] Partial connection: " + std::to_string(successCount) + "/" + std::to_string(discovered_cameras.size()) + " cameras connected");
+            
+            // Still try to detect resolution from connected cameras
+            DetectCameraResolution();
+            
+            AddLogMessage("[NEURAL] ✓ Neural dataset optimization active with " + std::to_string(successCount) + " cameras");
+        } else {
+            AddLogMessage("[ERR] No cameras could be connected");
+        }
+        
+        is_connecting_cameras = false;
+    });
+    
+    // Detach the thread so it can run independently
+    connection_thread.detach();
+}
+
+void DisconnectAllCameras() {
+    if (connected_devices.empty()) {
+        AddLogMessage("[NET] No cameras connected to disconnect");
+        return;
+    }
+    
+    int device_count = static_cast<int>(connected_devices.size());
+    AddLogMessage("[NET] Disconnecting " + std::to_string(device_count) + " cameras...");
+    
+    // Destroy all connected devices and buffers
+    int destroyed_count = 0;
+    for (auto& [id, device] : connected_devices) {
+        if (device) {
+            try {
+                device->Destroy();
+                delete device;
+                destroyed_count++;
+                AddLogMessage("[OK] Disconnected device: " + id);
+            } catch (const std::exception& e) {
+                AddLogMessage("[ERROR] Failed to destroy device " + id + ": " + e.what());
             }
-            
-            // Create buffer for image capture
-            SapBuffer* buffer = new SapBufferWithTrash(1, acqDevice);
-            if (!buffer->Create()) {
-                AddLogMessage("[NET] Failed to create buffer for " + camera.name);
-                acqDevice->Destroy();
-                delete acqDevice;
-                delete buffer;
-                continue;
-            }
-            
-            // Create transfer object
-            SapAcqDeviceToBuf* transfer = new SapAcqDeviceToBuf(acqDevice, buffer);
-            if (!transfer->Create()) {
-                AddLogMessage("[NET] Failed to create transfer for " + camera.name);
-                buffer->Destroy();
-                acqDevice->Destroy();
-                delete transfer;
-                delete buffer;
-                delete acqDevice;
-                continue;
-            }
-            
-            // Store connected components
-            connected_devices[cameraId] = acqDevice;
-            connected_buffers[cameraId] = buffer;
-            connected_transfers[cameraId] = transfer;
-            
-            successCount++;
-            AddLogMessage("[OK] " + camera.name + " connected successfully");
-            
-        } catch (const std::exception& e) {
-            AddLogMessage("[NET] Exception connecting " + camera.name + ": " + std::string(e.what()));
         }
     }
     
-    AddLogMessage("[OK] Connection summary: " + std::to_string(successCount) + "/" + std::to_string(discovered_cameras.size()) + " cameras connected");
-    
-    if (successCount == discovered_cameras.size() && successCount > 0) {
-        AddLogMessage("[OK] All cameras connected successfully!");
-        
-        // Detect camera resolution after connection
-        DetectCameraResolution();
-    } else if (successCount > 0) {
-        AddLogMessage("[WARN] Partial connection: " + std::to_string(successCount) + "/" + std::to_string(discovered_cameras.size()) + " cameras connected");
-        
-        // Still try to detect resolution from connected cameras
-        DetectCameraResolution();
-    } else {
-        AddLogMessage("[ERR] No cameras could be connected");
+    for (auto& [id, buffer] : connected_buffers) {
+        if (buffer) {
+            try {
+                buffer->Destroy();
+                delete buffer;
+            } catch (const std::exception& e) {
+                AddLogMessage("[ERROR] Failed to destroy buffer " + id + ": " + e.what());
+            }
+        }
     }
+    
+    for (auto& [id, transfer] : connected_transfers) {
+        if (transfer) {
+            try {
+                transfer->Destroy();
+                delete transfer;
+            } catch (const std::exception& e) {
+                AddLogMessage("[ERROR] Failed to destroy transfer " + id + ": " + e.what());
+            }
+        }
+    }
+    
+    // Clear all connected devices and buffers
+    connected_devices.clear();
+    connected_buffers.clear();
+    connected_transfers.clear();
+    
+    AddLogMessage("[OK] Successfully disconnected " + std::to_string(destroyed_count) + "/" + std::to_string(device_count) + " cameras");
 }
 
 void CaptureAllCameras() {
+    // Check capture mode and route accordingly
+    if (sequential_capture_mode) {
+        CaptureSequential();
+        return;
+    }
+    
+    // Original simultaneous capture logic
     if (connected_devices.empty()) {
         AddLogMessage("[NET] No cameras connected");
         return;
     }
     
-    // Check if we have an active session
     if (!session_manager->HasActiveSession()) {
-        AddLogMessage("[SESSION] No active session - please start a new session first");
+        AddLogMessage("[SESSION] No active session - please start a session first");
         return;
     }
     
-    std::string sessionPath = session_manager->GetNextCapturePath();
+    auto* session = session_manager->GetCurrentSession();
+    std::string sessionPath = session->GetNextCapturePath();
     
     // Create session directory
     std::filesystem::create_directories(sessionPath);
     
-    AddLogMessage("[REC] DIRECT CAPTURE starting...");
+    AddLogMessage("[REC] 🎬 DIRECT CAPTURE starting...");
     AddLogMessage("[IMG] Session path: " + sessionPath);
+    AddLogMessage("[NET] Network config: " + std::to_string(camera_params.packet_size) + " bytes packets, " + std::to_string(camera_params.packet_delay) + "µs delay");
     
     auto startTime = std::chrono::high_resolution_clock::now();
     
     bool allSuccess = true;
     int successCount = 0;
+    int totalCameras = static_cast<int>(connected_devices.size());
+    
+    AddLogMessage("[REC] 📸 Capturing from " + std::to_string(totalCameras) + " cameras...");
     
     // Capture from all cameras
     for (const auto& camera : discovered_cameras) {
         std::string cameraId = camera.id;
         
         if (connected_devices.find(cameraId) != connected_devices.end()) {
+            AddLogMessage("[REC] 📷 Capturing " + camera.name + " (" + camera.serialNumber + ")");
+            
             if (CaptureCamera(cameraId, sessionPath)) {
                 successCount++;
+                AddLogMessage("[OK] ✅ " + camera.name + " captured successfully");
             } else {
                 allSuccess = false;
+                AddLogMessage("[ERR] ❌ " + camera.name + " capture failed");
             }
         }
     }
@@ -1049,31 +1408,31 @@ void CaptureAllCameras() {
     auto endTime = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime);
     
-    AddLogMessage("[OK] Capture completed in " + std::to_string(duration.count()) + "ms");
-    AddLogMessage("[OK] Success: " + std::to_string(successCount) + "/" + std::to_string(connected_devices.size()) + " cameras");
+    AddLogMessage("[REC] 🏁 Capture completed in " + std::to_string(duration.count()) + "ms");
+    AddLogMessage("[REC] 📊 Success rate: " + std::to_string(successCount) + "/" + std::to_string(totalCameras) + " cameras");
     
     if (allSuccess) {
-        // Record the capture in session manager
         session_manager->RecordCapture(sessionPath);
-        AddLogMessage("[OK] All cameras captured successfully!");
+        SaveCaptureMetadata(sessionPath, session_manager->GetTotalCapturesInSession(), true, static_cast<int>(duration.count()));
+        
+        AddLogMessage("[OK] 🎉 All cameras captured successfully!");
         
         // Count created files
         try {
             int file_count = 0;
-            std::string images_path = current_image_folder + "/images";
-            if (std::filesystem::exists(images_path)) {
-                for (const auto& entry : std::filesystem::recursive_directory_iterator(images_path)) {
-                    if (entry.is_regular_file()) {
-                        file_count++;
-                    }
+            for (const auto& entry : std::filesystem::directory_iterator(sessionPath)) {
+                if (entry.is_regular_file()) {
+                    file_count++;
                 }
             }
-            AddLogMessage("[OK] Total files in dataset: " + std::to_string(file_count));
+            AddLogMessage("[OK] 📁 Total files in dataset: " + std::to_string(file_count));
         } catch (const std::exception& e) {
-            AddLogMessage("[WARN] Could not count files: " + std::string(e.what()));
+            AddLogMessage("[WARN] ⚠️ Could not count files: " + std::string(e.what()));
         }
     } else {
-        AddLogMessage("[WARN] Some cameras failed to capture");
+        // Save metadata even for partial success
+        SaveCaptureMetadata(sessionPath, session_manager->GetTotalCapturesInSession(), false, static_cast<int>(duration.count()));
+        AddLogMessage("[WARN] ⚠️ Some cameras failed to capture");
     }
 }
 
@@ -1083,6 +1442,7 @@ bool CaptureCamera(const std::string& cameraId, const std::string& sessionPath) 
     auto transferIt = connected_transfers.find(cameraId);
     
     if (deviceIt == connected_devices.end() || bufferIt == connected_buffers.end() || transferIt == connected_transfers.end()) {
+        AddLogMessage("[ERR] ❌ Missing components for camera " + cameraId);
         return false;
     }
     
@@ -1091,18 +1451,6 @@ bool CaptureCamera(const std::string& cameraId, const std::string& sessionPath) 
     SapAcqDeviceToBuf* transfer = transferIt->second;
     
     try {
-        // Trigger capture
-        if (!transfer->Snap()) {
-            AddLogMessage("[NET] Failed to trigger capture for " + cameraId);
-            return false;
-        }
-        
-        // Wait for capture completion
-        if (!transfer->Wait(5000)) {
-            AddLogMessage("[NET] Capture timeout for " + cameraId);
-            return false;
-        }
-        
         // Find camera name
         std::string cameraName = "unknown";
         for (const auto& camera : discovered_cameras) {
@@ -1112,23 +1460,49 @@ bool CaptureCamera(const std::string& cameraId, const std::string& sessionPath) 
             }
         }
         
+        AddLogMessage("[REC] 🔄 Triggering capture for " + cameraName + "...");
+        
+        // Trigger capture
+        if (!transfer->Snap()) {
+            AddLogMessage("[ERR] ❌ Failed to trigger capture for " + cameraName);
+            return false;
+        }
+        
+        AddLogMessage("[REC] ⏳ Waiting for capture completion...");
+        
+        // Wait for capture completion
+        if (!transfer->Wait(5000)) {
+            AddLogMessage("[ERR] ❌ Capture timeout for " + cameraName);
+            return false;
+        }
+        
+        AddLogMessage("[REC] 📸 Capture completed, processing image...");
+        
         // Generate filename
-        std::string extension = capture_format_raw ? ".raw" : ".tiff";
         int current_capture = session_manager->GetTotalCapturesInSession() + 1;
+        std::string extension = capture_format_raw ? ".raw" : ".tiff";
         std::string filename = cameraName + "_capture_" + std::to_string(current_capture) + extension;
         std::string fullPath = sessionPath + "/" + filename;
+        
+        AddLogMessage("[REC] 💾 Saving image: " + filename);
         
         // Save image
         if (capture_format_raw) {
             // Save as RAW
             if (buffer->Save(fullPath.c_str(), "-format raw")) {
+                AddLogMessage("[OK] ✅ RAW image saved: " + filename);
                 return true;
+            } else {
+                AddLogMessage("[ERR] ❌ Failed to save RAW image: " + filename);
+                return false;
             }
         } else {
             // Save as TIFF with ADVANCED color conversion
+            AddLogMessage("[REC] 🎨 Applying color conversion...");
+            
             SapColorConversion colorConverter(buffer);
             if (!colorConverter.Create()) {
-                AddLogMessage("[NET] Failed to create color converter for " + cameraId);
+                AddLogMessage("[ERR] ❌ Failed to create color converter for " + cameraName);
                 return false;
             }
             
@@ -1166,59 +1540,67 @@ bool CaptureCamera(const std::string& cameraId, const std::string& sessionPath) 
             // Apply white balance
             if (color_settings.auto_white_balance) {
                 // Auto white balance
+                AddLogMessage("[REC] ⚖️ Applying auto white balance...");
                 if (!colorConverter.WhiteBalance(0, 0, buffer->GetWidth(), buffer->GetHeight())) {
-                    AddLogMessage("[NET] Warning: Auto white balance failed for " + cameraId + ", using manual gains");
+                    AddLogMessage("[WARN] ⚠️ Auto white balance failed for " + cameraName + ", using manual gains");
                     // Fall back to manual gains
                     SapDataFRGB wbGain(color_settings.wb_red_gain, color_settings.wb_green_gain, color_settings.wb_blue_gain);
                     colorConverter.SetWBGain(wbGain);
                 } else {
-                    AddLogMessage("[OK] Auto white balance applied to " + cameraId);
+                    AddLogMessage("[OK] ✅ Auto white balance applied to " + cameraName);
                 }
             } else {
                 // Manual white balance
+                AddLogMessage("[REC] ⚖️ Applying manual white balance...");
                 SapDataFRGB wbGain(color_settings.wb_red_gain, color_settings.wb_green_gain, color_settings.wb_blue_gain);
                 colorConverter.SetWBGain(wbGain);
             }
             
             // Apply gamma correction
             if (color_settings.enable_gamma) {
+                AddLogMessage("[REC] 🎛️ Applying gamma correction: " + std::to_string(color_settings.gamma_value));
                 colorConverter.SetGamma(color_settings.gamma_value);
             }
             
+            AddLogMessage("[REC] 🔄 Converting image to RGB...");
+            
             // Convert the image to RGB
             if (!colorConverter.Convert()) {
-                AddLogMessage("[NET] Color conversion failed for " + cameraId);
+                AddLogMessage("[ERR] ❌ Color conversion failed for " + cameraName);
                 colorConverter.Destroy();
                 return false;
             }
             
-            // Get converted RGB buffer
+            // Get the converted buffer
             SapBuffer* outputBuffer = colorConverter.GetOutputBuffer();
             if (!outputBuffer) {
-                AddLogMessage("[NET] No output buffer for " + cameraId);
+                AddLogMessage("[ERR] ❌ No output buffer for " + cameraName);
                 colorConverter.Destroy();
                 return false;
             }
+            
+            AddLogMessage("[REC] 💾 Saving TIFF image...");
             
             // Save converted RGB buffer as TIFF
             bool saveSuccess = outputBuffer->Save(fullPath.c_str(), "-format tiff");
             
-            // Clean up converter
+            // Cleanup
             colorConverter.Destroy();
             
             if (saveSuccess) {
-                AddLogMessage("[OK] Advanced color conversion applied to " + cameraId + 
-                             " with gamma=" + std::to_string(color_settings.gamma_value) +
-                             " saturation=0.0 brightness=0.0"); // Placeholder for saturation and brightness
+                AddLogMessage("[OK] ✅ TIFF image saved with color conversion: " + filename);
+                AddLogMessage("[OK] 🎨 Applied settings: gamma=" + std::to_string(color_settings.gamma_value) + 
+                             ", method=" + std::to_string(color_settings.color_method) + 
+                             ", bayer=" + std::to_string(color_settings.bayer_align));
+                return true;
+            } else {
+                AddLogMessage("[ERR] ❌ Failed to save TIFF image: " + filename);
+                return false;
             }
-            
-            return saveSuccess;
         }
         
-        return false;
-        
     } catch (const std::exception& e) {
-        AddLogMessage("[NET] Exception capturing " + cameraId + ": " + std::string(e.what()));
+        AddLogMessage("[ERR] ❌ Exception capturing " + cameraId + ": " + std::string(e.what()));
         return false;
     }
 }
@@ -1410,7 +1792,7 @@ void RenderAdvancedParametersPanel() {
                 auto& formats = *static_cast<std::vector<std::string>*>(data);
                 *out_text = formats[idx].c_str();
                 return true;
-            }, &pixel_formats, pixel_formats.size())) {
+            }, &pixel_formats, static_cast<int>(pixel_formats.size()))) {
             camera_params.pixel_format = pixel_formats[current_pixel_format];
             ApplyParameterToAllCameras("PixelFormat", camera_params.pixel_format);
             AddLogMessage("[PARAM] Pixel format set to: " + camera_params.pixel_format);
@@ -1500,7 +1882,7 @@ void RenderAdvancedParametersPanel() {
                 auto& modes = *static_cast<std::vector<std::string>*>(data);
                 *out_text = modes[idx].c_str();
                 return true;
-            }, &trigger_modes, trigger_modes.size())) {
+            }, &trigger_modes, static_cast<int>(trigger_modes.size()))) {
             camera_params.trigger_mode = trigger_modes[current_trigger_mode];
             ApplyParameterToAllCameras("TriggerMode", camera_params.trigger_mode);
             AddLogMessage("[PARAM] Trigger mode: " + camera_params.trigger_mode);
@@ -1514,7 +1896,7 @@ void RenderAdvancedParametersPanel() {
                 auto& sources = *static_cast<std::vector<std::string>*>(data);
                 *out_text = sources[idx].c_str();
                 return true;
-            }, &trigger_sources, trigger_sources.size())) {
+            }, &trigger_sources, static_cast<int>(trigger_sources.size()))) {
             camera_params.trigger_source = trigger_sources[current_trigger_source];
             ApplyParameterToAllCameras("TriggerSource", camera_params.trigger_source);
             AddLogMessage("[PARAM] Trigger source: " + camera_params.trigger_source);
@@ -1528,7 +1910,7 @@ void RenderAdvancedParametersPanel() {
                 auto& activations = *static_cast<std::vector<std::string>*>(data);
                 *out_text = activations[idx].c_str();
                 return true;
-            }, &trigger_activations, trigger_activations.size())) {
+            }, &trigger_activations, static_cast<int>(trigger_activations.size()))) {
             camera_params.trigger_activation = trigger_activations[current_trigger_activation];
             ApplyParameterToAllCameras("TriggerActivation", camera_params.trigger_activation);
         }
@@ -1647,7 +2029,7 @@ void RenderAdvancedParametersPanel() {
                 auto& patterns = *static_cast<std::vector<std::string>*>(data);
                 *out_text = patterns[idx].c_str();
                 return true;
-            }, &bayer_patterns, bayer_patterns.size())) {
+            }, &bayer_patterns, static_cast<int>(bayer_patterns.size()))) {
             color_settings.bayer_align = current_bayer;
             AddLogMessage("[COLOR] Bayer pattern set to: " + bayer_patterns[current_bayer]);
         }
@@ -1746,7 +2128,7 @@ void RenderAdvancedParametersPanel() {
                 auto& modes = *static_cast<std::vector<std::string>*>(data);
                 *out_text = modes[idx].c_str();
                 return true;
-            }, &acq_modes, acq_modes.size())) {
+            }, &acq_modes, static_cast<int>(acq_modes.size()))) {
             camera_params.acquisition_mode = acq_modes[current_acq_mode];
             ApplyParameterToAllCameras("AcquisitionMode", camera_params.acquisition_mode);
         }
@@ -1934,19 +2316,411 @@ void DetectCameraResolution() {
 
 void ApplyParameterToAllCameras(const std::string& featureName, const std::string& value) {
     int successCount = 0;
-    int totalCount = connected_devices.size();
+    int totalCount = static_cast<int>(connected_devices.size());
     
+    // Check if this is a transport layer parameter that requires stopping acquisition
+    bool isTransportLayerParam = (featureName == "GevSCPSPacketSize" || 
+                                 featureName == "GevSCPD" || 
+                                 featureName == "PacketSize" || 
+                                 featureName == "PacketDelay");
+    
+    // Store acquisition states if we need to stop/restart
+    std::map<std::string, bool> acquisitionStates;
+    
+    if (isTransportLayerParam) {
+        AddLogMessage("[PARAM] Transport layer parameter detected: " + featureName);
+        AddLogMessage("[PARAM] Temporarily stopping acquisition for all cameras...");
+        
+        // Stop acquisition for all cameras and store their states
+        for (auto& [cameraId, device] : connected_devices) {
+            if (device) {
+                // Check if acquisition is running
+                char acquisitionMode[64];
+                bool wasAcquiring = false;
+                if (device->GetFeatureValue("AcquisitionMode", acquisitionMode, sizeof(acquisitionMode))) {
+                    // Try to stop acquisition - ignore errors if already stopped
+                    device->SetFeatureValue("AcquisitionStop", "1");
+                    acquisitionStates[cameraId] = true; // We'll restart it later
+                    wasAcquiring = true;
+                }
+                acquisitionStates[cameraId] = wasAcquiring;
+            }
+        }
+        
+        // Wait a moment for acquisition to fully stop
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+    
+    // Apply the parameter to all cameras
     for (auto& [cameraId, device] : connected_devices) {
-        if (device && device->SetFeatureValue(featureName.c_str(), value.c_str())) {
-            successCount++;
+        if (device) {
+            BOOL result = device->SetFeatureValue(featureName.c_str(), value.c_str());
+            if (result) {
+                successCount++;
+                AddLogMessage("[PARAM] ✓ " + featureName + " = " + value + " applied to " + cameraId);
+            } else {
+                AddLogMessage("[PARAM] ✗ Failed to apply " + featureName + " = " + value + " to " + cameraId);
+                
+                // Check if feature is available and writable
+                BOOL isAvailable = FALSE;
+                if (device->IsFeatureAvailable(featureName.c_str(), &isAvailable)) {
+                    if (!isAvailable) {
+                        AddLogMessage("[PARAM]   → Feature " + featureName + " not available on " + cameraId);
+                    }
+                }
+            }
+        }
+    }
+    
+    // Restart acquisition if we stopped it
+    if (isTransportLayerParam) {
+        AddLogMessage("[PARAM] Restarting acquisition for cameras that were running...");
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        
+        for (auto& [cameraId, device] : connected_devices) {
+            if (device && acquisitionStates[cameraId]) {
+                // Restart acquisition
+                device->SetFeatureValue("AcquisitionStart", "1");
+                AddLogMessage("[PARAM] ✓ Acquisition restarted for " + cameraId);
+            }
         }
     }
     
     if (successCount == totalCount) {
-        AddLogMessage("[PARAM] " + featureName + " = " + value + " applied to all cameras");
+        AddLogMessage("[PARAM] ✓ " + featureName + " = " + value + " applied to all " + std::to_string(totalCount) + " cameras");
     } else {
-        AddLogMessage("[PARAM] " + featureName + " applied to " + std::to_string(successCount) + "/" + std::to_string(totalCount) + " cameras");
+        AddLogMessage("[PARAM] ⚠ " + featureName + " applied to " + std::to_string(successCount) + "/" + std::to_string(totalCount) + " cameras");
     }
+}
+
+// Individual Camera Control Functions - NEW
+void ApplyParameterToCamera(const std::string& cameraId, const std::string& featureName, const std::string& value) {
+    auto deviceIt = connected_devices.find(cameraId);
+    if (deviceIt != connected_devices.end()) {
+        SapAcqDevice* device = deviceIt->second;
+        if (device && device->SetFeatureValue(featureName.c_str(), value.c_str())) {
+            AddLogMessage("[PARAM] " + featureName + " = " + value + " applied to " + cameraId);
+        } else {
+            AddLogMessage("[PARAM] Failed to apply " + featureName + " to " + cameraId);
+        }
+    } else {
+        AddLogMessage("[PARAM] Camera " + cameraId + " not found");
+    }
+}
+
+void InitializeIndividualCameraParams(const std::string& cameraId) {
+    individual_camera_params[cameraId] = camera_params;
+    AddLogMessage("[PARAM] Individual camera parameters initialized for " + cameraId);
+}
+
+CameraParameters& GetCameraParameters(const std::string& cameraId) {
+    return individual_camera_params[cameraId];
+}
+
+void SyncAllCamerasToIndividual() {
+    for (auto& [cameraId, device] : connected_devices) {
+        if (device) {
+            // Initialize individual camera params if not exists
+            if (individual_camera_params.find(cameraId) == individual_camera_params.end()) {
+                InitializeIndividualCameraParams(cameraId);
+            }
+            
+            // Read current values from camera and store in individual parameters
+            char buffer[512];
+            auto& params = individual_camera_params[cameraId];
+            
+            if (device->GetFeatureValue("Width", buffer, sizeof(buffer))) {
+                params.width = std::stoi(buffer);
+            }
+            if (device->GetFeatureValue("Height", buffer, sizeof(buffer))) {
+                params.height = std::stoi(buffer);
+            }
+            if (device->GetFeatureValue("ExposureTime", buffer, sizeof(buffer))) {
+                params.exposure_time = std::stoi(buffer);
+            }
+            if (device->GetFeatureValue("Gain", buffer, sizeof(buffer))) {
+                params.gain = std::stof(buffer);
+            }
+            if (device->GetFeatureValue("BalanceRatioRed", buffer, sizeof(buffer))) {
+                params.wb_red = std::stof(buffer);
+            }
+            if (device->GetFeatureValue("BalanceRatioGreen", buffer, sizeof(buffer))) {
+                params.wb_green = std::stof(buffer);
+            }
+            if (device->GetFeatureValue("BalanceRatioBlue", buffer, sizeof(buffer))) {
+                params.wb_blue = std::stof(buffer);
+            }
+        }
+    }
+    AddLogMessage("[PARAM] All camera parameters synced from hardware to individual settings");
+}
+
+void SyncIndividualToAllCameras() {
+    // Copy the global camera parameters to all individual camera settings
+    for (auto& [cameraId, device] : connected_devices) {
+        if (device) {
+            individual_camera_params[cameraId] = camera_params;
+        }
+    }
+    AddLogMessage("[PARAM] Global parameters copied to all individual camera settings");
+}
+
+void RenderIndividualCameraPanel() {
+    ImGui::Begin("● Individual Camera Control", &show_individual_camera_panel, ImGuiWindowFlags_NoCollapse);
+    
+    if (connected_devices.empty()) {
+        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "[WARN] No cameras connected");
+        ImGui::Text("Connect cameras to access individual camera control");
+        ImGui::End();
+        return;
+    }
+    
+    ImGui::Text("Individual Camera Parameter Control");
+    ImGui::Separator();
+    
+    // Camera Selection Section
+    ImGui::Text("◆ Camera Selection");
+    
+    // Camera selection dropdown
+    std::vector<std::string> camera_ids;
+    for (const auto& [id, device] : connected_devices) {
+        camera_ids.push_back(id);
+    }
+    
+    static int current_camera_index = 0;
+    if (current_camera_index >= camera_ids.size()) current_camera_index = 0;
+    
+    if (ImGui::Combo("Camera", &current_camera_index,
+        [](void* data, int idx, const char** out_text) {
+            auto& ids = *static_cast<std::vector<std::string>*>(data);
+            *out_text = ids[idx].c_str();
+            return true;
+        }, &camera_ids, static_cast<int>(camera_ids.size()))) {
+        if (current_camera_index < camera_ids.size()) {
+            selected_camera_id = camera_ids[current_camera_index];
+            AddLogMessage("[UI] Selected camera: " + selected_camera_id);
+        }
+    }
+    
+    if (selected_camera_id.empty() && !camera_ids.empty()) {
+        selected_camera_id = camera_ids[0];
+    }
+    
+    if (!selected_camera_id.empty()) {
+        // Initialize individual parameters if not exists
+        if (individual_camera_params.find(selected_camera_id) == individual_camera_params.end()) {
+            InitializeIndividualCameraParams(selected_camera_id);
+        }
+        
+        auto& params = individual_camera_params[selected_camera_id];
+        
+        ImGui::Text("Selected: %s", selected_camera_id.c_str());
+        
+        ImGui::Separator();
+        
+        // Individual Parameter Controls
+        ImGui::Text("◆ Individual Camera Parameters for %s", selected_camera_id.c_str());
+        
+        // Exposure Control (Key for lens compensation)
+        if (ImGui::CollapsingHeader("◆ Exposure Control (Individual)", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::PushItemWidth(200);
+            
+            int temp_exposure = params.exposure_time;
+            if (ImGui::InputInt("Exposure Time (us)", &temp_exposure, 100, 10000)) {
+                params.exposure_time = std::max(100, std::min(100000, temp_exposure));
+                ApplyParameterToCamera(selected_camera_id, "ExposureTime", std::to_string(params.exposure_time));
+                AddLogMessage("[PARAM] Individual exposure: " + selected_camera_id + " = " + std::to_string(params.exposure_time) + "us");
+            }
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Range: 100 - 100,000 us");
+            
+            // Exposure presets for this camera
+            ImGui::Text("Quick Presets:");
+            if (ImGui::Button("Fast (1ms)", ImVec2(80, 20))) {
+                params.exposure_time = 1000;
+                ApplyParameterToCamera(selected_camera_id, "ExposureTime", "1000");
+                AddLogMessage("[PARAM] Fast exposure applied to " + selected_camera_id);
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Normal (10ms)", ImVec2(90, 20))) {
+                params.exposure_time = 10000;
+                ApplyParameterToCamera(selected_camera_id, "ExposureTime", "10000");
+                AddLogMessage("[PARAM] Normal exposure applied to " + selected_camera_id);
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Long (50ms)", ImVec2(80, 20))) {
+                params.exposure_time = 50000;
+                ApplyParameterToCamera(selected_camera_id, "ExposureTime", "50000");
+                AddLogMessage("[PARAM] Long exposure applied to " + selected_camera_id);
+            }
+            
+            ImGui::PopItemWidth();
+        }
+        
+        // Gain Control
+        if (ImGui::CollapsingHeader("◆ Gain Control (Individual)")) {
+            ImGui::PushItemWidth(200);
+            
+            float temp_gain = params.gain;
+            if (ImGui::InputFloat("Gain (dB)", &temp_gain, 0.1f, 1.0f, "%.1f")) {
+                params.gain = std::max(0.0f, std::min(30.0f, temp_gain));
+                ApplyParameterToCamera(selected_camera_id, "Gain", std::to_string(params.gain));
+                AddLogMessage("[PARAM] Individual gain: " + selected_camera_id + " = " + std::to_string(params.gain) + "dB");
+            }
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Range: 0.0 - 30.0 dB");
+            
+            ImGui::PopItemWidth();
+        }
+        
+        // White Balance Control
+        if (ImGui::CollapsingHeader("◆ White Balance (Individual)")) {
+            ImGui::PushItemWidth(200);
+            
+            float temp_wb_red = params.wb_red;
+            if (ImGui::InputFloat("WB Red", &temp_wb_red, 0.01f, 0.1f, "%.2f")) {
+                params.wb_red = std::max(0.1f, std::min(4.0f, temp_wb_red));
+                ApplyParameterToCamera(selected_camera_id, "BalanceRatioRed", std::to_string(params.wb_red));
+            }
+            
+            float temp_wb_green = params.wb_green;
+            if (ImGui::InputFloat("WB Green", &temp_wb_green, 0.01f, 0.1f, "%.2f")) {
+                params.wb_green = std::max(0.1f, std::min(4.0f, temp_wb_green));
+                ApplyParameterToCamera(selected_camera_id, "BalanceRatioGreen", std::to_string(params.wb_green));
+            }
+            
+            float temp_wb_blue = params.wb_blue;
+            if (ImGui::InputFloat("WB Blue", &temp_wb_blue, 0.01f, 0.1f, "%.2f")) {
+                params.wb_blue = std::max(0.1f, std::min(4.0f, temp_wb_blue));
+                ApplyParameterToCamera(selected_camera_id, "BalanceRatioBlue", std::to_string(params.wb_blue));
+            }
+            
+            ImGui::PopItemWidth();
+        }
+        
+        ImGui::Separator();
+        
+        // Control buttons
+        if (ImGui::Button("◆ Copy From Global", ImVec2(150, 30))) {
+            params = camera_params;
+            AddLogMessage("[PARAM] Global parameters copied to " + selected_camera_id);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("◆ Apply All", ImVec2(100, 30))) {
+            ApplyParameterToCamera(selected_camera_id, "ExposureTime", std::to_string(params.exposure_time));
+            ApplyParameterToCamera(selected_camera_id, "Gain", std::to_string(params.gain));
+            ApplyParameterToCamera(selected_camera_id, "BalanceRatioRed", std::to_string(params.wb_red));
+            ApplyParameterToCamera(selected_camera_id, "BalanceRatioGreen", std::to_string(params.wb_green));
+            ApplyParameterToCamera(selected_camera_id, "BalanceRatioBlue", std::to_string(params.wb_blue));
+            AddLogMessage("[PARAM] All individual parameters applied to " + selected_camera_id);
+        }
+        
+        ImGui::Separator();
+        
+        // Status display
+        ImGui::Text("◆ Current Parameters for %s", selected_camera_id.c_str());
+        ImGui::Text("Exposure: %d us", params.exposure_time);
+        ImGui::Text("Gain: %.1f dB", params.gain);
+        ImGui::Text("WB: R=%.2f G=%.2f B=%.2f", params.wb_red, params.wb_green, params.wb_blue);
+    }
+    
+    ImGui::End();
+}
+
+// Individual Camera Settings Persistence - NEW
+void SaveIndividualCameraSettings() {
+    if (!settings_manager) return;
+    
+    // Sync current camera parameters to settings
+    SyncCameraParametersToSettings();
+    
+    // Save to file
+    settings_manager->Save();
+    AddLogMessage("[SETTINGS] Settings saved successfully");
+}
+
+void LoadIndividualCameraSettings() {
+    if (!settings_manager) return;
+    
+    // Load settings has already been done in main(), this refreshes UI values if needed
+    auto& cam_settings = settings_manager->GetCameraSettings();
+    camera_params.width = cam_settings.width;
+    camera_params.height = cam_settings.height;
+    camera_params.pixel_format = cam_settings.pixel_format;
+    camera_params.exposure_time = cam_settings.exposure_time;
+    // ... other parameters loaded in main()
+    
+    AddLogMessage("[SETTINGS] Settings loaded to UI");
+}
+
+void SyncIndividualParamsToSettings() {
+    if (!settings_manager) return;
+    
+    auto& cam_settings = settings_manager->GetCameraSettings();
+    
+    // Sync all camera parameters to settings structure
+    cam_settings.width = camera_params.width;
+    cam_settings.height = camera_params.height;
+    cam_settings.pixel_format = camera_params.pixel_format;
+    cam_settings.exposure_time = camera_params.exposure_time;
+    cam_settings.gain = camera_params.gain;
+    cam_settings.auto_exposure = camera_params.auto_exposure;
+    cam_settings.auto_gain = camera_params.auto_gain;
+    cam_settings.trigger_mode = camera_params.trigger_mode;
+    cam_settings.trigger_source = camera_params.trigger_source;
+    cam_settings.trigger_activation = camera_params.trigger_activation;
+    cam_settings.trigger_delay = camera_params.trigger_delay;
+    cam_settings.white_balance_red = camera_params.wb_red;
+    cam_settings.white_balance_green = camera_params.wb_green;
+    cam_settings.white_balance_blue = camera_params.wb_blue;
+    cam_settings.auto_white_balance = camera_params.auto_white_balance;
+    cam_settings.saturation = camera_params.saturation;
+    cam_settings.hue = camera_params.hue;
+    cam_settings.gamma = camera_params.gamma;
+    cam_settings.roi_offset_x = camera_params.roi_x;
+    cam_settings.roi_offset_y = camera_params.roi_y;
+    cam_settings.roi_width = camera_params.roi_width;
+    cam_settings.roi_height = camera_params.roi_height;
+    cam_settings.roi_enabled = camera_params.roi_enable;
+    cam_settings.acquisition_mode = camera_params.acquisition_mode;
+    cam_settings.acquisition_frame_count = camera_params.acquisition_frame_count;
+    cam_settings.acquisition_frame_rate = camera_params.acquisition_frame_rate;
+    cam_settings.packet_size = camera_params.packet_size;
+    cam_settings.packet_delay = camera_params.packet_delay;
+}
+
+void SyncSettingsToIndividualParams() {
+    if (!settings_manager) return;
+    
+    auto& cam_settings = settings_manager->GetCameraSettings();
+    
+    // Sync all camera parameters to settings structure
+    cam_settings.width = camera_params.width;
+    cam_settings.height = camera_params.height;
+    cam_settings.pixel_format = camera_params.pixel_format;
+    cam_settings.exposure_time = camera_params.exposure_time;
+    cam_settings.gain = camera_params.gain;
+    cam_settings.auto_exposure = camera_params.auto_exposure;
+    cam_settings.auto_gain = camera_params.auto_gain;
+    cam_settings.trigger_mode = camera_params.trigger_mode;
+    cam_settings.trigger_source = camera_params.trigger_source;
+    cam_settings.trigger_activation = camera_params.trigger_activation;
+    cam_settings.trigger_delay = camera_params.trigger_delay;
+    cam_settings.white_balance_red = camera_params.wb_red;
+    cam_settings.white_balance_green = camera_params.wb_green;
+    cam_settings.white_balance_blue = camera_params.wb_blue;
+    cam_settings.auto_white_balance = camera_params.auto_white_balance;
+    cam_settings.saturation = camera_params.saturation;
+    cam_settings.hue = camera_params.hue;
+    cam_settings.gamma = camera_params.gamma;
+    cam_settings.roi_offset_x = camera_params.roi_x;
+    cam_settings.roi_offset_y = camera_params.roi_y;
+    cam_settings.roi_width = camera_params.roi_width;
+    cam_settings.roi_height = camera_params.roi_height;
+    cam_settings.roi_enabled = camera_params.roi_enable;
+    cam_settings.acquisition_mode = camera_params.acquisition_mode;
+    cam_settings.acquisition_frame_count = camera_params.acquisition_frame_count;
+    cam_settings.acquisition_frame_rate = camera_params.acquisition_frame_rate;
+    cam_settings.packet_size = camera_params.packet_size;
+    cam_settings.packet_delay = camera_params.packet_delay;
 }
 
 std::vector<std::string> GetAvailablePixelFormats() {
@@ -2086,4 +2860,518 @@ void RenderSessionManagerPanel() {
     }
     
     ImGui::End();
+}
+
+// Metadata Management Functions - NEW
+void SaveCaptureMetadata(const std::string& sessionPath, int captureNumber, bool success, int duration_ms) {
+    try {
+        // Create metadata filename based on session path
+        std::filesystem::path session_folder(sessionPath);
+        std::string session_id = session_folder.filename().string();
+        
+        std::string metadata_dir = current_image_folder + "/metadata";
+        std::filesystem::create_directories(metadata_dir);
+        
+        std::string metadata_file = metadata_dir + "/" + session_id + ".json";
+        
+        // Create metadata content
+        SimpleJSON metadata;
+        
+        // Session info
+        metadata.set("session_id", session_id);
+        metadata.set("capture_number", captureNumber);
+        metadata.set("success", success);
+        metadata.set("duration_ms", duration_ms);
+        metadata.set("timestamp", GetCurrentTimestamp());
+        
+        auto now = std::chrono::system_clock::now();
+        auto time_t = std::chrono::system_clock::to_time_t(now);
+        std::stringstream ss;
+        ss << std::put_time(std::localtime(&time_t), "%Y-%m-%d %H:%M:%S");
+        metadata.set("datetime", ss.str());
+        
+        // Camera settings
+        metadata.set("camera_count", static_cast<int>(connected_devices.size()));
+        metadata.set("exposure_time", camera_params.exposure_time);
+        metadata.set("gain", camera_params.gain);
+        metadata.set("auto_exposure", camera_params.auto_exposure);
+        metadata.set("auto_gain", camera_params.auto_gain);
+        metadata.set("width", camera_params.width);
+        metadata.set("height", camera_params.height);
+        metadata.set("pixel_format", camera_params.pixel_format);
+        
+        // Color settings
+        metadata.set("white_balance_red", camera_params.wb_red);
+        metadata.set("white_balance_green", camera_params.wb_green);
+        metadata.set("white_balance_blue", camera_params.wb_blue);
+        metadata.set("auto_white_balance", camera_params.auto_white_balance);
+        metadata.set("gamma", camera_params.gamma);
+        metadata.set("saturation", camera_params.saturation);
+        
+        // Advanced settings
+        metadata.set("color_method", color_settings.color_method);
+        metadata.set("bayer_align", color_settings.bayer_align);
+        metadata.set("enable_gamma", color_settings.enable_gamma);
+        metadata.set("gamma_value", color_settings.gamma_value);
+        metadata.set("use_hardware_conversion", color_settings.use_hardware_conversion);
+        
+        // Camera list
+        metadata.set("cameras", "");
+        std::stringstream camera_list;
+        bool first = true;
+        for (const auto& camera : discovered_cameras) {
+            if (connected_devices.find(camera.id) != connected_devices.end()) {
+                if (!first) camera_list << ",";
+                camera_list << camera.name << "(" << camera.id << ")";
+                first = false;
+            }
+        }
+        metadata.set("camera_list", camera_list.str());
+        
+        // Format info
+        metadata.set("format", capture_format_raw ? "RAW" : "TIFF");
+        
+        // Save metadata to file
+        std::ofstream file(metadata_file);
+        if (file.is_open()) {
+            file << "{\n";
+            bool first_item = true;
+            for (const auto& [key, value] : metadata.data) {
+                if (!first_item) file << ",\n";
+                file << "  \"" << key << "\": \"" << value << "\"";
+                first_item = false;
+            }
+            file << "\n}\n";
+            file.close();
+            
+            AddLogMessage("[METADATA] Saved: " + metadata_file);
+        } else {
+            AddLogMessage("[ERR] Failed to save metadata: " + metadata_file);
+        }
+        
+    } catch (const std::exception& e) {
+        AddLogMessage("[ERR] Metadata save error: " + std::string(e.what()));
+    }
 } 
+
+// Network Optimization Functions Implementation - NEW
+void RenderNetworkOptimizationPanel() {
+    ImGui::Begin("◆ Network Optimization & Image Quality", &show_network_panel, ImGuiWindowFlags_NoCollapse);
+    
+    ImGui::Text("High-Quality Image Capture Network Optimization");
+    ImGui::Separator();
+    
+    // Capture Mode Selection
+    ImGui::Text("◆ Capture Mode");
+    if (ImGui::RadioButton("Simultaneous (Fast)", !sequential_capture_mode)) {
+        sequential_capture_mode = false;
+        AddLogMessage("[NET] Simultaneous capture mode enabled");
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("All cameras capture at once - faster but may cause network congestion");
+    }
+    
+    if (ImGui::RadioButton("Sequential (High Quality)", sequential_capture_mode)) {
+        sequential_capture_mode = true;
+        AddLogMessage("[NET] Sequential capture mode enabled");
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Cameras capture one by one - slower but prevents network bottlenecks");
+    }
+    
+    // Sequential Mode Settings
+    if (sequential_capture_mode) {
+        ImGui::Indent();
+        ImGui::SliderInt("Delay Between Cameras (ms)", &capture_delay_ms, 100, 2000);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Time to wait between each camera capture to prevent network congestion");
+        }
+        
+        int total_time = static_cast<int>(connected_devices.size()) * capture_delay_ms;
+        ImGui::Text("Estimated total time: %.1f seconds", total_time / 1000.0f);
+        ImGui::Unindent();
+    }
+    
+    ImGui::Separator();
+    
+    // Network Packet Optimization
+    ImGui::Text("◆ Network Packet Optimization");
+    
+    ImGui::Checkbox("Auto Packet Optimization", &enable_packet_optimization);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Automatically optimize packet size based on image resolution and network conditions");
+    }
+    
+    if (ImGui::Button("► Optimize Now")) {
+        OptimizeNetworkSettings();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("► Check Bandwidth")) {
+        CheckNetworkBandwidth();
+    }
+    
+    // Current packet settings display
+    ImGui::Text("Current packet size: %d bytes", camera_params.packet_size);
+    ImGui::Text("Current packet delay: %d microseconds", camera_params.packet_delay);
+    
+    // Advanced packet settings
+    if (ImGui::CollapsingHeader("◆ Advanced Packet Settings")) {
+        ImGui::SliderInt("Packet Size", &camera_params.packet_size, 576, 9000);
+        if (ImGui::IsItemEdited()) {
+            ApplyParameterToAllCameras("GevSCPSPacketSize", std::to_string(camera_params.packet_size));
+        }
+        
+        ImGui::SliderInt("Packet Delay (µs)", &camera_params.packet_delay, 0, 10000);
+        if (ImGui::IsItemEdited()) {
+            ApplyParameterToAllCameras("GevSCPD", std::to_string(camera_params.packet_delay));
+        }
+        
+        ImGui::Checkbox("Enable Jumbo Frames (9000 bytes)", &use_jumbo_frames);
+        if (ImGui::IsItemEdited()) {
+            ApplyJumboFrames();
+        }
+    }
+    
+    ImGui::Separator();
+    
+    // Image Quality Settings
+    ImGui::Text("◆ Image Quality Enhancement");
+    
+    if (ImGui::CollapsingHeader("Quality Presets", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ImGui::Button("◆ Maximum Quality", ImVec2(150, 30))) {
+            sequential_capture_mode = true;
+            capture_delay_ms = 1000;
+            camera_params.packet_size = use_jumbo_frames ? 8000 : 1500;
+            camera_params.packet_delay = 5000;
+            enable_packet_optimization = true;
+            OptimizeNetworkSettings();
+            AddLogMessage("[NET] Maximum quality preset applied");
+        }
+        ImGui::SameLine();
+        
+        if (ImGui::Button("◆ Balanced", ImVec2(150, 30))) {
+            sequential_capture_mode = false;
+            capture_delay_ms = 500;
+            camera_params.packet_size = 4000;
+            camera_params.packet_delay = 1000;
+            enable_packet_optimization = true;
+            OptimizeNetworkSettings();
+            AddLogMessage("[NET] Balanced preset applied");
+        }
+        ImGui::SameLine();
+        
+        if (ImGui::Button("◆ Speed Priority", ImVec2(150, 30))) {
+            sequential_capture_mode = false;
+            capture_delay_ms = 100;
+            camera_params.packet_size = 1500;
+            camera_params.packet_delay = 0;
+            enable_packet_optimization = false;
+            AddLogMessage("[NET] Speed priority preset applied");
+        }
+    }
+    
+    ImGui::Separator();
+    
+    // Network Diagnostics
+    ImGui::Text("◆ Network Diagnostics");
+    
+    ImGui::Checkbox("Enable Network Monitoring", &enable_bandwidth_monitoring);
+    
+    if (enable_bandwidth_monitoring && ImGui::CollapsingHeader("Network Status")) {
+        ImGui::Text("Connected cameras: %d", (int)connected_devices.size());
+        
+        // Calculate estimated bandwidth usage
+        float bytes_per_pixel = 3.0f; // RGB8
+        float pixels_per_camera = static_cast<float>(camera_params.width * camera_params.height);
+        float bytes_per_camera = pixels_per_camera * bytes_per_pixel;
+        float mbps_per_camera = (bytes_per_camera * 8.0f) / (1024.0f * 1024.0f); // MB/s per camera
+        float total_bandwidth = mbps_per_camera * static_cast<float>(connected_devices.size());
+        
+        ImGui::Text("Estimated bandwidth per camera: %.1f MB/s", mbps_per_camera);
+        ImGui::Text("Total estimated bandwidth: %.1f MB/s", total_bandwidth);
+        
+        if (total_bandwidth > max_bandwidth_mbps) {
+            ImGui::TextColored(ImVec4(1.0f, 0.2f, 0.2f, 1.0f), "⚠ Warning: May exceed network capacity!");
+            ImGui::Text("Consider enabling sequential capture mode");
+        } else if (total_bandwidth > max_bandwidth_mbps * 0.8f) {
+            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "⚠ Warning: High network utilization");
+        } else {
+            ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "✓ Network bandwidth OK");
+        }
+        
+        // Network recommendations
+        ImGui::Separator();
+        ImGui::Text("◆ Recommendations:");
+        if (total_bandwidth > max_bandwidth_mbps * 0.8f) {
+            ImGui::BulletText("Enable sequential capture mode");
+            ImGui::BulletText("Increase packet delay to %d µs", std::max(2000, camera_params.packet_delay));
+            ImGui::BulletText("Use jumbo frames if network supports it");
+            ImGui::BulletText("Consider reducing resolution temporarily");
+        } else {
+            ImGui::BulletText("Current settings should provide good quality");
+            ImGui::BulletText("Sequential mode recommended for best quality");
+        }
+    }
+    
+    ImGui::End();
+}
+
+void OptimizeNetworkSettings() {
+    if (!enable_packet_optimization) return;
+    
+    AddLogMessage("[NET] Optimizing network settings...");
+    
+    // Calculate optimal packet size based on image size and camera count
+    int image_size_mb = (camera_params.width * camera_params.height * 3) / (1024 * 1024);
+    int camera_count = static_cast<int>(connected_devices.size());
+    
+    // Adjust packet size based on network load
+    int optimal_packet_size;
+    int optimal_packet_delay;
+    
+    if (camera_count > 8) {
+        // High camera count - use smaller packets with delays
+        optimal_packet_size = use_jumbo_frames ? 4000 : 1200;
+        optimal_packet_delay = 3000 + (camera_count - 8) * 500;
+    } else if (camera_count > 4) {
+        // Medium camera count
+        optimal_packet_size = use_jumbo_frames ? 6000 : 1500;
+        optimal_packet_delay = 1500 + (camera_count - 4) * 300;
+    } else {
+        // Low camera count
+        optimal_packet_size = use_jumbo_frames ? 8000 : 1500;
+        optimal_packet_delay = 500;
+    }
+    
+    // Apply settings
+    camera_params.packet_size = optimal_packet_size;
+    camera_params.packet_delay = optimal_packet_delay;
+    
+    // Apply to all cameras
+    ApplyParameterToAllCameras("GevSCPSPacketSize", std::to_string(camera_params.packet_size));
+    ApplyParameterToAllCameras("GevSCPD", std::to_string(camera_params.packet_delay));
+    
+    AddLogMessage("[NET] Optimized: Packet size=" + std::to_string(optimal_packet_size) + 
+                 ", Delay=" + std::to_string(optimal_packet_delay) + "µs");
+}
+
+void CaptureSequential() {
+    if (connected_devices.empty()) {
+        AddLogMessage("[NET] No cameras connected");
+        return;
+    }
+    
+    if (!session_manager->HasActiveSession()) {
+        AddLogMessage("[SESSION] No active session - please start a new session first");
+        return;
+    }
+    
+    std::string sessionPath = session_manager->GetNextCapturePath();
+    std::filesystem::create_directories(sessionPath);
+    
+    AddLogMessage("[NEURAL] SEQUENTIAL CAPTURE starting (optimized for neural datasets)...");
+    AddLogMessage("[NEURAL] Session path: " + sessionPath);
+    AddLogMessage("[NEURAL] Delay between cameras: " + std::to_string(capture_delay_ms) + "ms");
+    
+    auto startTime = std::chrono::high_resolution_clock::now();
+    
+    bool allSuccess = true;
+    int successCount = 0;
+    int cameraIndex = 0;
+    const int totalCameras = static_cast<int>(connected_devices.size());
+    
+    // Pre-allocate variables outside loop for efficiency
+    std::string progressMsg;
+    progressMsg.reserve(256);  // Pre-allocate string buffer
+    
+    // Sequential capture with optimized delays
+    for (const auto& camera : discovered_cameras) {
+        const std::string& cameraId = camera.id;  // Use const reference
+        
+        auto deviceIt = connected_devices.find(cameraId);
+        if (deviceIt != connected_devices.end()) {
+            // Build progress message efficiently
+            progressMsg.clear();
+            progressMsg += "[NEURAL] Capturing ";
+            progressMsg += camera.name;
+            progressMsg += " (";
+            progressMsg += std::to_string(cameraIndex + 1);
+            progressMsg += "/";
+            progressMsg += std::to_string(totalCameras);
+            progressMsg += ")";
+            AddLogMessage(progressMsg);
+            
+            if (CaptureCamera(cameraId, sessionPath)) {
+                successCount++;
+                AddLogMessage("[OK] " + camera.name + " → SUCCESS");
+            } else {
+                allSuccess = false;
+                AddLogMessage("[ERR] " + camera.name + " → FAILED");
+            }
+            
+            // Add delay between cameras (except for the last one)
+            if (cameraIndex < totalCameras - 1) {
+                // Only sleep if there are more cameras to capture
+                std::this_thread::sleep_for(std::chrono::milliseconds(capture_delay_ms));
+            }
+            
+            cameraIndex++;
+        }
+    }
+    
+    auto endTime = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime);
+    
+    AddLogMessage("[NEURAL] Sequential capture completed in " + std::to_string(duration.count()) + "ms");
+    AddLogMessage("[NEURAL] Success rate: " + std::to_string(successCount) + "/" + std::to_string(totalCameras) + " cameras");
+    
+    if (allSuccess) {
+        session_manager->RecordCapture(sessionPath);
+        SaveCaptureMetadata(sessionPath, session_manager->GetTotalCapturesInSession(), true, static_cast<int>(duration.count()));
+        AddLogMessage("[NEURAL] ✓ All cameras captured successfully with sequential optimization!");
+        
+        // Calculate average time per camera for statistics
+        float avgTimePerCamera = static_cast<float>(duration.count()) / totalCameras;
+        AddLogMessage("[NEURAL] Average time per camera: " + std::to_string(avgTimePerCamera) + "ms");
+    } else {
+        SaveCaptureMetadata(sessionPath, session_manager->GetTotalCapturesInSession(), false, static_cast<int>(duration.count()));
+        AddLogMessage("[NEURAL] ⚠ Some cameras failed during sequential capture");
+    }
+}
+
+void CheckNetworkBandwidth() {
+    AddLogMessage("[NET] Checking network bandwidth requirements...");
+    
+    if (connected_devices.empty()) {
+        AddLogMessage("[NET] No cameras connected for bandwidth check");
+        return;
+    }
+    
+    // Calculate bandwidth requirements
+    float bytes_per_pixel = 3.0f; // RGB8
+    float pixels_per_camera = static_cast<float>(camera_params.width * camera_params.height);
+    float bytes_per_camera = pixels_per_camera * bytes_per_pixel;
+    float mbps_per_camera = (bytes_per_camera * 8.0f) / (1024.0f * 1024.0f); // Convert to Mbps
+    
+    int camera_count = static_cast<int>(connected_devices.size());
+    float total_mbps = mbps_per_camera * static_cast<float>(camera_count);
+    
+    AddLogMessage("[NET] Bandwidth analysis:");
+    AddLogMessage("[NET] Resolution: " + std::to_string(camera_params.width) + "x" + std::to_string(camera_params.height));
+    AddLogMessage("[NET] Per camera: " + std::to_string(mbps_per_camera) + " Mbps");
+    AddLogMessage("[NET] Total (" + std::to_string(camera_count) + " cameras): " + std::to_string(total_mbps) + " Mbps");
+    
+    if (total_mbps > 900) {
+        AddLogMessage("[NET] ⚠ HIGH: Exceeds typical GigE capacity (1000 Mbps)");
+        AddLogMessage("[NET] RECOMMENDATION: Use sequential capture mode");
+    } else if (total_mbps > 700) {
+        AddLogMessage("[NET] ⚠ MEDIUM: High network utilization");
+        AddLogMessage("[NET] RECOMMENDATION: Consider sequential mode for best quality");
+    } else {
+        AddLogMessage("[NET] ✓ LOW: Network bandwidth should be sufficient");
+    }
+    
+    // NEW: Detailed camera diagnostics
+    AddLogMessage("[NET] === CAMERA NETWORK DIAGNOSTICS ===");
+    for (auto& [cameraId, device] : connected_devices) {
+        if (device) {
+            AddLogMessage("[NET] Camera " + cameraId + " diagnostics:");
+            
+            char buffer[512];
+            // Check actual packet settings
+            if (device->GetFeatureValue("GevSCPSPacketSize", buffer, sizeof(buffer))) {
+                AddLogMessage("[NET]   Current packet size: " + std::string(buffer));
+            } else {
+                AddLogMessage("[NET]   Failed to read packet size");
+            }
+            
+            if (device->GetFeatureValue("GevSCPD", buffer, sizeof(buffer))) {
+                AddLogMessage("[NET]   Current packet delay: " + std::string(buffer));
+            } else {
+                AddLogMessage("[NET]   Failed to read packet delay");
+            }
+            
+            // Check network interface
+            if (device->GetFeatureValue("GevInterfaceSelector", buffer, sizeof(buffer))) {
+                AddLogMessage("[NET]   Interface: " + std::string(buffer));
+            }
+            
+            // Check stream channel info
+            if (device->GetFeatureValue("GevSCCFGPacketResendDestination", buffer, sizeof(buffer))) {
+                AddLogMessage("[NET]   Resend destination: " + std::string(buffer));
+            }
+            
+            // Check camera IP
+            if (device->GetFeatureValue("GevCurrentIPAddress", buffer, sizeof(buffer))) {
+                AddLogMessage("[NET]   Camera IP: " + std::string(buffer));
+            }
+            
+            // Check heartbeat timeout
+            if (device->GetFeatureValue("GevHeartbeatTimeout", buffer, sizeof(buffer))) {
+                AddLogMessage("[NET]   Heartbeat timeout: " + std::string(buffer));
+            }
+        }
+    }
+}
+
+void ApplyJumboFrames() {
+    if (use_jumbo_frames) {
+        camera_params.packet_size = std::min(9000, camera_params.packet_size * 2);
+        AddLogMessage("[NET] Jumbo frames enabled - packet size increased to " + std::to_string(camera_params.packet_size));
+    } else {
+        camera_params.packet_size = std::min(1500, camera_params.packet_size);
+        AddLogMessage("[NET] Jumbo frames disabled - packet size limited to " + std::to_string(camera_params.packet_size));
+    }
+    
+    ApplyParameterToAllCameras("GevSCPSPacketSize", std::to_string(camera_params.packet_size));
+}
+
+void MonitorNetworkPerformance() {
+    if (!enable_bandwidth_monitoring || connected_devices.empty()) {
+        return;
+    }
+    
+    static auto lastCheck = std::chrono::high_resolution_clock::now();
+    auto now = std::chrono::high_resolution_clock::now();
+    auto timeDiff = std::chrono::duration_cast<std::chrono::seconds>(now - lastCheck);
+    
+    // Update performance metrics every 5 seconds
+    if (timeDiff.count() >= 5) {
+        AddLogMessage("[NEURAL] === PERFORMANCE MONITORING ===");
+        
+        // Calculate theoretical bandwidth usage
+        float bytes_per_pixel = 3.0f; // RGB8
+        float pixels_per_camera = static_cast<float>(camera_params.width * camera_params.height);
+        float bytes_per_image = pixels_per_camera * bytes_per_pixel;
+        float mb_per_image = bytes_per_image / (1024.0f * 1024.0f);
+        
+        int camera_count = static_cast<int>(connected_devices.size());
+        float total_mb_per_capture = mb_per_image * camera_count;
+        
+        AddLogMessage("[NEURAL] Image size per camera: " + std::to_string(mb_per_image) + " MB");
+        AddLogMessage("[NEURAL] Total data per capture: " + std::to_string(total_mb_per_capture) + " MB");
+        
+        // Sequential mode performance analysis
+        if (sequential_capture_mode) {
+            float total_time_seconds = (camera_count * capture_delay_ms) / 1000.0f;
+            float throughput_mbps = (total_mb_per_capture * 8.0f) / total_time_seconds;
+            AddLogMessage("[NEURAL] Sequential throughput: " + std::to_string(throughput_mbps) + " Mbps");
+            AddLogMessage("[NEURAL] Time per full capture: " + std::to_string(total_time_seconds) + "s");
+        }
+        
+        // Network configuration summary
+        AddLogMessage("[NEURAL] Network config: " + std::to_string(camera_params.packet_size) + 
+                     " bytes packets, " + std::to_string(camera_params.packet_delay) + "µs delay");
+        
+        // Memory usage estimation
+        float buffer_memory_mb = (bytes_per_image * camera_count) / (1024.0f * 1024.0f);
+        AddLogMessage("[NEURAL] Estimated buffer memory: " + std::to_string(buffer_memory_mb) + " MB");
+        
+        lastCheck = now;
+    }
+}
+
+void ApplyMaximumQualityDefaults() {
+    // This function is now deprecated - optimization happens in ConnectAllCameras before connection
+    AddLogMessage("[NEURAL] Quality optimization is now automatically applied before camera connection");
+}

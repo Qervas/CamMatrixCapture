@@ -1,425 +1,345 @@
-#include "NeuralCaptureSystem.hpp"
+#include "capture/NeuralCaptureSystem.hpp"
+#include "capture/ParameterController.hpp"
+#include <SapManager.h>
 #include <iostream>
+#include <stdexcept>
+#include <algorithm>
+#include <filesystem>
+#include <iomanip>
+#include <sstream>
 
-// Include the ParameterController implementation
-#include "ParameterController.hpp"
-
-NeuralRenderingCaptureSystem::NeuralRenderingCaptureSystem(const std::string& datasetPath) 
-    : datasetPath_(datasetPath), currentFormat_(CaptureFormat::TIFF), captureCounter_(1), exposureTime_(40000) {
-    
-    // Create dataset directories
-    std::filesystem::create_directories(datasetPath_ + "/images");
-    std::filesystem::create_directories(datasetPath_ + "/metadata");
-    
-    // Initialize parameter controller
+// Constructor
+NeuralRenderingCaptureSystem::NeuralRenderingCaptureSystem(const std::string& datasetPath)
+    : datasetPath_(datasetPath),
+      currentFormat_(CaptureFormat::TIFF),
+      captureCounter_(0),
+      exposureTime_(10000) { // Default exposure time in microseconds
     parameterController_ = std::make_unique<ParameterController>();
-    
-    std::cout << "📁 Neural dataset initialized: " << datasetPath_ << std::endl;
-    std::cout << "⏱️ Default exposure time: " << exposureTime_ << "μs" << std::endl;
 }
 
+// Destructor
 NeuralRenderingCaptureSystem::~NeuralRenderingCaptureSystem() {
-    // Clean up all connected cameras
-    for (auto& [cameraId, camera] : connectedCameras_) {
+    std::cout << "🧹 Shutting down: Releasing all Sapera resources..." << std::endl;
+    destroyAllCameraObjects();
+    std::cout << "✅ System cleanup complete." << std::endl;
+}
+
+// Final cleanup function to release all Sapera objects.
+// This is the "hard" disconnect, only called on destruction.
+void NeuralRenderingCaptureSystem::destroyAllCameraObjects() {
+    std::cout << "Destroying all persistent camera objects..." << std::endl;
+
+    for (auto& camera : cameras_) {
+        // Stop and destroy the transfer object first.
         if (camera.transfer) {
-            camera.transfer->Destroy();
+            if (camera.transfer->IsCreated()) {
+                camera.transfer->Freeze(); // Safe to call even if not grabbing
+                camera.transfer->Destroy();
+            }
             delete camera.transfer;
+            camera.transfer = nullptr;
         }
+
+        // Destroy buffer if it exists
         if (camera.buffer) {
-            camera.buffer->Destroy();
+            if (camera.buffer->IsCreated()) {
+                camera.buffer->Destroy();
+            }
             delete camera.buffer;
+            camera.buffer = nullptr;
         }
+        
+        // Destroy acquisition device if it exists
         if (camera.acqDevice) {
+            if (camera.acqDevice->IsCreated()) {
+                camera.acqDevice->Destroy();
+            }
+            delete camera.acqDevice;
+            camera.acqDevice = nullptr;
+        }
+
+        camera.isInitialized = false;
+        camera.isConnected = false;
+    }
+    std::cout << "All camera objects have been destroyed." << std::endl;
+}
+
+
+// --- Core Workflow ---
+
+// Step 1: Find all available hardware. Populates the camera list with basic info.
+bool NeuralRenderingCaptureSystem::discoverCameras() {
+    cameras_.clear(); // Clear previous discovery results
+    std::cout << "🔍 Discovering Sapera devices..." << std::endl;
+    int serverCount = SapManager::GetServerCount();
+    if (serverCount == 0) {
+        std::cout << "No Sapera servers found." << std::endl;
+        return false;
+    }
+
+    for (int serverIndex = 0; serverIndex < serverCount; ++serverIndex) {
+        char serverName[CORSERVER_MAX_STRLEN];
+        SapManager::GetServerName(serverIndex, serverName, CORSERVER_MAX_STRLEN);
+        int deviceCount = SapManager::GetResourceCount(serverName, SapManager::ResourceAcqDevice);
+
+        for (int deviceIndex = 0; deviceIndex < deviceCount; ++deviceIndex) {
+            CameraInfo cam;
+            cam.serverName = serverName;
+            cam.serverIndex = serverIndex;
+            cam.deviceIndex = deviceIndex;
+            cameras_.push_back(cam);
+        }
+    }
+    std::cout << "✅ Discovered " << cameras_.size() << " potential camera devices." << std::endl;
+    return true;
+}
+
+// Step 2: Creates the underlying Sapera objects (AcqDevice, Buffer) for all discovered cameras.
+bool NeuralRenderingCaptureSystem::initializeAllCameras() {
+    std::cout << "🛠️ Initializing all discovered cameras (creating persistent objects)..." << std::endl;
+    bool allSuccess = true;
+    for (auto& camera : cameras_) {
+        if (camera.isInitialized) continue; // Skip if already done
+
+        // Create Acquisition Device
+        camera.acqDevice = new SapAcqDevice(SapLocation(camera.serverName.c_str(), camera.deviceIndex), FALSE);
+        if (!camera.acqDevice || !camera.acqDevice->Create()) {
+            std::cerr << "❌ Failed to create SapAcqDevice for " << camera.serverName << " [" << camera.deviceIndex << "]" << std::endl;
+            delete camera.acqDevice;
+            camera.acqDevice = nullptr;
+            allSuccess = false;
+            continue;
+        }
+
+        // Get device info
+        camera.acqDevice->GetFeatureValue("DeviceModelName", camera.modelName, MAX_PATH);
+        camera.acqDevice->GetFeatureValue("DeviceID", camera.serialNumber, MAX_PATH);
+        camera.name = camera.modelName + " (" + camera.serialNumber + ")";
+
+        // Create Buffer
+        camera.buffer = new SapBuffer(1, camera.acqDevice);
+        if (!camera.buffer || !camera.buffer->Create()) {
+            std::cerr << "❌ Failed to create SapBuffer for " << camera.name << std::endl;
             camera.acqDevice->Destroy();
             delete camera.acqDevice;
+            camera.acqDevice = nullptr;
+            allSuccess = false;
+            continue;
         }
+
+        camera.isInitialized = true;
+        std::cout << "  -> Initialized: " << camera.name << std::endl;
+
+        // Apply default or current settings now that the device object exists
+        applyExposureTime(camera.acqDevice, exposureTime_);
     }
-    connectedCameras_.clear();
-    
-    std::cout << "🧹 Cleanup completed" << std::endl;
+    return allSuccess;
 }
 
-std::vector<CameraInfo> NeuralRenderingCaptureSystem::discoverCameras() {
-    std::cout << "🔍 Discovering cameras for neural rendering..." << std::endl;
-    
-    discoveredCameras_.clear();
-    
-    int serverCount = SapManager::GetServerCount();
-    std::cout << "Found " << serverCount << " server(s)" << std::endl;
-    
-    for (int serverIndex = 0; serverIndex < serverCount; serverIndex++) {
-        char serverName[CORSERVER_MAX_STRLEN];
-        SapManager::GetServerName(serverIndex, serverName, sizeof(serverName));
-        
-        std::cout << "🖥️ Server " << (serverIndex + 1) << ": " << serverName << std::endl;
-        
-        int deviceCount = SapManager::GetResourceCount(serverName, SapManager::ResourceAcq);
-        std::cout << "  📸 Acquisition devices: " << deviceCount << std::endl;
-        
-        for (int deviceIndex = 0; deviceIndex < deviceCount; deviceIndex++) {
-            char deviceName[CORSERVER_MAX_STRLEN];
-            SapManager::GetResourceName(serverName, SapManager::ResourceAcq, deviceIndex, deviceName, sizeof(deviceName));
-            
-            // Create camera info
-            CameraInfo camera;
-            camera.serverName = serverName;
-            camera.deviceName = deviceName;
-            camera.serverIndex = serverIndex;
-            camera.deviceIndex = deviceIndex;
-            
-            // Try to get more detailed info
-            SapAcqDevice* tempDevice = new SapAcqDevice(serverName, deviceName);
-            if (tempDevice && tempDevice->Create()) {
-                // Get serial number
-                char serialBuffer[256];
-                if (tempDevice->GetFeatureValue("DeviceSerialNumber", serialBuffer, sizeof(serialBuffer))) {
-                    camera.serialNumber = serialBuffer;
-                }
-                
-                // Get model name
-                char modelBuffer[256];
-                if (tempDevice->GetFeatureValue("DeviceModelName", modelBuffer, sizeof(modelBuffer))) {
-                    camera.modelName = modelBuffer;
-                }
-                
-                // Generate friendly name
-                camera.name = "cam_" + std::to_string(discoveredCameras_.size() + 1).insert(0, 2 - std::to_string(discoveredCameras_.size() + 1).length(), '0');
-                
-                tempDevice->Destroy();
-            }
-            delete tempDevice;
-            
-            camera.isConnected = false;
-            discoveredCameras_.push_back(camera);
-            
-            std::cout << "  ✅ " << camera.name << ": " << camera.serialNumber << " (" << camera.modelName << ")" << std::endl;
-        }
-    }
-    
-    std::cout << "🎯 Discovery complete: " << discoveredCameras_.size() << " cameras found" << std::endl;
-    return discoveredCameras_;
-}
-
+// Step 3: Connects all initialized cameras by creating a transfer and starting the grab.
 bool NeuralRenderingCaptureSystem::connectAllCameras() {
-    std::cout << "🔌 Connecting to all cameras..." << std::endl;
-    
-    bool allConnected = true;
-    int successCount = 0;
-    
-    for (auto& camera : discoveredCameras_) {
-        std::string cameraId = camera.serverName + "_" + camera.deviceName;
-        
-        if (connectCamera(cameraId)) {
-            camera.isConnected = true;
-            successCount++;
-            std::cout << "✅ " << camera.name << " connected successfully" << std::endl;
-        } else {
-            camera.isConnected = false;
-            allConnected = false;
-            std::cout << "❌ " << camera.name << " connection failed" << std::endl;
+    std::cout << "🔌 Connecting all initialized cameras..." << std::endl;
+    bool allSuccess = true;
+    for (auto& camera : cameras_) {
+        if (!camera.isInitialized || camera.isConnected) {
+            continue; // Skip uninitialized or already connected cameras
         }
+
+        camera.transfer = new SapAcqDeviceToBuf(camera.acqDevice, camera.buffer);
+        if (!camera.transfer || !camera.transfer->Create()) {
+            std::cerr << "❌ Failed to create SapTransfer for " << camera.name << std::endl;
+            delete camera.transfer;
+            camera.transfer = nullptr;
+            allSuccess = false;
+            continue;
+        }
+        
+        // Start grabbing frames
+        if (!camera.transfer->Grab()) {
+             std::cerr << "❌ Failed to start grabbing on " << camera.name << std::endl;
+             allSuccess = false;
+             camera.transfer->Destroy();
+             delete camera.transfer;
+             camera.transfer = nullptr;
+             continue;
+        }
+
+        camera.isConnected = true;
+        std::cout << "  -> Connected and grabbing: " << camera.name << std::endl;
     }
-    
-    // Set cameras in parameter controller
-    parameterController_->setCameras(connectedCameras_);
-    
-    std::cout << "🎯 Connection summary: " << successCount << "/" << discoveredCameras_.size() << " cameras connected" << std::endl;
-    return allConnected;
+    return allSuccess;
 }
 
-bool NeuralRenderingCaptureSystem::connectCamera(const std::string& cameraId) {
-    // Find camera info
-    CameraInfo* cameraInfo = nullptr;
-    for (auto& camera : discoveredCameras_) {
-        if ((camera.serverName + "_" + camera.deviceName) == cameraId) {
-            cameraInfo = &camera;
-            break;
-        }
-    }
-    
-    if (!cameraInfo) {
-        std::cerr << "❌ Camera not found: " << cameraId << std::endl;
+// Step 4: Triggers a capture on all currently connected cameras.
+bool NeuralRenderingCaptureSystem::captureAllCameras() {
+    if (getConnectedCameraCount() == 0) {
+        std::cerr << "❌ No cameras are connected to capture from." << std::endl;
         return false;
     }
     
+    std::string sessionName = generateSessionName(captureCounter_);
+    std::string sessionPath = datasetPath_ + "/" + sessionName;
+
     try {
-        ConnectedCamera connectedCamera;
-        connectedCamera.info = *cameraInfo;
-        
-        // Create acquisition device
-        connectedCamera.acqDevice = new SapAcqDevice(cameraInfo->serverName.c_str(), cameraInfo->deviceName.c_str());
-        if (!connectedCamera.acqDevice->Create()) {
-            std::cerr << "❌ Failed to create acquisition device for " << cameraId << std::endl;
-            delete connectedCamera.acqDevice;
-            return false;
-        }
-        
-        // Create buffer
-        connectedCamera.buffer = new SapBuffer(1, connectedCamera.acqDevice);
-        if (!connectedCamera.buffer->Create()) {
-            std::cerr << "❌ Failed to create buffer for " << cameraId << std::endl;
-            connectedCamera.acqDevice->Destroy();
-            delete connectedCamera.acqDevice;
-            delete connectedCamera.buffer;
-            return false;
-        }
-        
-        // Create transfer
-        connectedCamera.transfer = new SapAcqDeviceToBuf(connectedCamera.acqDevice, connectedCamera.buffer);
-        if (!connectedCamera.transfer->Create()) {
-            std::cerr << "❌ Failed to create transfer for " << cameraId << std::endl;
-            connectedCamera.buffer->Destroy();
-            connectedCamera.acqDevice->Destroy();
-            delete connectedCamera.acqDevice;
-            delete connectedCamera.buffer;
-            delete connectedCamera.transfer;
-            return false;
-        }
-        
-        // Apply exposure time
-        if (!applyExposureTime(connectedCamera.acqDevice, exposureTime_)) {
-            std::cerr << "⚠️ Warning: Could not set exposure time for " << cameraId << std::endl;
-        }
-        
-        connectedCamera.connected = true;
-        connectedCamera.captureReady = true;
-        connectedCamera.cameraIndex = connectedCameras_.size() + 1;
-        
-        connectedCameras_[cameraId] = connectedCamera;
-        
-        return true;
-        
+        std::filesystem::create_directories(sessionPath + "/images");
     } catch (const std::exception& e) {
-        std::cerr << "❌ Exception connecting camera " << cameraId << ": " << e.what() << std::endl;
+        std::cerr << "❌ Error creating directory: " << sessionPath << " - " << e.what() << std::endl;
         return false;
     }
-}
 
-bool NeuralRenderingCaptureSystem::applyExposureTime(SapAcqDevice* acqDevice, int exposureTimeUs) {
-    if (!acqDevice) return false;
-    
-    try {
-        std::string exposureStr = std::to_string(exposureTimeUs);
-        return acqDevice->SetFeatureValue("ExposureTime", exposureStr.c_str());
-    } catch (const std::exception& e) {
-        std::cerr << "❌ Exception setting exposure time: " << e.what() << std::endl;
-        return false;
-    }
-}
-
-bool NeuralRenderingCaptureSystem::setExposureTime(int exposureTimeUs) {
-    if (exposureTimeUs < 1000 || exposureTimeUs > 100000) {
-        std::cout << "❌ Invalid exposure time. Must be between 1000-100000 μs" << std::endl;
-        return false;
-    }
-    
-    exposureTime_ = exposureTimeUs;
-    
-    // Apply to all connected cameras
-    bool success = true;
-    for (auto& [cameraId, camera] : connectedCameras_) {
-        if (!applyExposureTime(camera.acqDevice, exposureTimeUs)) {
-            success = false;
+    std::cout << "🎬 Starting capture for session: " << sessionName << std::endl;
+    bool allSuccess = true;
+    for (auto& camera : cameras_) {
+        if (camera.isConnected) {
+            if (!captureSingleCamera(camera, sessionPath)) {
+                allSuccess = false;
+            }
         }
     }
-    
-    if (success) {
-        std::cout << "✅ Exposure time set to " << exposureTimeUs << "μs on all cameras" << std::endl;
+
+    saveSessionMetadata(sessionName, captureCounter_, allSuccess);
+    if(allSuccess) {
+        captureCounter_++;
+        std::cout << "✅ Capture successful." << std::endl;
     } else {
-        std::cout << "⚠️ Exposure time partially applied. Some cameras may have failed." << std::endl;
+        std::cerr << "⚠️ Capture failed for one or more cameras." << std::endl;
     }
     
-    return success;
+    return allSuccess;
+}
+
+
+// --- Parameter & Configuration ---
+bool NeuralRenderingCaptureSystem::setExposureTime(int exposureTimeUs) {
+    std::cout << "Setting exposure time to " << exposureTimeUs << " us for all initialized cameras." << std::endl;
+    exposureTime_ = exposureTimeUs;
+    bool allSuccess = true;
+
+    for (auto& camera : cameras_) {
+        // Apply to any camera that has its acquisition device created.
+        if (camera.isInitialized && camera.acqDevice) {
+            if (!applyExposureTime(camera.acqDevice, exposureTimeUs)) {
+                allSuccess = false;
+                std::cerr << "Failed to set exposure for " << camera.name << std::endl;
+            }
+        }
+    }
+    return allSuccess;
 }
 
 int NeuralRenderingCaptureSystem::getExposureTime() const {
     return exposureTime_;
 }
 
-bool NeuralRenderingCaptureSystem::captureAllCameras() {
-    if (connectedCameras_.empty()) {
-        std::cout << "❌ No cameras connected" << std::endl;
-        return false;
-    }
-    
-    std::string sessionName = generateSessionName(captureCounter_);
-    std::string sessionPath = datasetPath_ + "/images/" + sessionName;
-    
-    // Create session directory
-    std::filesystem::create_directories(sessionPath);
-    
-    std::cout << "📸 Starting capture session: " << sessionName << std::endl;
-    std::cout << "📁 Session path: " << sessionPath << std::endl;
-    
-    bool allSuccess = true;
-    int successCount = 0;
-    
-    auto startTime = std::chrono::high_resolution_clock::now();
-    
-    // Capture from all cameras
-    for (auto& [cameraId, camera] : connectedCameras_) {
-        if (captureSingleCamera(cameraId, sessionPath)) {
-            successCount++;
-        } else {
-            allSuccess = false;
-        }
-    }
-    
-    auto endTime = std::chrono::high_resolution_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime);
-    
-    std::cout << "🎯 Capture completed in " << duration.count() << "ms" << std::endl;
-    std::cout << "✅ Success: " << successCount << "/" << connectedCameras_.size() << " cameras" << std::endl;
-    
-    // Save session metadata
-    saveSessionMetadata(sessionName, captureCounter_, allSuccess);
-    
-    if (allSuccess) {
-        captureCounter_++;
-        std::cout << "🎉 All cameras captured successfully!" << std::endl;
-    } else {
-        std::cout << "⚠️ Some cameras failed to capture" << std::endl;
-    }
-    
-    return allSuccess;
-}
-
-bool NeuralRenderingCaptureSystem::captureSingleCamera(const std::string& cameraId, const std::string& sessionPath) {
-    auto it = connectedCameras_.find(cameraId);
-    if (it == connectedCameras_.end() || !it->second.captureReady) {
-        return false;
-    }
-    
-    ConnectedCamera& camera = it->second;
-    
-    try {
-        // Trigger capture
-        if (!camera.transfer->Snap()) {
-            std::cerr << "❌ Failed to trigger capture for " << cameraId << std::endl;
-            return false;
-        }
-        
-        // Wait for capture completion
-        if (!camera.transfer->Wait(5000)) {
-            std::cerr << "❌ Capture timeout for " << cameraId << std::endl;
-            return false;
-        }
-        
-        // Generate filename
-        std::string filename = generateImageFilename(camera.info.name, captureCounter_);
-        std::string fullPath = sessionPath + "/" + filename;
-        
-        // Save image
-        if (currentFormat_ == CaptureFormat::TIFF) {
-            // Save as TIFF with color conversion
-            SapColorConversion colorConv;
-            if (colorConv.Create(camera.buffer, nullptr)) {
-                if (colorConv.ConvertBuffer(camera.buffer, camera.buffer)) {
-                    if (camera.buffer->Save(fullPath.c_str(), "-format tiff")) {
-                        return true;
-                    }
-                }
-                colorConv.Destroy();
-            }
-        } else {
-            // Save as RAW
-            if (camera.buffer->Save(fullPath.c_str(), "-format raw")) {
-                return true;
-            }
-        }
-        
-        return false;
-        
-    } catch (const std::exception& e) {
-        std::cerr << "❌ Exception capturing " << cameraId << ": " << e.what() << std::endl;
-        return false;
-    }
-}
-
 void NeuralRenderingCaptureSystem::setFormat(CaptureFormat format) {
     currentFormat_ = format;
-    std::cout << "📷 Format set to: " << (format == CaptureFormat::TIFF ? "TIFF" : "RAW") << std::endl;
 }
 
 void NeuralRenderingCaptureSystem::setDatasetPath(const std::string& path) {
     datasetPath_ = path;
-    std::filesystem::create_directories(datasetPath_ + "/images");
-    std::filesystem::create_directories(datasetPath_ + "/metadata");
-    std::cout << "📁 Dataset path set to: " << datasetPath_ << std::endl;
 }
 
 void NeuralRenderingCaptureSystem::resetCaptureCounter() {
-    captureCounter_ = 1;
-    std::cout << "🔄 Capture counter reset to 1" << std::endl;
+    captureCounter_ = 0;
+    std::cout << "Capture counter reset to 0." << std::endl;
 }
 
-void NeuralRenderingCaptureSystem::printCameraStatus() {
-    std::cout << "\n=== Multi-Camera Neural Rendering System Status ===" << std::endl;
-    std::cout << "📁 Dataset: " << datasetPath_ << std::endl;
-    std::cout << "📷 Format: " << (currentFormat_ == CaptureFormat::TIFF ? "TIFF" : "RAW") << std::endl;
-    std::cout << "⏱️ Exposure: " << exposureTime_ << "μs" << std::endl;
-    std::cout << "🎯 Cameras: " << connectedCameras_.size() << "/" << discoveredCameras_.size() << " connected" << std::endl;
-    std::cout << "📸 Next capture: #" << captureCounter_ << std::endl;
-    
-    if (discoveredCameras_.empty()) {
-        std::cout << "No cameras discovered" << std::endl;
-        return;
+
+// --- Private Helper Functions ---
+bool NeuralRenderingCaptureSystem::applyExposureTime(SapAcqDevice* acqDevice, int exposureTimeUs) {
+    if (!acqDevice) return false;
+    if (acqDevice->IsFeatureAvailable("ExposureTime")) {
+        return acqDevice->SetFeatureValue("ExposureTime", (double)exposureTimeUs);
+    }
+    std::cerr << "Warning: 'ExposureTime' feature not available on device " << acqDevice->GetResourceName() << std::endl;
+    return false;
+}
+
+bool NeuralRenderingCaptureSystem::captureSingleCamera(CameraInfo& camera, const std::string& sessionPath) {
+    if (!camera.transfer) {
+        std::cerr << "❌ Cannot capture, camera " << camera.name << " has no transfer object." << std::endl;
+        return false;
     }
     
-    for (const auto& camera : discoveredCameras_) {
-        std::cout << "📸 " << camera.name << " (" << camera.serialNumber << "): " 
-                  << (camera.isConnected ? "🟢 Ready" : "🔴 Disconnected") << std::endl;
+    // The camera is already grabbing continuously. We just need to wait for a new frame to arrive.
+    if (!camera.transfer->Wait(2000)) {
+        std::cerr << "❌ Timed out waiting for a new frame from " << camera.name << std::endl;
+        return false;
     }
+
+    std::string filename = generateImageFilename(camera, camera.deviceIndex);
+    std::string fullPath = sessionPath + "/images/" + filename;
+    
+    std::string options = (currentFormat_ == CaptureFormat::TIFF) ? "-format tiff" : "-format raw";
+
+    if (!camera.buffer->Save(fullPath.c_str(), options.c_str())) {
+        std::cerr << "❌ Failed to save image for " << camera.name << " to " << fullPath << std::endl;
+        return false;
+    }
+    
+    return true;
 }
 
 std::string NeuralRenderingCaptureSystem::generateSessionName(int captureNumber) {
     auto now = std::chrono::system_clock::now();
-    auto time_t = std::chrono::system_clock::to_time_t(now);
-    
+    time_t in_time_t = std::chrono::system_clock::to_time_t(now);
+    std::tm tm_buf;
+#ifdef _WIN32
+    localtime_s(&tm_buf, &in_time_t);
+#else
+    localtime_r(&in_time_t, &tm_buf);
+#endif
     std::stringstream ss;
-    ss << "capture_" << std::setfill('0') << std::setw(3) << captureNumber << "_";
-    ss << std::put_time(std::localtime(&time_t), "%Y%m%d_%H%M%S");
-    
+    ss << "capture_" << std::setfill('0') << std::setw(4) << captureNumber << "_"
+       << std::put_time(&tm_buf, "%Y%m%d_%H%M%S");
     return ss.str();
 }
 
-std::string NeuralRenderingCaptureSystem::generateImageFilename(const std::string& cameraName, int captureNumber) {
-    std::string extension = (currentFormat_ == CaptureFormat::TIFF) ? ".tiff" : ".raw";
-    return cameraName + "_capture_" + std::to_string(captureNumber) + extension;
+std::string NeuralRenderingCaptureSystem::generateImageFilename(const CameraInfo& camera, int cameraIndex) {
+    std::string format_ext = (currentFormat_ == CaptureFormat::TIFF) ? ".tiff" : ".raw";
+    return "cam" + std::to_string(cameraIndex) + format_ext;
 }
 
 void NeuralRenderingCaptureSystem::saveSessionMetadata(const std::string& sessionName, int captureNumber, bool success) {
-    std::string metadataPath = datasetPath_ + "/metadata/" + sessionName + ".json";
-    
-    std::ofstream metadataFile(metadataPath);
-    if (metadataFile.is_open()) {
-        auto now = std::chrono::system_clock::now();
-        auto time_t = std::chrono::system_clock::to_time_t(now);
-        
-        metadataFile << "{\n";
-        metadataFile << "  \"session_name\": \"" << sessionName << "\",\n";
-        metadataFile << "  \"capture_number\": " << captureNumber << ",\n";
-        metadataFile << "  \"timestamp\": \"" << std::put_time(std::localtime(&time_t), "%Y-%m-%d %H:%M:%S") << "\",\n";
-        metadataFile << "  \"format\": \"" << (currentFormat_ == CaptureFormat::TIFF ? "TIFF" : "RAW") << "\",\n";
-        metadataFile << "  \"exposure_time_us\": " << exposureTime_ << ",\n";
-        metadataFile << "  \"success\": " << (success ? "true" : "false") << ",\n";
-        metadataFile << "  \"camera_count\": " << connectedCameras_.size() << ",\n";
-        metadataFile << "  \"cameras\": [\n";
-        
-        bool first = true;
-        for (const auto& [cameraId, camera] : connectedCameras_) {
-            if (!first) metadataFile << ",\n";
-            metadataFile << "    {\n";
-            metadataFile << "      \"name\": \"" << camera.info.name << "\",\n";
-            metadataFile << "      \"serial\": \"" << camera.info.serialNumber << "\",\n";
-            metadataFile << "      \"model\": \"" << camera.info.modelName << "\"\n";
-            metadataFile << "    }";
-            first = false;
-        }
-        
-        metadataFile << "\n  ]\n";
-        metadataFile << "}\n";
-        
-        metadataFile.close();
+    std::string metaPath = datasetPath_ + "/" + sessionName + "/metadata.txt";
+    std::ofstream metadataFile(metaPath);
+    if (!metadataFile.is_open()) {
+        std::cerr << "Failed to create metadata file at " << metaPath << std::endl;
+        return;
     }
-} 
+    auto now = std::chrono::system_clock::now();
+    time_t in_time_t = std::chrono::system_clock::to_time_t(now);
+    std::tm tm_buf;
+#ifdef _WIN32
+    localtime_s(&tm_buf, &in_time_t);
+#else
+    localtime_r(&in_time_t, &tm_buf);
+#endif
+
+    metadataFile << "SessionName: " << sessionName << std::endl;
+    metadataFile << "Timestamp: " << std::put_time(&tm_buf, "%Y-%m-%d %X") << std::endl;
+    metadataFile << "Success: " << (success ? "true" : "false") << std::endl;
+    metadataFile << "Format: " << (currentFormat_ == CaptureFormat::TIFF ? "TIFF" : "RAW") << std::endl;
+    metadataFile << "ExposureTime_us: " << exposureTime_ << std::endl;
+    metadataFile << "\n[ConnectedCameras]\n";
+    int camIndex = 0;
+    for (const auto& cam : cameras_) {
+        if(cam.isConnected) {
+            metadataFile << "camera_" << camIndex << "_name=" << cam.name << std::endl;
+            metadataFile << "camera_" << camIndex << "_serial=" << cam.serialNumber << std::endl;
+        }
+        camIndex++;
+    }
+    metadataFile.close();
+}
+
+// --- Status & Getters ---
+int NeuralRenderingCaptureSystem::getConnectedCameraCount() const {
+    int count = 0;
+    for(const auto& cam : cameras_) {
+        if(cam.isConnected) {
+            count++;
+        }
+    }
+    return count;
+}

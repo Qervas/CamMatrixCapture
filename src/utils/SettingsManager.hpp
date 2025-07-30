@@ -10,6 +10,43 @@
 // Settings value type that can hold different types
 using SettingsValue = std::variant<int, float, bool, std::string>;
 
+// Individual Camera Settings for per-camera parameter control - NEW
+struct IndividualCameraSettings {
+    std::string camera_id;
+    
+    // Acquisition Control
+    int exposure_time = 40000;  // 40k microseconds default
+    float gain = 1.0f;
+    bool auto_exposure = false;
+    bool auto_gain = false;
+    
+    // Color Control
+    float white_balance_red = 1.0f;
+    float white_balance_green = 1.0f;
+    float white_balance_blue = 1.0f;
+    bool auto_white_balance = false;
+    float saturation = 1.0f;
+    float hue = 0.0f;
+    float gamma = 1.0f;
+    
+    // Advanced Features
+    std::string acquisition_mode = "Continuous";
+    int acquisition_frame_count = 1;
+    float acquisition_frame_rate = 30.0f;
+    bool frame_rate_enable = false;
+    
+    // Region of Interest (ROI)
+    int roi_offset_x = 0;
+    int roi_offset_y = 0;
+    int roi_width = 1920;
+    int roi_height = 1080;
+    bool roi_enabled = false;
+    
+    SimpleJSON ToJson() const;
+    void FromJson(const SimpleJSON& json);
+    void Reset();
+};
+
 // Camera parameter structure for persistence
 struct CameraSettings {
     // Image Format & Resolution
@@ -18,7 +55,7 @@ struct CameraSettings {
     std::string pixel_format = "RGB8";
     
     // Acquisition Control
-    int exposure_time = 10000;
+    int exposure_time = 40000;  // 40k microseconds default
     float gain = 1.0f;
     bool auto_exposure = false;
     bool auto_gain = false;
@@ -79,6 +116,7 @@ private:
     std::string config_file_path;
     CameraSettings camera_settings;
     AppSettings app_settings;
+    std::map<std::string, IndividualCameraSettings> individual_camera_settings; // NEW: Per-camera settings
     bool auto_save_enabled;
     
     bool LoadFromFile();
@@ -94,6 +132,16 @@ public:
     CameraSettings& GetCameraSettings() { return camera_settings; }
     const CameraSettings& GetCameraSettings() const { return camera_settings; }
     void ResetCameraSettings();
+    
+    // Individual Camera Settings - NEW
+    IndividualCameraSettings& GetIndividualCameraSettings(const std::string& camera_id);
+    const IndividualCameraSettings& GetIndividualCameraSettings(const std::string& camera_id) const;
+    void SetIndividualCameraSettings(const std::string& camera_id, const IndividualCameraSettings& settings);
+    void RemoveIndividualCameraSettings(const std::string& camera_id);
+    std::vector<std::string> GetIndividualCameraIds() const;
+    void ResetIndividualCameraSettings(const std::string& camera_id);
+    void ResetAllIndividualCameraSettings();
+    bool HasIndividualCameraSettings(const std::string& camera_id) const;
     
     // App Settings
     AppSettings& GetAppSettings() { return app_settings; }

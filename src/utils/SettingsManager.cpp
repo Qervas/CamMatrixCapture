@@ -103,6 +103,81 @@ void CameraSettings::Reset() {
     *this = CameraSettings{}; // Reset to defaults
 }
 
+// IndividualCameraSettings implementation - NEW
+SimpleJSON IndividualCameraSettings::ToJson() const {
+    SimpleJSON json;
+    
+    // Camera ID
+    json.set("camera_id", camera_id);
+    
+    // Acquisition Control
+    json.set("exposure_time", exposure_time);
+    json.set("gain", gain);
+    json.set("auto_exposure", auto_exposure);
+    json.set("auto_gain", auto_gain);
+    
+    // Color Control
+    json.set("white_balance_red", white_balance_red);
+    json.set("white_balance_green", white_balance_green);
+    json.set("white_balance_blue", white_balance_blue);
+    json.set("auto_white_balance", auto_white_balance);
+    json.set("saturation", saturation);
+    json.set("hue", hue);
+    json.set("gamma", gamma);
+    
+    // Advanced Features
+    json.set("acquisition_mode", acquisition_mode);
+    json.set("acquisition_frame_count", acquisition_frame_count);
+    json.set("acquisition_frame_rate", acquisition_frame_rate);
+    json.set("frame_rate_enable", frame_rate_enable);
+    
+    // Region of Interest (ROI)
+    json.set("roi_offset_x", roi_offset_x);
+    json.set("roi_offset_y", roi_offset_y);
+    json.set("roi_width", roi_width);
+    json.set("roi_height", roi_height);
+    json.set("roi_enabled", roi_enabled);
+    
+    return json;
+}
+
+void IndividualCameraSettings::FromJson(const SimpleJSON& json) {
+    // Camera ID
+    camera_id = json.get("camera_id", camera_id);
+    
+    // Acquisition Control
+    exposure_time = json.getInt("exposure_time", exposure_time);
+    gain = json.getFloat("gain", gain);
+    auto_exposure = json.getBool("auto_exposure", auto_exposure);
+    auto_gain = json.getBool("auto_gain", auto_gain);
+    
+    // Color Control
+    white_balance_red = json.getFloat("white_balance_red", white_balance_red);
+    white_balance_green = json.getFloat("white_balance_green", white_balance_green);
+    white_balance_blue = json.getFloat("white_balance_blue", white_balance_blue);
+    auto_white_balance = json.getBool("auto_white_balance", auto_white_balance);
+    saturation = json.getFloat("saturation", saturation);
+    hue = json.getFloat("hue", hue);
+    gamma = json.getFloat("gamma", gamma);
+    
+    // Advanced Features
+    acquisition_mode = json.get("acquisition_mode", acquisition_mode);
+    acquisition_frame_count = json.getInt("acquisition_frame_count", acquisition_frame_count);
+    acquisition_frame_rate = json.getFloat("acquisition_frame_rate", acquisition_frame_rate);
+    frame_rate_enable = json.getBool("frame_rate_enable", frame_rate_enable);
+    
+    // Region of Interest (ROI)
+    roi_offset_x = json.getInt("roi_offset_x", roi_offset_x);
+    roi_offset_y = json.getInt("roi_offset_y", roi_offset_y);
+    roi_width = json.getInt("roi_width", roi_width);
+    roi_height = json.getInt("roi_height", roi_height);
+    roi_enabled = json.getBool("roi_enabled", roi_enabled);
+}
+
+void IndividualCameraSettings::Reset() {
+    *this = IndividualCameraSettings{}; // Reset to defaults
+}
+
 // AppSettings implementation
 SimpleJSON AppSettings::ToJson() const {
     SimpleJSON json;
@@ -148,6 +223,64 @@ SettingsManager::~SettingsManager() {
 
 void SettingsManager::ResetCameraSettings() {
     camera_settings.Reset();
+}
+
+// Individual Camera Settings Implementation - NEW
+IndividualCameraSettings& SettingsManager::GetIndividualCameraSettings(const std::string& camera_id) {
+    if (individual_camera_settings.find(camera_id) == individual_camera_settings.end()) {
+        // Create default settings for this camera
+        IndividualCameraSettings defaults;
+        defaults.camera_id = camera_id;
+        individual_camera_settings[camera_id] = defaults;
+    }
+    return individual_camera_settings[camera_id];
+}
+
+const IndividualCameraSettings& SettingsManager::GetIndividualCameraSettings(const std::string& camera_id) const {
+    auto it = individual_camera_settings.find(camera_id);
+    if (it != individual_camera_settings.end()) {
+        return it->second;
+    }
+    
+    // Return a default static instance if not found
+    static IndividualCameraSettings default_settings;
+    return default_settings;
+}
+
+void SettingsManager::SetIndividualCameraSettings(const std::string& camera_id, const IndividualCameraSettings& settings) {
+    individual_camera_settings[camera_id] = settings;
+    individual_camera_settings[camera_id].camera_id = camera_id; // Ensure camera_id is set correctly
+}
+
+void SettingsManager::RemoveIndividualCameraSettings(const std::string& camera_id) {
+    individual_camera_settings.erase(camera_id);
+}
+
+std::vector<std::string> SettingsManager::GetIndividualCameraIds() const {
+    std::vector<std::string> ids;
+    for (const auto& [id, settings] : individual_camera_settings) {
+        ids.push_back(id);
+    }
+    return ids;
+}
+
+void SettingsManager::ResetIndividualCameraSettings(const std::string& camera_id) {
+    auto it = individual_camera_settings.find(camera_id);
+    if (it != individual_camera_settings.end()) {
+        it->second.Reset();
+        it->second.camera_id = camera_id; // Restore camera ID after reset
+    }
+}
+
+void SettingsManager::ResetAllIndividualCameraSettings() {
+    for (auto& [id, settings] : individual_camera_settings) {
+        settings.Reset();
+        settings.camera_id = id; // Restore camera ID after reset
+    }
+}
+
+bool SettingsManager::HasIndividualCameraSettings(const std::string& camera_id) const {
+    return individual_camera_settings.find(camera_id) != individual_camera_settings.end();
 }
 
 void SettingsManager::ResetAppSettings() {
@@ -235,20 +368,47 @@ SimpleJSON SettingsManager::CreateFullSettings() const {
         combined.data["app_" + key] = value;
     }
     
+    // Merge individual camera settings - NEW
+    for (const auto& [camera_id, settings] : individual_camera_settings) {
+        auto individual_json = settings.ToJson();
+        for (const auto& [key, value] : individual_json.data) {
+            combined.data["individual_" + camera_id + "_" + key] = value;
+        }
+    }
+    
     return combined;
 }
 
 void SettingsManager::LoadFullSettings(const SimpleJSON& json) {
     SimpleJSON camera_json, app_json;
+    std::map<std::string, SimpleJSON> individual_jsons;
     
     for (const auto& [key, value] : json.data) {
         if (key.starts_with("camera_")) {
             camera_json.data[key.substr(7)] = value; // Remove "camera_" prefix
         } else if (key.starts_with("app_")) {
             app_json.data[key.substr(4)] = value; // Remove "app_" prefix
+        } else if (key.starts_with("individual_")) {
+            // Parse individual camera settings: "individual_CAMERAID_PARAMETER"
+            std::string remaining = key.substr(11); // Remove "individual_" prefix
+            auto second_underscore = remaining.find('_');
+            if (second_underscore != std::string::npos) {
+                std::string camera_id = remaining.substr(0, second_underscore);
+                std::string param_name = remaining.substr(second_underscore + 1);
+                individual_jsons[camera_id].data[param_name] = value;
+            }
         }
     }
     
     camera_settings.FromJson(camera_json);
     app_settings.FromJson(app_json);
+    
+    // Load individual camera settings - NEW
+    individual_camera_settings.clear();
+    for (const auto& [camera_id, json_data] : individual_jsons) {
+        IndividualCameraSettings settings;
+        settings.FromJson(json_data);
+        settings.camera_id = camera_id; // Ensure camera ID is set
+        individual_camera_settings[camera_id] = settings;
+    }
 } 
