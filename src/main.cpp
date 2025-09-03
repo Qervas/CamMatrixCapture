@@ -291,7 +291,7 @@ int main() {
     current_image_folder = app_settings.last_output_folder;
     
     // Initialize folder buffer
-    std::strcpy(image_folder_buffer, current_image_folder.c_str());
+    strcpy(image_folder_buffer, current_image_folder.c_str());
     
     // Setup GLFW
     glfwSetErrorCallback(GlfwErrorCallback);

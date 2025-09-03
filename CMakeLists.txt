@@ -21,6 +21,8 @@ FetchContent_Declare(
     glfw
     GIT_REPOSITORY https://github.com/glfw/glfw.git
     GIT_TAG 3.3.9
+    GIT_SHALLOW TRUE
+    GIT_SUBMODULES ""
 )
 set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
@@ -32,6 +34,8 @@ FetchContent_Declare(
     imgui
     GIT_REPOSITORY https://github.com/ocornut/imgui.git
     GIT_TAG docking
+    GIT_SHALLOW TRUE
+    GIT_SUBMODULES ""
 )
 FetchContent_MakeAvailable(imgui)
 
@@ -80,11 +84,17 @@ if(MSVC)
         WIN32_LEAN_AND_MEAN
         _CRT_SECURE_NO_WARNINGS
     )
-    
+
     add_compile_options(
         /W3                 # Warning level 3
         /MP                 # Multi-processor compilation
+        /EHsc               # Enable exception handling
     )
+endif()
+
+# GCC specific settings for Windows SDK compatibility
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    add_compile_options(-fpermissive)
 endif()
 
 # =============================================================================
@@ -113,7 +123,7 @@ target_link_directories(neural_capture PRIVATE
 
 target_link_libraries(neural_capture PRIVATE
     imgui
-    SapClassBasic
+    SapClassBasic.lib
 )
 
 # Set as default target
