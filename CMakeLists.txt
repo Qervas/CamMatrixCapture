@@ -89,7 +89,9 @@ if(MSVC)
         /W3                 # Warning level 3
         /MP                 # Multi-processor compilation
         /EHsc               # Enable exception handling
+        /await              # Enable coroutines for WinRT
     )
+    
 endif()
 
 # GCC specific settings for Windows SDK compatibility
@@ -107,6 +109,9 @@ add_executable(neural_capture
     src/hardware/CameraTypes.cpp
     src/utils/SessionManager.cpp
     src/utils/SettingsManager.cpp
+    src/bluetooth/BluetoothManager.cpp
+    src/bluetooth/BluetoothDevice.cpp
+    src/bluetooth/BluetoothScanner.cpp
 )
 
 target_include_directories(neural_capture PRIVATE
@@ -124,7 +129,14 @@ target_link_directories(neural_capture PRIVATE
 target_link_libraries(neural_capture PRIVATE
     imgui
     SapClassBasic.lib
+    windowsapp.lib  # For WinRT/C++
 )
+
+# WinRT specific settings (based on working BLE demo)
+if(MSVC)
+    set_property(TARGET neural_capture PROPERTY VS_GLOBAL_ConsumeWinRTExtension true)
+    set_property(TARGET neural_capture PROPERTY VS_GLOBAL_AdditionalUsingDirectories "$(WindowsSDK_WindowsMetadata)")
+endif()
 
 # Set as default target
 set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT neural_capture)
