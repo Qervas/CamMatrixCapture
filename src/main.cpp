@@ -26,7 +26,7 @@
 
 // Bluetooth Module
 #include "bluetooth/BluetoothManager.hpp"
-#include "bluetooth/BluetoothCommands.hpp"
+#include "gui/BluetoothGui.hpp"
 
 // WinRT for apartment initialization
 #include <winrt/base.h>
@@ -45,8 +45,9 @@ using namespace SaperaCapturePro;
 static std::unique_ptr<SessionManager> session_manager;
 static std::unique_ptr<SettingsManager> settings_manager;
 
-// Bluetooth Manager instance
+// Bluetooth instances
 static BluetoothManager* bluetooth_manager = nullptr;
+static std::unique_ptr<BluetoothGui> bluetooth_gui;
 
 // Global variables for the GUI
 static GLFWwindow* window = nullptr;
@@ -195,21 +196,7 @@ static std::chrono::steady_clock::time_point last_log_check = std::chrono::stead
 // Network monitoring log filter
 static bool filter_network_monitoring_logs = true; // Default: filter out network monitoring logs
 
-// Bluetooth UI Variables
-static std::vector<std::pair<std::string, std::string>> discovered_bt_devices;
-static std::string selected_bt_device_id = "";
-static std::string connected_bt_device_id = "";
-static bool bt_is_scanning = false;
-static bool bt_is_connecting = false;
-static float bt_rotation_angle = 30.0f;
-static float bt_tilt_angle = 0.0f;
-static float bt_rotation_speed = 70.0f;
-static float bt_tilt_speed = 20.0f;
-static bool bt_auto_rotate_capture = false;
-static int bt_capture_steps = 12;
-static float bt_step_angle = 30.0f;
-static char bt_service_uuid[128] = "0000ffe0-0000-1000-8000-00805f9b34fb";
-static char bt_char_uuid[128] = "0000ffe1-0000-1000-8000-00805f9b34fb";
+// Bluetooth UI Variables moved to BluetoothGui class
 
 // Function declarations
 void AddLogMessage(const std::string& message);
@@ -267,7 +254,6 @@ void CaptureSequential();
 void CheckNetworkBandwidth();
 void ApplyJumboFrames();
 void MonitorNetworkPerformance();
-void RenderBluetoothPanel();
 void InitializeBluetooth();
 void ShutdownBluetooth();
 void ApplyMaximumQualityDefaults(); // NEW: Auto-apply neural dataset optimizations
@@ -443,8 +429,8 @@ int main() {
             RenderNetworkOptimizationPanel();
         }
         
-        if (show_bluetooth_panel) {
-            RenderBluetoothPanel();
+        if (show_bluetooth_panel && bluetooth_gui) {
+            bluetooth_gui->Render(&show_bluetooth_panel);
         }
         
         if (show_session_manager) {
@@ -3432,6 +3418,7 @@ void ApplyMaximumQualityDefaults() {
 // ========================================
 
 void InitializeBluetooth() {
+    // Initialize Bluetooth manager
     bluetooth_manager = &BluetoothManager::GetInstance();
     
     // Set log callback to integrate with our logging system
@@ -3439,375 +3426,28 @@ void InitializeBluetooth() {
         AddLogMessage(msg);
     });
     
-    // Set device discovered callback
-    bluetooth_manager->SetDeviceDiscoveredCallback([](const std::string& id, const std::string& name) {
-        discovered_bt_devices.push_back({id, name});
-        AddLogMessage("[Bluetooth] Discovered: " + name);
-    });
-    
-    // Set connection status callback
-    bluetooth_manager->SetConnectionStatusCallback([](const std::string& id, bool connected) {
-        if (connected) {
-            connected_bt_device_id = id;
-            AddLogMessage("[Bluetooth] Connected to device: " + id);
-        } else {
-            if (connected_bt_device_id == id) {
-                connected_bt_device_id = "";
-            }
-            AddLogMessage("[Bluetooth] Disconnected from device: " + id);
-        }
-    });
-    
     // Initialize the manager
     if (!bluetooth_manager->Initialize()) {
         AddLogMessage("[Bluetooth] Failed to initialize Bluetooth manager");
-    } else {
-        AddLogMessage("[Bluetooth] Bluetooth manager initialized successfully");
+        return;
     }
+    
+    // Create and initialize Bluetooth GUI
+    bluetooth_gui = std::make_unique<BluetoothGui>();
+    bluetooth_gui->Initialize(bluetooth_manager);
+    
+    AddLogMessage("[Bluetooth] Bluetooth system initialized successfully");
 }
 
 void ShutdownBluetooth() {
+    if (bluetooth_gui) {
+        bluetooth_gui->Shutdown();
+        bluetooth_gui.reset();
+    }
+    
     if (bluetooth_manager) {
         bluetooth_manager->Shutdown();
         bluetooth_manager = nullptr;
     }
 }
 
-void RenderBluetoothPanel() {
-    ImGui::Begin("🔷 Bluetooth Control", &show_bluetooth_panel, ImGuiWindowFlags_NoCollapse);
-    
-    // Status bar
-    ImGui::Text("Status:");
-    ImGui::SameLine();
-    if (!connected_bt_device_id.empty()) {
-        ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Connected");
-        ImGui::SameLine();
-        ImGui::Text("- %s", connected_bt_device_id.c_str());
-    } else if (bt_is_connecting) {
-        ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Connecting...");
-    } else if (bt_is_scanning) {
-        ImGui::TextColored(ImVec4(0.0f, 0.5f, 1.0f, 1.0f), "Scanning...");
-    } else {
-        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "Disconnected");
-    }
-    
-    ImGui::Separator();
-    
-    // Tab bar for different sections
-    if (ImGui::BeginTabBar("BluetoothTabs")) {
-        // Scanner Tab
-        if (ImGui::BeginTabItem("Scanner")) {
-            // Scan controls
-            if (!bt_is_scanning) {
-                if (ImGui::Button("Start Scan", ImVec2(120, 0))) {
-                    discovered_bt_devices.clear();
-                    bluetooth_manager->StartScanning();
-                    bt_is_scanning = true;
-                }
-                ImGui::SameLine();
-                ImGui::Text("Click to start scanning for devices");
-            } else {
-                if (ImGui::Button("Stop Scan", ImVec2(120, 0))) {
-                    bluetooth_manager->StopScanning();
-                    bt_is_scanning = false;
-                }
-                ImGui::SameLine();
-                ImGui::TextColored(ImVec4(0.0f, 0.8f, 1.0f, 1.0f), "Scanning... (%zu devices found)", discovered_bt_devices.size());
-            }
-            
-            ImGui::Separator();
-            
-            // Discovered devices list
-            ImGui::Text("Discovered Devices:");
-            ImGui::BeginChild("DeviceList", ImVec2(0, 200), true);
-            
-            for (const auto& [id, name] : discovered_bt_devices) {
-                bool is_selected = (selected_bt_device_id == id);
-                bool is_connected = (connected_bt_device_id == id);
-                
-                if (is_connected) {
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.0f, 1.0f, 0.0f, 1.0f));
-                }
-                
-                if (ImGui::Selectable(name.c_str(), is_selected)) {
-                    selected_bt_device_id = id;
-                }
-                
-                if (is_connected) {
-                    ImGui::PopStyleColor();
-                    ImGui::SameLine();
-                    ImGui::Text(" [Connected]");
-                }
-            }
-            
-            ImGui::EndChild();
-            
-            // Connection controls
-            if (!selected_bt_device_id.empty()) {
-                ImGui::Separator();
-                
-                if (connected_bt_device_id == selected_bt_device_id) {
-                    if (ImGui::Button("Disconnect", ImVec2(120, 0))) {
-                        bluetooth_manager->DisconnectDevice(selected_bt_device_id);
-                    }
-                } else {
-                    if (ImGui::Button("Connect", ImVec2(120, 0))) {
-                        bt_is_connecting = true;
-                        std::thread([&]() {
-                            bool success = bluetooth_manager->ConnectToDevice(selected_bt_device_id);
-                            bt_is_connecting = false;
-                            if (!success) {
-                                AddLogMessage("[Bluetooth] Failed to connect to device");
-                            }
-                        }).detach();
-                    }
-                }
-            }
-            
-            ImGui::EndTabItem();
-        }
-        
-        // Control Tab
-        if (ImGui::BeginTabItem("Control")) {
-            if (!connected_bt_device_id.empty()) {
-                // Rotation controls
-                ImGui::Text("Rotation Control:");
-                
-                // Rotation Angle - Slider + Input
-                ImGui::PushItemWidth(150);
-                ImGui::SliderFloat("##RotAngleSlider", &bt_rotation_angle, -360.0f, 360.0f);
-                ImGui::PopItemWidth();
-                ImGui::SameLine();
-                ImGui::PushItemWidth(80);
-                ImGui::InputFloat("Angle (°)", &bt_rotation_angle, 0.1f, 1.0f, "%.1f");
-                ImGui::PopItemWidth();
-                
-                // Clamp rotation angle
-                if (bt_rotation_angle < -360.0f) bt_rotation_angle = -360.0f;
-                if (bt_rotation_angle > 360.0f) bt_rotation_angle = 360.0f;
-                
-                // Rotation Speed - Slider + Input  
-                ImGui::PushItemWidth(150);
-                ImGui::SliderFloat("##RotSpeedSlider", &bt_rotation_speed, 35.64f, 131.0f);
-                ImGui::PopItemWidth();
-                ImGui::SameLine();
-                ImGui::PushItemWidth(80);
-                ImGui::InputFloat("Speed", &bt_rotation_speed, 0.1f, 1.0f, "%.2f");
-                ImGui::PopItemWidth();
-                
-                // Clamp rotation speed
-                if (bt_rotation_speed < 35.64f) bt_rotation_speed = 35.64f;
-                if (bt_rotation_speed > 131.0f) bt_rotation_speed = 131.0f;
-                
-                // Rotation buttons
-                if (ImGui::Button("Rotate", ImVec2(80, 0))) {
-                    bluetooth_manager->RotateTurntable(connected_bt_device_id, bt_rotation_angle);
-                }
-                ImGui::SameLine();
-                if (ImGui::Button("Stop", ImVec2(80, 0))) {
-                    bluetooth_manager->StopRotation(connected_bt_device_id);
-                }
-                ImGui::SameLine();
-                if (ImGui::Button("Zero", ImVec2(80, 0))) {
-                    bluetooth_manager->ReturnToZero(connected_bt_device_id);
-                }
-                
-                // Quick rotation buttons
-                ImGui::Text("Quick Rotate:");
-                if (ImGui::Button("-90°", ImVec2(60, 0))) {
-                    bluetooth_manager->RotateTurntable(connected_bt_device_id, -90.0f);
-                }
-                ImGui::SameLine();
-                if (ImGui::Button("-45°", ImVec2(60, 0))) {
-                    bluetooth_manager->RotateTurntable(connected_bt_device_id, -45.0f);
-                }
-                ImGui::SameLine();
-                if (ImGui::Button("-30°", ImVec2(60, 0))) {
-                    bluetooth_manager->RotateTurntable(connected_bt_device_id, -30.0f);
-                }
-                ImGui::SameLine();
-                if (ImGui::Button("+30°", ImVec2(60, 0))) {
-                    bluetooth_manager->RotateTurntable(connected_bt_device_id, 30.0f);
-                }
-                ImGui::SameLine();
-                if (ImGui::Button("+45°", ImVec2(60, 0))) {
-                    bluetooth_manager->RotateTurntable(connected_bt_device_id, 45.0f);
-                }
-                ImGui::SameLine();
-                if (ImGui::Button("+90°", ImVec2(60, 0))) {
-                    bluetooth_manager->RotateTurntable(connected_bt_device_id, 90.0f);
-                }
-                
-                ImGui::Separator();
-                
-                // Tilt controls
-                ImGui::Text("Tilt Control:");
-                
-                // Tilt Angle - Slider + Input
-                ImGui::PushItemWidth(150);
-                ImGui::SliderFloat("##TiltAngleSlider", &bt_tilt_angle, -30.0f, 30.0f);
-                ImGui::PopItemWidth();
-                ImGui::SameLine();
-                ImGui::PushItemWidth(80);
-                ImGui::InputFloat("Tilt (°)", &bt_tilt_angle, 0.1f, 1.0f, "%.1f");
-                ImGui::PopItemWidth();
-                
-                // Clamp tilt angle
-                if (bt_tilt_angle < -30.0f) bt_tilt_angle = -30.0f;
-                if (bt_tilt_angle > 30.0f) bt_tilt_angle = 30.0f;
-                
-                // Tilt Speed - Slider + Input
-                ImGui::PushItemWidth(150);
-                ImGui::SliderFloat("##TiltSpeedSlider", &bt_tilt_speed, 9.0f, 35.0f);
-                ImGui::PopItemWidth();
-                ImGui::SameLine();
-                ImGui::PushItemWidth(80);
-                ImGui::InputFloat("T.Speed", &bt_tilt_speed, 0.1f, 1.0f, "%.1f");
-                ImGui::PopItemWidth();
-                
-                // Clamp tilt speed
-                if (bt_tilt_speed < 9.0f) bt_tilt_speed = 9.0f;
-                if (bt_tilt_speed > 35.0f) bt_tilt_speed = 35.0f;
-                
-                // Tilt buttons
-                if (ImGui::Button("Tilt", ImVec2(80, 0))) {
-                    bluetooth_manager->TiltTurntable(connected_bt_device_id, bt_tilt_angle);
-                }
-                ImGui::SameLine();
-                if (ImGui::Button("Stop Tilt", ImVec2(80, 0))) {
-                    bluetooth_manager->StopTilt(connected_bt_device_id);
-                }
-                ImGui::SameLine();
-                if (ImGui::Button("Level", ImVec2(80, 0))) {
-                    bluetooth_manager->TiltTurntable(connected_bt_device_id, 0.0f);
-                }
-                
-                ImGui::Separator();
-                
-                // Status query
-                if (ImGui::Button("Get Status", ImVec2(120, 0))) {
-                    bluetooth_manager->GetTurntableStatus(connected_bt_device_id, 
-                        [](const std::string& response) {
-                            AddLogMessage("[Turntable] Status: " + response);
-                        });
-                }
-                
-            } else {
-                ImGui::Text("No device connected");
-                ImGui::Text("Please connect to a device in the Scanner tab");
-            }
-            
-            ImGui::EndTabItem();
-        }
-        
-        // Capture Sequence Tab
-        if (ImGui::BeginTabItem("Capture Sequence")) {
-            if (!connected_bt_device_id.empty()) {
-                ImGui::Text("Automated Capture Sequence:");
-                
-                ImGui::Checkbox("Auto-rotate during capture", &bt_auto_rotate_capture);
-                
-                if (bt_auto_rotate_capture) {
-                    // Number of steps - Slider + Input
-                    ImGui::PushItemWidth(150);
-                    ImGui::SliderInt("##StepsSlider", &bt_capture_steps, 1, 72);
-                    ImGui::PopItemWidth();
-                    ImGui::SameLine();
-                    ImGui::PushItemWidth(80);
-                    ImGui::InputInt("Steps", &bt_capture_steps);
-                    ImGui::PopItemWidth();
-                    
-                    // Clamp steps
-                    if (bt_capture_steps < 1) bt_capture_steps = 1;
-                    if (bt_capture_steps > 360) bt_capture_steps = 360;
-                    
-                    bt_step_angle = 360.0f / bt_capture_steps;
-                    ImGui::Text("Step angle: %.2f degrees", bt_step_angle);
-                    
-                    // Preset sequences
-                    ImGui::Text("Presets:");
-                    if (ImGui::Button("Quick (8 steps)", ImVec2(120, 0))) {
-                        bt_capture_steps = 8;
-                    }
-                    ImGui::SameLine();
-                    if (ImGui::Button("Standard (12 steps)", ImVec2(120, 0))) {
-                        bt_capture_steps = 12;
-                    }
-                    ImGui::SameLine();
-                    if (ImGui::Button("Detailed (24 steps)", ImVec2(120, 0))) {
-                        bt_capture_steps = 24;
-                    }
-                    
-                    ImGui::Separator();
-                    
-                    if (ImGui::Button("Start Capture Sequence", ImVec2(200, 30))) {
-                        // This would trigger a capture sequence with rotation
-                        AddLogMessage("[Bluetooth] Starting capture sequence with " + 
-                                    std::to_string(bt_capture_steps) + " steps");
-                        
-                        // Return to zero first
-                        bluetooth_manager->ReturnToZero(connected_bt_device_id);
-                        
-                        // Note: The actual capture integration would be done here
-                        // For now, just demonstrate the rotation
-                        for (int i = 0; i < bt_capture_steps; ++i) {
-                            // Rotate to next position
-                            bluetooth_manager->RotateTurntable(connected_bt_device_id, bt_step_angle);
-                            
-                            // Here you would trigger camera capture
-                            // CaptureAllCameras();
-                            
-                            // Wait for rotation to complete
-                            std::this_thread::sleep_for(std::chrono::milliseconds(2000));
-                        }
-                    }
-                }
-                
-            } else {
-                ImGui::Text("No device connected");
-                ImGui::Text("Please connect to a device in the Scanner tab");
-            }
-            
-            ImGui::EndTabItem();
-        }
-        
-        // Settings Tab
-        if (ImGui::BeginTabItem("Settings")) {
-            ImGui::Text("Bluetooth Configuration:");
-            
-            ImGui::PushItemWidth(400);
-            
-            if (ImGui::InputText("Service UUID", bt_service_uuid, sizeof(bt_service_uuid))) {
-                bluetooth_manager->SetServiceUUID(bt_service_uuid);
-            }
-            
-            if (ImGui::InputText("Characteristic UUID", bt_char_uuid, sizeof(bt_char_uuid))) {
-                bluetooth_manager->SetCharacteristicUUID(bt_char_uuid);
-            }
-            
-            ImGui::PopItemWidth();
-            
-            ImGui::Separator();
-            
-            if (ImGui::Button("Save Settings", ImVec2(120, 0))) {
-                bluetooth_manager->SaveSettings();
-                AddLogMessage("[Bluetooth] Settings saved");
-            }
-            
-            ImGui::SameLine();
-            
-            if (ImGui::Button("Load Settings", ImVec2(120, 0))) {
-                bluetooth_manager->LoadSettings();
-                strcpy(bt_service_uuid, bluetooth_manager->GetServiceUUID().c_str());
-                strcpy(bt_char_uuid, bluetooth_manager->GetCharacteristicUUID().c_str());
-                AddLogMessage("[Bluetooth] Settings loaded");
-            }
-            
-            ImGui::EndTabItem();
-        }
-        
-        ImGui::EndTabBar();
-    }
-    
-    ImGui::End();
-}

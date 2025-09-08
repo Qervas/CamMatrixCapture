@@ -112,6 +112,7 @@ add_executable(neural_capture
     src/bluetooth/BluetoothManager.cpp
     src/bluetooth/BluetoothDevice.cpp
     src/bluetooth/BluetoothScanner.cpp
+    src/gui/BluetoothGui.cpp
 )
 
 target_include_directories(neural_capture PRIVATE
