@@ -36,8 +36,7 @@ SimpleJSON CameraSettings::ToJson() const {
     // Advanced Features
     json.set("acquisition_mode", acquisition_mode);
     json.set("acquisition_frame_count", acquisition_frame_count);
-    json.set("acquisition_frame_rate", acquisition_frame_rate);
-    json.set("frame_rate_enable", frame_rate_enable);
+    // Frame rate settings removed
     
     // Region of Interest (ROI)
     json.set("roi_offset_x", roi_offset_x);
@@ -84,8 +83,7 @@ void CameraSettings::FromJson(const SimpleJSON& json) {
     // Advanced Features
     acquisition_mode = json.get("acquisition_mode", acquisition_mode);
     acquisition_frame_count = json.getInt("acquisition_frame_count", acquisition_frame_count);
-    acquisition_frame_rate = json.getFloat("acquisition_frame_rate", acquisition_frame_rate);
-    frame_rate_enable = json.getBool("frame_rate_enable", frame_rate_enable);
+    // Frame rate settings removed
     
     // Region of Interest (ROI)
     roi_offset_x = json.getInt("roi_offset_x", roi_offset_x);
@@ -128,8 +126,7 @@ SimpleJSON IndividualCameraSettings::ToJson() const {
     // Advanced Features
     json.set("acquisition_mode", acquisition_mode);
     json.set("acquisition_frame_count", acquisition_frame_count);
-    json.set("acquisition_frame_rate", acquisition_frame_rate);
-    json.set("frame_rate_enable", frame_rate_enable);
+    // Frame rate settings removed
     
     // Region of Interest (ROI)
     json.set("roi_offset_x", roi_offset_x);
@@ -163,8 +160,7 @@ void IndividualCameraSettings::FromJson(const SimpleJSON& json) {
     // Advanced Features
     acquisition_mode = json.get("acquisition_mode", acquisition_mode);
     acquisition_frame_count = json.getInt("acquisition_frame_count", acquisition_frame_count);
-    acquisition_frame_rate = json.getFloat("acquisition_frame_rate", acquisition_frame_rate);
-    frame_rate_enable = json.getBool("frame_rate_enable", frame_rate_enable);
+    // Frame rate settings removed
     
     // Region of Interest (ROI)
     roi_offset_x = json.getInt("roi_offset_x", roi_offset_x);
@@ -186,6 +182,7 @@ SimpleJSON AppSettings::ToJson() const {
     json.set("dark_theme", dark_theme);
     json.set("window_width", window_width);
     json.set("window_height", window_height);
+    json.set("ui_scale", ui_scale);
     return json;
 }
 
@@ -195,6 +192,7 @@ void AppSettings::FromJson(const SimpleJSON& json) {
     dark_theme = json.getBool("dark_theme", dark_theme);
     window_width = json.getInt("window_width", window_width);
     window_height = json.getInt("window_height", window_height);
+    ui_scale = json.getFloat("ui_scale", ui_scale);
 }
 
 void AppSettings::Reset() {

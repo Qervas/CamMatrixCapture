@@ -105,7 +105,7 @@ endif()
 
 # Main GUI application
 add_executable(neural_capture
-    src/main.cpp
+    src/main.cpp  # Now using the modular architecture
     src/hardware/CameraTypes.cpp
     src/utils/SessionManager.cpp
     src/utils/SettingsManager.cpp
@@ -113,6 +113,10 @@ add_executable(neural_capture
     src/bluetooth/BluetoothDevice.cpp
     src/bluetooth/BluetoothScanner.cpp
     src/gui/BluetoothGui.cpp
+    src/gui/GuiManager.cpp
+    src/gui/PreferencesDialog.cpp
+    src/gui/LogPanel.cpp
+    src/gui/Application.cpp
 )
 
 target_include_directories(neural_capture PRIVATE
