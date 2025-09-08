@@ -1,6 +1,7 @@
 #include "PreferencesDialog.hpp"
 #include <imgui.h>
 #include <algorithm>
+#include <cmath>
 
 namespace SaperaCapturePro {
 
@@ -17,7 +18,6 @@ void PreferencesDialog::Show(bool* p_open) {
     if (first_open && settings_manager_) {
       temp_ui_scale_ = settings_manager_->GetAppSettings().ui_scale;
       temp_dark_theme_ = settings_manager_->GetAppSettings().dark_theme;
-      temp_auto_save_ = settings_manager_->GetAppSettings().auto_save_settings;
       first_open = false;
     }
     
@@ -49,7 +49,8 @@ void PreferencesDialog::Show(bool* p_open) {
     // Bottom buttons
     ImGui::Separator();
     
-    if (ImGui::Button("Apply")) {
+    if (ImGui::Button("Save")) {
+      SaveSettings();
       ApplySettings();
     }
     
@@ -71,10 +72,7 @@ void PreferencesDialog::RenderGeneralTab() {
   ImGui::Separator();
   ImGui::Spacing();
   
-  ImGui::Checkbox("Auto-save settings on exit", &temp_auto_save_);
-  if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip("Automatically save all settings when closing the application");
-  }
+  ImGui::TextWrapped("Settings are saved manually using the Save button below.");
   
   ImGui::Spacing();
   ImGui::Separator();
@@ -98,31 +96,88 @@ void PreferencesDialog::RenderAppearanceTab() {
   ImGui::Separator();
   ImGui::Spacing();
   
-  // UI Scale slider
+  // UI Scale slider with extended range - takes effect immediately
   ImGui::Text("UI Scale");
-  ImGui::SliderFloat("##UIScale", &temp_ui_scale_, 0.5f, 2.0f, "%.2f");
+  ImGui::SetNextItemWidth(300);
+  if (ImGui::SliderFloat("##UIScale", &temp_ui_scale_, 0.5f, 8.0f, "%.2fx")) {
+    // Apply immediately when dragging
+    if (ui_scale_callback_) {
+      ui_scale_callback_(temp_ui_scale_);
+    }
+  }
   
   ImGui::SameLine();
   if (ImGui::Button("Reset##UIScale")) {
     temp_ui_scale_ = 1.0f;
+    // Apply immediately when reset
+    if (ui_scale_callback_) {
+      ui_scale_callback_(temp_ui_scale_);
+    }
   }
   
-  // Preview text at different scales
+  // Display current scale percentage
+  ImGui::SameLine();
+  ImGui::Text("(%d%%)", static_cast<int>(temp_ui_scale_ * 100));
+  
+  // Quick preset buttons - Extended range
   ImGui::Spacing();
-  ImGui::Text("Preview:");
+  ImGui::Text("Quick Presets:");
+  
+  // First row of presets (smaller scales)
   ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 4));
   
-  float preview_scales[] = {0.75f, 1.0f, 1.25f, 1.5f};
-  const char* preview_labels[] = {"75%", "100%", "125%", "150%"};
+  float preset_scales_1[] = {0.5f, 0.75f, 1.0f, 1.25f, 1.5f};
+  const char* preset_labels_1[] = {"50%", "75%", "100%", "125%", "150%"};
   
-  for (int i = 0; i < 4; i++) {
-    if (ImGui::RadioButton(preview_labels[i], temp_ui_scale_ == preview_scales[i])) {
-      temp_ui_scale_ = preview_scales[i];
+  for (int i = 0; i < 5; i++) {
+    if (ImGui::Button(preset_labels_1[i])) {
+      temp_ui_scale_ = preset_scales_1[i];
+      // Apply immediately when preset is clicked
+      if (ui_scale_callback_) {
+        ui_scale_callback_(temp_ui_scale_);
+      }
     }
-    if (i < 3) ImGui::SameLine();
+    if (i < 4) ImGui::SameLine();
+  }
+  
+  // Second row of presets (larger scales)
+  float preset_scales_2[] = {2.0f, 3.0f, 4.0f, 6.0f, 8.0f};
+  const char* preset_labels_2[] = {"200%", "300%", "400%", "600%", "800%"};
+  
+  for (int i = 0; i < 5; i++) {
+    if (ImGui::Button(preset_labels_2[i])) {
+      temp_ui_scale_ = preset_scales_2[i];
+      // Apply immediately when preset is clicked
+      if (ui_scale_callback_) {
+        ui_scale_callback_(temp_ui_scale_);
+      }
+    }
+    if (i < 4) ImGui::SameLine();
   }
   
   ImGui::PopStyleVar();
+  
+  // Warning for extreme scales
+  if (temp_ui_scale_ < 0.75f) {
+    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), 
+                      "Warning: Very small UI scale may be hard to read");
+  } else if (temp_ui_scale_ > 4.0f) {
+    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), 
+                      "Warning: Very large UI scale may cause layout issues");
+  }
+  
+  // Live preview text
+  ImGui::Spacing();
+  ImGui::Separator();
+  ImGui::Spacing();
+  ImGui::Text("Live Preview (this text scales with setting):");
+  
+  // Apply temporary scale for preview
+  ImGui::PushFont(ImGui::GetFont());
+  ImGui::SetWindowFontScale(temp_ui_scale_);
+  ImGui::TextWrapped("This is preview text at %.1fx scale. The quick brown fox jumps over the lazy dog.", temp_ui_scale_);
+  ImGui::SetWindowFontScale(1.0f);
+  ImGui::PopFont();
   
   ImGui::Spacing();
   ImGui::Separator();
@@ -214,30 +269,32 @@ void PreferencesDialog::RenderAboutTab() {
 void PreferencesDialog::ApplySettings() {
   if (!settings_manager_) return;
   
-  // Apply UI scale
-  if (temp_ui_scale_ != settings_manager_->GetAppSettings().ui_scale) {
-    settings_manager_->GetAppSettings().ui_scale = temp_ui_scale_;
-    if (on_ui_scale_changed_) {
-      on_ui_scale_changed_(temp_ui_scale_);
-    }
-  }
+  // Validate and clamp UI scale
+  temp_ui_scale_ = std::clamp(temp_ui_scale_, 0.5f, 8.0f);
+  
+  // Apply UI scale (only update settings, don't save)
+  settings_manager_->GetAppSettings().ui_scale = temp_ui_scale_;
   
   // Apply other settings
   settings_manager_->GetAppSettings().dark_theme = temp_dark_theme_;
-  settings_manager_->GetAppSettings().auto_save_settings = temp_auto_save_;
+  // Note: auto_save removed as we're switching to manual save only
+}
+
+void PreferencesDialog::SaveSettings() {
+  if (!settings_manager_) return;
   
-  // Save settings
+  // Save settings to file
   settings_manager_->Save();
 }
 
 void PreferencesDialog::ResetSettings() {
   temp_ui_scale_ = 1.0f;
   temp_dark_theme_ = true;
-  temp_auto_save_ = true;
   temp_vsync_ = true;
   
-  if (on_ui_scale_changed_) {
-    on_ui_scale_changed_(1.0f);
+  // Apply UI scale immediately when resetting
+  if (ui_scale_callback_) {
+    ui_scale_callback_(1.0f);
   }
 }
 

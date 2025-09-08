@@ -103,7 +103,7 @@ struct AppSettings {
     bool dark_theme = true;
     int window_width = 1200;
     int window_height = 800;
-    float ui_scale = 1.0f;  // UI scale factor (0.5 to 2.0)
+    float ui_scale = 1.0f;  // UI scale factor (0.5 to 8.0)
     
     SimpleJSON ToJson() const;
     void FromJson(const SimpleJSON& json);

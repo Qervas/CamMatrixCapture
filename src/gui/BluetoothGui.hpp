@@ -25,7 +25,6 @@ public:
     void Shutdown();
     
     // UI state getters/setters
-    bool IsScanning() const { return m_isScanning; }
     bool IsConnecting() const { return m_isConnecting; }
     const std::string& GetConnectedDeviceId() const { return m_connectedDeviceId; }
     
@@ -38,7 +37,6 @@ private:
     BluetoothManager* m_bluetoothManager = nullptr;
     
     // UI State
-    bool m_isScanning = false;
     bool m_isConnecting = false;
     std::string m_selectedDeviceId = "";
     std::string m_connectedDeviceId = "";

@@ -94,11 +94,19 @@ void BluetoothManager::StartScanning() {
     ClearDiscoveredDevices();
     
     // Start scanner
-    m_scanner->StartScanning();
-    m_isScanning = true;
-    
-    // Don't start automatic timeout - let user control scanning manually
-    Log("Device scan started - click Stop Scan to stop manually");
+    if (m_scanner) {
+        m_scanner->StartScanning();
+        // Check if scanner actually started
+        if (m_scanner->IsScanning()) {
+            m_isScanning = true;
+            Log("Device scan started successfully - click Stop Scan to stop manually");
+        } else {
+            m_isScanning = false;
+            Log("ERROR: Scanner failed to start!");
+        }
+    } else {
+        Log("ERROR: Scanner is null!");
+    }
 }
 
 void BluetoothManager::StopScanning() {

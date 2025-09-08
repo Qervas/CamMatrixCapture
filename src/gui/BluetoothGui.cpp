@@ -40,7 +40,7 @@ void BluetoothGui::Initialize(BluetoothManager* manager) {
 }
 
 void BluetoothGui::Shutdown() {
-    if (m_bluetoothManager && m_isScanning) {
+    if (m_bluetoothManager && m_bluetoothManager->IsScanning()) {
         StopScanning();
     }
 }
@@ -57,7 +57,7 @@ void BluetoothGui::Render(bool* show_panel) {
         ImGui::Text("- %s", m_connectedDeviceId.c_str());
     } else if (m_isConnecting) {
         ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Connecting...");
-    } else if (m_isScanning) {
+    } else if (m_bluetoothManager && m_bluetoothManager->IsScanning()) {
         ImGui::TextColored(ImVec4(0.0f, 0.5f, 1.0f, 1.0f), "Scanning...");
     } else {
         ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "Disconnected");
@@ -95,8 +95,13 @@ void BluetoothGui::OnConnectionStatusChanged(const std::string& deviceId, bool c
 
 void BluetoothGui::RenderScannerTab() {
     if (ImGui::BeginTabItem("Scanner")) {
+        // Debug: Show scanning state
+        bool isScanning = m_bluetoothManager ? m_bluetoothManager->IsScanning() : false;
+        ImGui::Text("Debug - IsScanning: %s", isScanning ? "TRUE" : "FALSE");
+        ImGui::Separator();
+        
         // Scan controls
-        if (!m_isScanning) {
+        if (!isScanning) {
             if (ImGui::Button("Start Scan", ImVec2(120, 0))) {
                 StartScanning();
             }
@@ -381,14 +386,12 @@ void BluetoothGui::StartScanning() {
     if (m_bluetoothManager) {
         m_discoveredDevices.clear();
         m_bluetoothManager->StartScanning();
-        m_isScanning = true;
     }
 }
 
 void BluetoothGui::StopScanning() {
     if (m_bluetoothManager) {
         m_bluetoothManager->StopScanning();
-        m_isScanning = false;
     }
 }
 

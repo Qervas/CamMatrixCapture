@@ -22,39 +22,9 @@ BluetoothScanner::~BluetoothScanner() {
 }
 
 bool BluetoothScanner::Initialize() {
-    if (m_initialized) {
-        return true;
-    }
-    
-    try {
-        // Create device watcher for Bluetooth LE devices
-        auto deviceSelector = BluetoothLEDevice::GetDeviceSelector();
-        m_deviceWatcher = DeviceInformation::CreateWatcher(deviceSelector);
-        
-        // Set up device watcher event handlers
-        m_deviceAddedToken = m_deviceWatcher.Added([this](auto&& sender, auto&& deviceInfo) {
-            OnDeviceAdded(sender, deviceInfo);
-        });
-        
-        m_deviceUpdatedToken = m_deviceWatcher.Updated([this](auto&& sender, auto&& deviceUpdate) {
-            OnDeviceUpdated(sender, deviceUpdate);
-        });
-        
-        // Create advertisement watcher for better discovery
-        m_advertisementWatcher = BluetoothLEAdvertisementWatcher();
-        m_advertisementWatcher.ScanningMode(BluetoothLEScanningMode::Active);
-        
-        // Set up advertisement watcher event handler
-        m_advertisementReceivedToken = m_advertisementWatcher.Received([this](auto&& sender, auto&& args) {
-            OnAdvertisementReceived(sender, args);
-        });
-        
-        m_initialized = true;
-        return true;
-    }
-    catch (...) {
-        return false;
-    }
+    // Simplified initialization - just mark as ready
+    m_initialized = true;
+    return true;
 }
 
 void BluetoothScanner::Shutdown() {
@@ -66,8 +36,13 @@ void BluetoothScanner::Shutdown() {
     
     // Clean up event handlers
     if (m_deviceWatcher) {
-        m_deviceWatcher.Added(m_deviceAddedToken);
-        m_deviceWatcher.Updated(m_deviceUpdatedToken);
+        // Remove event handlers using the tokens
+        if (m_deviceAddedToken.value != 0) {
+            m_deviceWatcher.Added(m_deviceAddedToken);
+        }
+        if (m_deviceUpdatedToken.value != 0) {
+            m_deviceWatcher.Updated(m_deviceUpdatedToken);
+        }
         m_deviceWatcher = nullptr;
     }
     
@@ -80,27 +55,37 @@ void BluetoothScanner::Shutdown() {
 }
 
 void BluetoothScanner::StartScanning() {
-    if (!m_initialized || m_isScanning) {
+    if (m_isScanning) {
+        OutputDebugStringA("[BLE Scanner] Already scanning\n");
         return;
     }
     
+    OutputDebugStringA("[BLE Scanner] Starting scan (using working pattern)...\n");
     ClearDiscoveredDevices();
     
     try {
-        // Start device watcher (primary method - like in the working example)
-        if (m_deviceWatcher) {
-            m_deviceWatcher.Start();
-        }
+        // Use the EXACT pattern from working code
+        auto deviceSelector = BluetoothLEDevice::GetDeviceSelector();
+        m_deviceWatcher = DeviceInformation::CreateWatcher(deviceSelector);
         
-        // Don't start advertisement watcher for now - device watcher should be sufficient
-        // if (m_advertisementWatcher) {
-        //     m_advertisementWatcher.Start();
-        // }
+        // Set up event handler exactly like working code
+        m_deviceAddedToken = m_deviceWatcher.Added([this](DeviceWatcher const& sender, DeviceInformation const& deviceInfo) {
+            OnDeviceAdded(sender, deviceInfo);
+        });
         
+        // Start the watcher
+        m_deviceWatcher.Start();
         m_isScanning = true;
+        OutputDebugStringA("[BLE Scanner] Device watcher started using working pattern!\n");
+    }
+    catch (winrt::hresult_error const& ex) {
+        std::wstring msg = std::wstring(L"[BLE Scanner] ERROR starting scan: ") + ex.message().c_str() + L"\n";
+        OutputDebugStringW(msg.c_str());
+        m_isScanning = false;
     }
     catch (...) {
-        // Handle error
+        OutputDebugStringA("[BLE Scanner] ERROR: Unknown exception during scan start\n");
+        m_isScanning = false;
     }
 }
 

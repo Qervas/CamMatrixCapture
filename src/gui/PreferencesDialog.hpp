@@ -16,6 +16,7 @@ class PreferencesDialog {
   
   void SetOnUIScaleChanged(std::function<void(float)> callback) {
     on_ui_scale_changed_ = callback;
+    ui_scale_callback_ = callback;  // Also set immediate callback
   }
 
  private:
@@ -24,11 +25,11 @@ class PreferencesDialog {
   // Temporary values for editing
   float temp_ui_scale_ = 1.0f;
   bool temp_dark_theme_ = true;
-  bool temp_auto_save_ = true;
   bool temp_vsync_ = true;
   
   // Callbacks
   std::function<void(float)> on_ui_scale_changed_;
+  std::function<void(float)> ui_scale_callback_;  // For immediate updates
   
   void RenderGeneralTab();
   void RenderAppearanceTab();
@@ -36,6 +37,7 @@ class PreferencesDialog {
   void RenderAboutTab();
   
   void ApplySettings();
+  void SaveSettings();
   void ResetSettings();
 };
 

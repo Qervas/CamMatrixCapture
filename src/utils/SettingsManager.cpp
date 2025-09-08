@@ -1,6 +1,7 @@
 #include "SettingsManager.hpp"
 #include <fstream>
 #include <filesystem>
+#include <algorithm>
 
 // CameraSettings implementation
 SimpleJSON CameraSettings::ToJson() const {
@@ -192,7 +193,11 @@ void AppSettings::FromJson(const SimpleJSON& json) {
     dark_theme = json.getBool("dark_theme", dark_theme);
     window_width = json.getInt("window_width", window_width);
     window_height = json.getInt("window_height", window_height);
-    ui_scale = json.getFloat("ui_scale", ui_scale);
+    
+    // Load and validate UI scale
+    float loaded_scale = json.getFloat("ui_scale", ui_scale);
+    // Clamp to valid range
+    ui_scale = std::min(std::max(loaded_scale, 0.5f), 8.0f);
 }
 
 void AppSettings::Reset() {

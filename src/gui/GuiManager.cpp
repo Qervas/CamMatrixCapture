@@ -2,6 +2,7 @@
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
 #include <iostream>
+#include <algorithm>
 
 namespace SaperaCapturePro {
 
@@ -100,13 +101,25 @@ void GuiManager::EndFrame() {
 }
 
 void GuiManager::SetUIScale(float scale) {
-  ui_scale_ = scale;
-  ImGuiIO& io = ImGui::GetIO();
-  io.FontGlobalScale = scale;
+  // Clamp scale to valid range
+  ui_scale_ = std::clamp(scale, 0.5f, 8.0f);
   
-  // Apply scale to style
+  ImGuiIO& io = ImGui::GetIO();
+  io.FontGlobalScale = ui_scale_;
+  
+  // Reset style first to avoid cumulative scaling
   ImGuiStyle& style = ImGui::GetStyle();
-  style.ScaleAllSizes(scale);
+  style = ImGuiStyle();  // Reset to defaults
+  ApplyDarkTheme();      // Reapply theme
+  
+  // Now apply the scale
+  style.ScaleAllSizes(ui_scale_);
+  
+  // Adjust window min size for extreme scales
+  if (ui_scale_ > 2.0f) {
+    io.ConfigWindowsResizeFromEdges = true;
+    style.WindowMinSize = ImVec2(100 * ui_scale_, 50 * ui_scale_);
+  }
 }
 
 void GuiManager::SetVSyncEnabled(bool enabled) {

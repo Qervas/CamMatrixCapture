@@ -107,6 +107,7 @@ endif()
 add_executable(neural_capture
     src/main.cpp  # Now using the modular architecture
     src/hardware/CameraTypes.cpp
+    src/hardware/CameraManager.cpp
     src/utils/SessionManager.cpp
     src/utils/SettingsManager.cpp
     src/bluetooth/BluetoothManager.cpp
