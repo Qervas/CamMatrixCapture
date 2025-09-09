@@ -23,6 +23,7 @@ void CaptureStudioPanel::Initialize(CameraManager* camera_manager, BluetoothMana
     session_widget_->SetLogCallback([this](const std::string& msg) { LogMessage(msg); });
     
     file_explorer_widget_ = std::make_unique<FileExplorerWidget>();
+    file_explorer_widget_->Initialize(); // Initialize GDI+ for TIFF loading
     file_explorer_widget_->SetHeight(200.0f);
     file_explorer_widget_->SetShowPreview(true);
     file_explorer_widget_->SetLogCallback([this](const std::string& msg) { LogMessage(msg); });
@@ -213,8 +214,33 @@ void CaptureStudioPanel::RenderAutomatedCapture() {
     
     // Column 3: Controls & Status
     if (auto_sequence_active_) {
-        ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "🔄 Active");
+        if (sequence_paused_) {
+            ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.0f, 1.0f), "⏸ Paused");
+        } else {
+            ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "🔄 Active");
+        }
         ImGui::Text("Progress: %d/%d", current_capture_index_, auto_capture_count_);
+        
+        // Render step indicator
+        RenderStepIndicator();
+        
+        ImGui::Spacing();
+        
+        // Pause/Resume button
+        if (sequence_paused_) {
+            if (ImGui::Button("▶ Resume", ImVec2(80, 0))) {
+                ResumeSequence();
+            }
+        } else {
+            if (ImGui::Button("⏸ Pause", ImVec2(80, 0))) {
+                PauseSequence();
+            }
+        }
+        
+        ImGui::SameLine();
+        if (ImGui::Button("⏭ Next Step", ImVec2(80, 0))) {
+            AdvanceToNextStep();
+        }
         
         if (ImGui::Button("⏹ Stop Sequence", ImVec2(-1, 0))) {
             StopAutomatedSequence();
@@ -359,57 +385,102 @@ void CaptureStudioPanel::StartAutomatedSequence() {
     
     LogMessage("[STUDIO] Starting automated sequence: " + std::to_string(auto_capture_count_) + " captures");
     
-    // Set rotation speed for smooth operation
-    auto device_ids = bluetooth_manager_->GetConnectedDevices();
-    if (!device_ids.empty()) {
-        std::string speed_command = "+CT,TURNSPEED=70.0;";  // Medium speed
-        bluetooth_manager_->SendCommand(device_ids[0], speed_command);
-        LogMessage("[STUDIO] Set rotation speed for automated sequence");
-    }
-    
     auto_sequence_active_ = true;
+    sequence_paused_ = false;
     current_capture_index_ = 0;
     last_capture_time_ = std::chrono::steady_clock::now() - std::chrono::seconds(static_cast<int>(capture_delay_));
     
-    // Start the sequence - first capture will happen immediately in UpdateAutomatedSequence
+    // Start with initialization step
+    SetCurrentStep(SequenceStep::Initializing, "Setting up automated capture sequence...", 2.0f);
 }
 
 void CaptureStudioPanel::StopAutomatedSequence() {
     if (!auto_sequence_active_) return;
     
     auto_sequence_active_ = false;
+    sequence_paused_ = false;
+    SetCurrentStep(SequenceStep::Idle, "Sequence stopped", 0.0f);
     LogMessage("[STUDIO] Automated sequence stopped at capture " + std::to_string(current_capture_index_) + "/" + std::to_string(auto_capture_count_));
 }
 
 void CaptureStudioPanel::UpdateAutomatedSequence() {
-    if (!auto_sequence_active_) return;
+    if (!auto_sequence_active_ || sequence_paused_) return;
+    
+    UpdateStepProgress();
     
     auto now = std::chrono::steady_clock::now();
-    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_capture_time_).count() / 1000.0f;
+    auto step_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - step_start_time_).count() / 1000.0f;
     
-    if (elapsed >= capture_delay_ && current_capture_index_ < auto_capture_count_) {
-        LogMessage("[STUDIO] Processing capture " + std::to_string(current_capture_index_ + 1) + "/" + std::to_string(auto_capture_count_));
-        
-        // For captures after the first, rotate turntable first
-        if (current_capture_index_ > 0) {
-            LogMessage("[STUDIO] Rotating turntable " + std::to_string(rotation_angle_) + "° for capture " + std::to_string(current_capture_index_ + 1));
-            RotateTurntable(rotation_angle_);
+    switch (current_step_) {
+        case SequenceStep::Initializing:
+            if (step_elapsed >= step_duration_seconds_) {
+                // Set rotation speed for smooth operation
+                auto device_ids = bluetooth_manager_->GetConnectedDevices();
+                if (!device_ids.empty()) {
+                    std::string speed_command = "+CT,TURNSPEED=70.0;";
+                    bluetooth_manager_->SendCommand(device_ids[0], speed_command);
+                }
+                
+                // Move to first capture (no rotation needed)
+                SetCurrentStep(SequenceStep::Capturing, "Taking capture " + std::to_string(current_capture_index_ + 1) + "/" + std::to_string(auto_capture_count_), 2.0f);
+            }
+            break;
             
-            // Small delay for turntable to settle
-            std::this_thread::sleep_for(std::chrono::milliseconds(500));
-        }
-        
-        // Take capture with numbered filename
-        std::string capture_name = "auto_" + std::to_string(current_capture_index_ + 1);
-        PerformSingleCapture(capture_name);
-        
-        current_capture_index_++;
-        last_capture_time_ = now;
-        
-        if (current_capture_index_ >= auto_capture_count_) {
-            LogMessage("[STUDIO] Automated sequence completed successfully!");
-            auto_sequence_active_ = false;
-        }
+        case SequenceStep::Rotating:
+            if (step_elapsed >= step_duration_seconds_) {
+                SetCurrentStep(SequenceStep::WaitingToSettle, "Waiting for turntable to settle...", 0.5f);
+            }
+            break;
+            
+        case SequenceStep::WaitingToSettle:
+            if (step_elapsed >= step_duration_seconds_) {
+                SetCurrentStep(SequenceStep::Capturing, "Taking capture " + std::to_string(current_capture_index_ + 1) + "/" + std::to_string(auto_capture_count_), 2.0f);
+            }
+            break;
+            
+        case SequenceStep::Capturing:
+            if (step_elapsed >= step_duration_seconds_) {
+                // Take the capture
+                std::string capture_name = "auto_" + std::to_string(current_capture_index_ + 1);
+                PerformSingleCapture(capture_name);
+                
+                SetCurrentStep(SequenceStep::Processing, "Processing and saving images...", 1.0f);
+            }
+            break;
+            
+        case SequenceStep::Processing:
+            if (step_elapsed >= step_duration_seconds_) {
+                current_capture_index_++;
+                
+                if (current_capture_index_ >= auto_capture_count_) {
+                    // Sequence complete
+                    SetCurrentStep(SequenceStep::Completing, "Finalizing capture sequence...", 1.0f);
+                } else {
+                    // More captures to go - start delay for next one
+                    SetCurrentStep(SequenceStep::WaitingForNext, "Waiting before next capture... (" + std::to_string(capture_delay_) + "s)", capture_delay_);
+                }
+            }
+            break;
+            
+        case SequenceStep::WaitingForNext:
+            if (step_elapsed >= step_duration_seconds_) {
+                // Time to rotate for next capture
+                SetCurrentStep(SequenceStep::Rotating, "Rotating turntable " + std::to_string(rotation_angle_) + "°", 2.0f);
+                RotateTurntable(rotation_angle_);
+            }
+            break;
+            
+        case SequenceStep::Completing:
+            if (step_elapsed >= step_duration_seconds_) {
+                LogMessage("[STUDIO] Automated sequence completed successfully!");
+                auto_sequence_active_ = false;
+                sequence_paused_ = false;
+                SetCurrentStep(SequenceStep::Idle, "Sequence complete", 0.0f);
+            }
+            break;
+            
+        default:
+            break;
     }
 }
 
@@ -491,6 +562,124 @@ std::string CaptureStudioPanel::GenerateCaptureFilename() const {
 bool CaptureStudioPanel::ValidateSystemState() const {
     return session_manager_ && session_manager_->HasActiveSession() && 
            camera_manager_ && camera_manager_->GetConnectedCount() > 0;
+}
+
+// Pauseable automation methods
+void CaptureStudioPanel::PauseSequence() {
+    if (!auto_sequence_active_ || sequence_paused_) return;
+    
+    sequence_paused_ = true;
+    SetCurrentStep(SequenceStep::Paused, "Sequence paused by user", 0.0f);
+    LogMessage("[STUDIO] Sequence paused at step: " + GetStepName(current_step_));
+}
+
+void CaptureStudioPanel::ResumeSequence() {
+    if (!auto_sequence_active_ || !sequence_paused_) return;
+    
+    sequence_paused_ = false;
+    LogMessage("[STUDIO] Sequence resumed");
+    
+    // Resume from where we left off - reset step timer
+    step_start_time_ = std::chrono::steady_clock::now();
+}
+
+void CaptureStudioPanel::AdvanceToNextStep() {
+    if (!auto_sequence_active_) return;
+    
+    LogMessage("[STUDIO] Advancing to next step (skipping current: " + GetStepName(current_step_) + ")");
+    
+    switch (current_step_) {
+        case SequenceStep::Initializing:
+            SetCurrentStep(SequenceStep::Capturing, "Taking capture " + std::to_string(current_capture_index_ + 1) + "/" + std::to_string(auto_capture_count_), 2.0f);
+            break;
+        case SequenceStep::Rotating:
+            SetCurrentStep(SequenceStep::WaitingToSettle, "Waiting for turntable to settle...", 0.5f);
+            break;
+        case SequenceStep::WaitingToSettle:
+            SetCurrentStep(SequenceStep::Capturing, "Taking capture " + std::to_string(current_capture_index_ + 1) + "/" + std::to_string(auto_capture_count_), 2.0f);
+            break;
+        case SequenceStep::Capturing:
+            SetCurrentStep(SequenceStep::Processing, "Processing and saving images...", 1.0f);
+            break;
+        case SequenceStep::Processing:
+            current_capture_index_++;
+            if (current_capture_index_ >= auto_capture_count_) {
+                SetCurrentStep(SequenceStep::Completing, "Finalizing capture sequence...", 1.0f);
+            } else {
+                SetCurrentStep(SequenceStep::WaitingForNext, "Waiting before next capture...", capture_delay_);
+            }
+            break;
+        case SequenceStep::WaitingForNext:
+            SetCurrentStep(SequenceStep::Rotating, "Rotating turntable " + std::to_string(rotation_angle_) + "°", 2.0f);
+            RotateTurntable(rotation_angle_);
+            break;
+        case SequenceStep::Completing:
+            StopAutomatedSequence();
+            break;
+        case SequenceStep::Paused:
+            ResumeSequence();
+            break;
+        default:
+            break;
+    }
+}
+
+void CaptureStudioPanel::SetCurrentStep(SequenceStep step, const std::string& description, float duration_seconds) {
+    current_step_ = step;
+    current_step_description_ = description;
+    step_duration_seconds_ = duration_seconds;
+    step_start_time_ = std::chrono::steady_clock::now();
+    step_progress_ = 0.0f;
+    
+    LogMessage("[STUDIO] Step: " + GetStepName(step) + " - " + description);
+}
+
+void CaptureStudioPanel::UpdateStepProgress() {
+    if (step_duration_seconds_ <= 0.0f) {
+        step_progress_ = 1.0f;
+        return;
+    }
+    
+    auto now = std::chrono::steady_clock::now();
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - step_start_time_).count() / 1000.0f;
+    step_progress_ = std::min(1.0f, elapsed / step_duration_seconds_);
+}
+
+std::string CaptureStudioPanel::GetStepName(SequenceStep step) const {
+    switch (step) {
+        case SequenceStep::Idle: return "Idle";
+        case SequenceStep::Initializing: return "Initializing";
+        case SequenceStep::Rotating: return "Rotating";
+        case SequenceStep::WaitingToSettle: return "Settling";
+        case SequenceStep::Capturing: return "Capturing";
+        case SequenceStep::Processing: return "Processing";
+        case SequenceStep::WaitingForNext: return "Waiting";
+        case SequenceStep::Completing: return "Completing";
+        case SequenceStep::Paused: return "Paused";
+        default: return "Unknown";
+    }
+}
+
+void CaptureStudioPanel::RenderStepIndicator() {
+    if (current_step_ == SequenceStep::Idle) return;
+    
+    // Step name and description
+    ImGui::Text("Step: %s", GetStepName(current_step_).c_str());
+    ImGui::Text("%s", current_step_description_.c_str());
+    
+    // Progress bar
+    if (step_duration_seconds_ > 0.0f) {
+        char progress_label[64];
+        snprintf(progress_label, sizeof(progress_label), "%.1fs / %.1fs", 
+                step_progress_ * step_duration_seconds_, step_duration_seconds_);
+        ImGui::ProgressBar(step_progress_, ImVec2(-1, 0), progress_label);
+    } else {
+        // Indeterminate progress
+        static float indeterminate_progress = 0.0f;
+        indeterminate_progress += 0.02f;
+        if (indeterminate_progress > 1.0f) indeterminate_progress = 0.0f;
+        ImGui::ProgressBar(indeterminate_progress, ImVec2(-1, 0), "In Progress...");
+    }
 }
 
 } // namespace SaperaCapturePro

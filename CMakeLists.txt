@@ -39,6 +39,12 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(imgui)
 
+# Create GLAD library from local files
+add_library(glad STATIC
+    third_party/glad/src/glad.c
+)
+target_include_directories(glad PUBLIC third_party/glad/include)
+
 # Create ImGui library
 set(IMGUI_SOURCES
     ${imgui_SOURCE_DIR}/imgui.cpp
@@ -56,6 +62,8 @@ target_include_directories(imgui PUBLIC
     ${imgui_SOURCE_DIR}/backends
 )
 target_link_libraries(imgui PUBLIC glfw OpenGL::GL)
+
+# GLAD is automatically configured by FetchContent
 
 # =============================================================================
 # SAPERA SDK CONFIGURATION
@@ -113,11 +121,14 @@ add_executable(neural_capture
     src/bluetooth/BluetoothManager.cpp
     src/bluetooth/BluetoothDevice.cpp
     src/bluetooth/BluetoothScanner.cpp
-    src/gui/BluetoothGui.cpp
+    src/gui/HardwarePanel.cpp
     src/gui/GuiManager.cpp
     src/gui/PreferencesDialog.cpp
     src/gui/LogPanel.cpp
     src/gui/Application.cpp
+    src/gui/widgets/SessionWidget.cpp
+    src/gui/widgets/FileExplorerWidget.cpp
+    src/gui/widgets/CaptureStudioPanel.cpp
 )
 
 target_include_directories(neural_capture PRIVATE
@@ -126,6 +137,8 @@ target_include_directories(neural_capture PRIVATE
     "C:/Program Files/Teledyne DALSA/Sapera/Include"
     ${imgui_SOURCE_DIR}
     ${imgui_SOURCE_DIR}/backends
+    third_party/glad/include
+    third_party/stb
 )
 
 target_link_directories(neural_capture PRIVATE
@@ -134,8 +147,10 @@ target_link_directories(neural_capture PRIVATE
 
 target_link_libraries(neural_capture PRIVATE
     imgui
+    glad
     SapClassBasic.lib
     windowsapp.lib  # For WinRT/C++
+    opengl32.lib    # Windows OpenGL
 )
 
 # WinRT specific settings (based on working BLE demo)
@@ -146,6 +161,15 @@ endif()
 
 # Set as default target
 set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT neural_capture)
+
+# TIFF Test executable
+add_executable(tiff_test
+    tiff_test.cpp
+)
+
+target_link_libraries(tiff_test PRIVATE
+    gdiplus.lib
+)
 
 # =============================================================================
 # INSTALLATION

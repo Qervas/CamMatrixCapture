@@ -6,6 +6,16 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 
+#ifdef _WIN32
+#include <windows.h>
+#include <objidl.h>      // For IStream
+#include <wtypes.h>      // For PROPID
+#include <wingdi.h>      // For HDC
+#include <comdef.h>
+#include <gdiplus.h>
+#pragma comment(lib, "gdiplus.lib")
+#endif
+
 namespace SaperaCapturePro {
 
 FileInfo::FileInfo(const std::filesystem::path& p) : path(p) {
@@ -32,15 +42,44 @@ FileExplorerWidget::~FileExplorerWidget() {
 }
 
 void FileExplorerWidget::Initialize() {
-    // Initialize any resources if needed
+#ifdef _WIN32
+    // Initialize GDI+ for TIFF loading
+    if (!gdiplus_initialized_) {
+        using namespace Gdiplus;
+        GdiplusStartupInput gdiplusStartupInput;
+        Status status = GdiplusStartup(&gdiplus_token_, &gdiplusStartupInput, nullptr);
+        if (status == Ok) {
+            gdiplus_initialized_ = true;
+            LogMessage("[FILE] GDI+ initialized successfully");
+        } else {
+            LogMessage("[FILE] Failed to initialize GDI+: " + std::to_string(status));
+        }
+    }
+#endif
 }
 
 void FileExplorerWidget::Shutdown() {
     ClearSelection();
     ClearImagePreview();
+    
+#ifdef _WIN32
+    // Shutdown GDI+ if it was initialized
+    if (gdiplus_initialized_) {
+        Gdiplus::GdiplusShutdown(gdiplus_token_);
+        gdiplus_initialized_ = false;
+        LogMessage("[FILE] GDI+ shutdown complete");
+    }
+#endif
 }
 
 void FileExplorerWidget::Render(CaptureSession* session) {
+    // Ensure initialization is complete
+#ifdef _WIN32
+    if (!gdiplus_initialized_) {
+        Initialize();
+    }
+#endif
+    
     if (ImGui::Begin("📁 File Explorer", nullptr, ImGuiWindowFlags_NoCollapse)) {
         
         // Header with actions
@@ -177,6 +216,7 @@ void FileExplorerWidget::RenderPreview() {
     ImGui::Separator();
     
     if (file_info.is_image && has_valid_preview_ && preview_texture_id_ != 0) {
+        
         // Get full available space for image
         ImVec2 available_size = ImGui::GetContentRegionAvail();
         
@@ -185,18 +225,24 @@ void FileExplorerWidget::RenderPreview() {
         
         // Scale to fit available space while maintaining aspect ratio
         if (available_size.x / aspect_ratio <= available_size.y) {
-            display_size.x = available_size.x;
-            display_size.y = available_size.x / aspect_ratio;
+            display_size.x = available_size.x - 20; // Leave margin
+            display_size.y = display_size.x / aspect_ratio;
         } else {
-            display_size.y = available_size.y;
-            display_size.x = available_size.y * aspect_ratio;
+            display_size.y = available_size.y - 40; // Leave margin for text
+            display_size.x = display_size.y * aspect_ratio;
+        }
+        
+        // Ensure minimum reasonable size
+        if (display_size.x < 100) {
+            display_size.x = 100;
+            display_size.y = 100 / aspect_ratio;
         }
         
         // Center the image in available space
         ImVec2 cursor_pos = ImGui::GetCursorPos();
         ImVec2 centered_pos = ImVec2(
-            cursor_pos.x + (available_size.x - display_size.x) * 0.5f,
-            cursor_pos.y + (available_size.y - display_size.y) * 0.5f
+            cursor_pos.x + std::max(0.0f, (available_size.x - display_size.x) * 0.5f),
+            cursor_pos.y + std::max(0.0f, (available_size.y - display_size.y - 30) * 0.5f)
         );
         ImGui::SetCursorPos(centered_pos);
         
@@ -207,6 +253,8 @@ void FileExplorerWidget::RenderPreview() {
         if (ImGui::IsItemHovered()) {
             ImGui::BeginTooltip();
             ImGui::Text("Image: %dx%d pixels", preview_width_, preview_height_);
+            ImGui::Text("Texture ID: %u", preview_texture_id_);
+            ImGui::Text("Display Size: %.0fx%.0f", display_size.x, display_size.y);
             ImGui::Text("Double-click to open with default app");
             ImGui::EndTooltip();
             
@@ -216,18 +264,28 @@ void FileExplorerWidget::RenderPreview() {
         }
         
         // Show dimensions at bottom
-        ImGui::SetCursorPos(ImVec2(10, available_size.y - 20));
-        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%dx%d", preview_width_, preview_height_);
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 5);
+        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "📏 %dx%d pixels", preview_width_, preview_height_);
         
     } else if (file_info.is_image) {
-        // Loading state
+        // Loading/error state
+        LogMessage("[FILE] Image file selected but no preview - has_valid_preview_: " + 
+                   std::to_string(has_valid_preview_) + " texture_id: " + std::to_string(preview_texture_id_));
+        
         ImVec2 available_size = ImGui::GetContentRegionAvail();
         ImVec2 text_pos = ImVec2(
-            available_size.x * 0.5f - 50,
-            available_size.y * 0.5f - 10
+            available_size.x * 0.5f - 80,
+            available_size.y * 0.5f - 20
         );
         ImGui::SetCursorPos(text_pos);
-        ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "⏳ Loading...");
+        
+        if (loaded_image_path_ == selected_file_path_) {
+            ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "❌ Failed to load image");
+            ImGui::SetCursorPos(ImVec2(text_pos.x - 20, text_pos.y + 15));
+            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Check console for error details");
+        } else {
+            ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "⏳ Loading preview...");
+        }
     } else {
         // Not an image file
         ImVec2 available_size = ImGui::GetContentRegionAvail();
@@ -353,14 +411,28 @@ bool FileExplorerWidget::LoadImagePreview(const std::string& image_path) {
     
     LogMessage("[FILE] Attempting to load image: " + image_path);
     
-    // Load image using stb_image with TIFF support
-    int width, height, channels;
-    unsigned char* data = stbi_load(image_path.c_str(), &width, &height, &channels, 0);
+    // Check file extension to determine loading method
+    std::filesystem::path path(image_path);
+    std::string extension = path.extension().string();
+    std::transform(extension.begin(), extension.end(), extension.begin(), ::tolower);
     
-    if (!data) {
-        std::string error = stbi_failure_reason() ? stbi_failure_reason() : "Unknown error";
-        LogMessage("[FILE] Failed to load image: " + image_path + " - " + error);
-        return false;
+    int width, height, channels;
+    unsigned char* data = nullptr;
+    
+    if (extension == ".tiff" || extension == ".tif") {
+        // Use WIC for TIFF files
+        if (!LoadTIFFImage(image_path, data, width, height, channels)) {
+            LogMessage("[FILE] Failed to load TIFF image: " + image_path);
+            return false;
+        }
+    } else {
+        // Use stb_image for other formats
+        data = stbi_load(image_path.c_str(), &width, &height, &channels, 0);
+        if (!data) {
+            std::string error = stbi_failure_reason() ? stbi_failure_reason() : "Unknown error";
+            LogMessage("[FILE] Failed to load image: " + image_path + " - " + error);
+            return false;
+        }
     }
     
     LogMessage("[FILE] Successfully loaded image: " + std::to_string(width) + "x" + std::to_string(height) + " (" + std::to_string(channels) + " channels)");
@@ -375,7 +447,12 @@ bool FileExplorerWidget::LoadImagePreview(const std::string& image_path) {
             rgba_data[i * 4 + 2] = data[i * 3 + 2]; // B
             rgba_data[i * 4 + 3] = 255;         // A
         }
-        stbi_image_free(data);
+        // Free original data using appropriate method
+        if (extension == ".tiff" || extension == ".tif") {
+            delete[] data;  // WIC uses new[]
+        } else {
+            stbi_image_free(data);  // stb_image uses malloc
+        }
         data = rgba_data;
         channels = 4;
     } else if (channels == 1) {
@@ -386,31 +463,41 @@ bool FileExplorerWidget::LoadImagePreview(const std::string& image_path) {
             rgba_data[i * 4 + 2] = data[i]; // B
             rgba_data[i * 4 + 3] = 255;     // A
         }
-        stbi_image_free(data);
+        // Free original data using appropriate method
+        if (extension == ".tiff" || extension == ".tif") {
+            delete[] data;  // WIC uses new[]
+        } else {
+            stbi_image_free(data);  // stb_image uses malloc
+        }
         data = rgba_data;
         channels = 4;
     }
     
     // Create OpenGL texture
     glGenTextures(1, &preview_texture_id_);
+    if (preview_texture_id_ == 0) {
+        LogMessage("[FILE] Failed to generate OpenGL texture");
+        delete[] data;
+        return false;
+    }
+    
     glBindTexture(0x0DE1, preview_texture_id_); // GL_TEXTURE_2D
     
-    glTexParameteri(0x0DE1, 0x2601, 0x2601); // GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR
+    // Set texture parameters for better quality
+    glTexParameteri(0x0DE1, 0x2801, 0x2601); // GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR
     glTexParameteri(0x0DE1, 0x2800, 0x2601); // GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR  
-    glTexParameteri(0x0DE1, 0x2802, 0x2901); // GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT
-    glTexParameteri(0x0DE1, 0x2803, 0x2901); // GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT
+    glTexParameteri(0x0DE1, 0x2802, 0x812F); // GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE
+    glTexParameteri(0x0DE1, 0x2803, 0x812F); // GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE
     
-    GLenum format = (channels == 4) ? 0x1908 : 0x1907; // GL_RGBA : GL_RGB
-    glTexImage2D(0x0DE1, 0, format, width, height, 0, format, 0x1401, data); // GL_TEXTURE_2D, GL_UNSIGNED_BYTE
+    // Upload texture data - always RGBA since we convert above
+    glTexImage2D(0x0DE1, 0, 0x1908, width, height, 0, 0x1908, 0x1401, data); // GL_TEXTURE_2D, GL_RGBA, GL_RGBA, GL_UNSIGNED_BYTE
+    
+    // Note: Skipping OpenGL error check for compatibility
     
     glBindTexture(0x0DE1, 0); // GL_TEXTURE_2D
     
-    // Clean up
-    if (channels == 4 && rgba_data) {
-        delete[] data;
-    } else {
-        stbi_image_free(data);
-    }
+    // Clean up - after conversion, data is always RGBA allocated with new[]
+    delete[] data;
     
     // Update state
     preview_width_ = width;
@@ -435,9 +522,138 @@ void FileExplorerWidget::ClearImagePreview() {
 }
 
 bool FileExplorerWidget::LoadTIFFImage(const std::string& file_path, unsigned char*& data, int& width, int& height, int& channels) {
-    // For now, use stb_image for TIFF loading
+#ifdef _WIN32
+    using namespace Gdiplus;
+    
+    // Check if GDI+ is initialized
+    if (!gdiplus_initialized_) {
+        LogMessage("[FILE] GDI+ not initialized for TIFF loading");
+        return false;
+    }
+    
+    // Convert path to wide string
+    std::wstring wfile_path(file_path.begin(), file_path.end());
+    
+    // Load the TIFF using GDI+
+    Bitmap* bitmap = new Bitmap(wfile_path.c_str());
+    if (bitmap->GetLastStatus() != Ok) {
+        LogMessage("[FILE] Failed to load TIFF with GDI+: " + std::to_string(bitmap->GetLastStatus()));
+        delete bitmap;
+        return false;
+    }
+    
+    width = bitmap->GetWidth();
+    height = bitmap->GetHeight();
+    PixelFormat pixelFormat = bitmap->GetPixelFormat();
+    
+    LogMessage("[FILE] GDI+ TIFF loaded: " + std::to_string(width) + "x" + std::to_string(height) + ", format: " + std::to_string(pixelFormat));
+    
+    // For indexed/palette formats, we need to convert to RGB first
+    Bitmap* rgbBitmap = nullptr;
+    if (pixelFormat == PixelFormat8bppIndexed || 
+        pixelFormat == PixelFormat4bppIndexed || 
+        pixelFormat == PixelFormat1bppIndexed ||
+        pixelFormat == PixelFormat16bppGrayScale) {
+        
+        LogMessage("[FILE] Converting indexed/grayscale TIFF to RGB format");
+        
+        // Create a new 24bpp RGB bitmap
+        rgbBitmap = new Bitmap(width, height, PixelFormat24bppRGB);
+        Graphics graphics(rgbBitmap);
+        
+        // Draw the indexed bitmap onto RGB bitmap (handles palette conversion)
+        graphics.DrawImage(bitmap, 0, 0, width, height);
+        
+        delete bitmap;
+        bitmap = rgbBitmap;
+        pixelFormat = PixelFormat24bppRGB;
+        
+        LogMessage("[FILE] Converted to RGB format successfully");
+    }
+
+    // Lock bitmap bits for direct access  
+    BitmapData bitmapData;
+    Rect rect(0, 0, width, height);
+    Status lockStatus = bitmap->LockBits(&rect, ImageLockModeRead, PixelFormat32bppARGB, &bitmapData);
+    if (lockStatus != Ok) {
+        LogMessage("[FILE] Failed to lock bitmap bits: " + std::to_string(lockStatus));
+        delete bitmap;
+        return false;
+    }
+    
+    // Copy pixel data from GDI+ bitmap to our buffer
+    int totalPixels = width * height;
+    data = new unsigned char[totalPixels * 4]; // RGBA format
+    channels = 4;
+    
+    BYTE* srcPixels = static_cast<BYTE*>(bitmapData.Scan0);
+    int srcStride = bitmapData.Stride;
+    
+    // First pass: find min/max values for normalization (camera TIFFs often have limited dynamic range)
+    unsigned char minVal = 255, maxVal = 0;
+    for (int y = 0; y < height; y++) {
+        BYTE* srcRow = srcPixels + (y * srcStride);
+        for (int x = 0; x < width; x++) {
+            BYTE* srcPixel = srcRow + (x * 4);
+            // Check RGB values (ignore alpha)
+            for (int c = 0; c < 3; c++) {
+                unsigned char val = srcPixel[c];
+                if (val < minVal) minVal = val;
+                if (val > maxVal) maxVal = val;
+            }
+        }
+    }
+    
+    // Calculate normalization parameters
+    float range = maxVal - minVal;
+    bool needsNormalization = (range < 240 && range > 0); // Normalize if dynamic range is very limited (even 1-2 values)
+    
+    LogMessage("[FILE] TIFF dynamic range: " + std::to_string(minVal) + "-" + std::to_string(maxVal) + 
+               " (range: " + std::to_string((int)range) + ") " + 
+               (needsNormalization ? "- applying normalization" : "- using original values"));
+    
+    // Convert from ARGB to RGBA with optional normalization
+    for (int y = 0; y < height; y++) {
+        BYTE* srcRow = srcPixels + (y * srcStride);
+        unsigned char* dstRow = data + (y * width * 4);
+        
+        for (int x = 0; x < width; x++) {
+            BYTE* srcPixel = srcRow + (x * 4); // ARGB format
+            unsigned char* dstPixel = dstRow + (x * 4); // RGBA format
+            
+            // GDI+ uses BGRA, we need RGBA with optional normalization
+            unsigned char b = srcPixel[0];
+            unsigned char g = srcPixel[1]; 
+            unsigned char r = srcPixel[2];
+            unsigned char a = srcPixel[3];
+            
+            if (needsNormalization && range > 0) {
+                // Stretch limited dynamic range to full 0-255
+                float fRange = static_cast<float>(range);
+                dstPixel[0] = static_cast<unsigned char>((r - minVal) / fRange * 255.0f); // R
+                dstPixel[1] = static_cast<unsigned char>((g - minVal) / fRange * 255.0f); // G
+                dstPixel[2] = static_cast<unsigned char>((b - minVal) / fRange * 255.0f); // B
+            } else {
+                dstPixel[0] = r; // R
+                dstPixel[1] = g; // G
+                dstPixel[2] = b; // B
+            }
+            dstPixel[3] = 255; // Always opaque for preview
+        }
+    }
+    
+    // Unlock the bitmap
+    bitmap->UnlockBits(&bitmapData);
+    delete bitmap;
+    
+    LogMessage("[FILE] Successfully loaded TIFF using GDI+: " + std::to_string(width) + "x" + std::to_string(height));
+    return true;
+    
+#else
+    // Fallback to stb_image for non-Windows (won't work for TIFF)
     data = stbi_load(file_path.c_str(), &width, &height, &channels, 0);
     return data != nullptr;
+#endif
 }
 
 } // namespace SaperaCapturePro

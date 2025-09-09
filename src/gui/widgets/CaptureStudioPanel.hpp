@@ -19,6 +19,18 @@ enum class CaptureMode {
     Advanced
 };
 
+enum class SequenceStep {
+    Idle,           // Not running
+    Initializing,   // Setting up sequence
+    Rotating,       // Rotating turntable
+    WaitingToSettle,// Waiting for turntable to settle
+    Capturing,      // Taking photos
+    Processing,     // Processing/saving images
+    WaitingForNext, // Delay before next capture
+    Completing,     // Finalizing sequence
+    Paused          // User paused the sequence
+};
+
 class CaptureStudioPanel {
 public:
     CaptureStudioPanel();
@@ -64,6 +76,14 @@ private:
     std::chrono::steady_clock::time_point last_capture_time_;
     bool auto_sequence_active_ = false;
     
+    // Pauseable automation state
+    SequenceStep current_step_ = SequenceStep::Idle;
+    bool sequence_paused_ = false;
+    std::chrono::steady_clock::time_point step_start_time_;
+    float step_duration_seconds_ = 0.0f;
+    std::string current_step_description_;
+    float step_progress_ = 0.0f;
+    
     // Advanced capture state
     struct AdvancedSettings {
         bool enable_exposure_bracketing = false;
@@ -91,6 +111,15 @@ private:
     void StopAutomatedSequence();
     void UpdateAutomatedSequence();
     void PerformSingleCapture(const std::string& capture_name = "");
+    
+    // Pauseable automation
+    void PauseSequence();
+    void ResumeSequence();
+    void AdvanceToNextStep();
+    void SetCurrentStep(SequenceStep step, const std::string& description, float duration_seconds = 0.0f);
+    void UpdateStepProgress();
+    std::string GetStepName(SequenceStep step) const;
+    void RenderStepIndicator();
     
     // Turntable control
     void RotateTurntable(float degrees);

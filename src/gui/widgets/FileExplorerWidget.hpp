@@ -63,6 +63,12 @@ private:
     std::string selected_file_path_;
     std::vector<std::vector<FileInfo>> capture_files_; // Files per capture
     
+#ifdef _WIN32
+    // GDI+ state for TIFF loading
+    ULONG_PTR gdiplus_token_ = 0;
+    bool gdiplus_initialized_ = false;
+#endif
+    
     // Image preview state
     GLuint preview_texture_id_ = 0;
     int preview_width_ = 0;
