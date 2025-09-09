@@ -95,12 +95,8 @@ void BluetoothGui::OnConnectionStatusChanged(const std::string& deviceId, bool c
 
 void BluetoothGui::RenderScannerTab() {
     if (ImGui::BeginTabItem("Scanner")) {
-        // Debug: Show scanning state
-        bool isScanning = m_bluetoothManager ? m_bluetoothManager->IsScanning() : false;
-        ImGui::Text("Debug - IsScanning: %s", isScanning ? "TRUE" : "FALSE");
-        ImGui::Separator();
-        
         // Scan controls
+        bool isScanning = m_bluetoothManager ? m_bluetoothManager->IsScanning() : false;
         if (!isScanning) {
             if (ImGui::Button("Start Scan", ImVec2(120, 0))) {
                 StartScanning();

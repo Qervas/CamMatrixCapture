@@ -103,7 +103,10 @@ struct AppSettings {
     bool dark_theme = true;
     int window_width = 1200;
     int window_height = 800;
+    int window_x = 100;
+    int window_y = 100;
     float ui_scale = 1.0f;  // UI scale factor (0.5 to 8.0)
+    bool vsync = true;
     
     SimpleJSON ToJson() const;
     void FromJson(const SimpleJSON& json);
@@ -124,7 +127,7 @@ private:
     void LoadFullSettings(const SimpleJSON& json);
     
 public:
-    explicit SettingsManager(const std::string& config_path = "config/settings.json");
+    explicit SettingsManager(const std::string& config_path = "settings.json");
     ~SettingsManager();
     
     // Camera Settings

@@ -12,7 +12,7 @@ class GuiManager {
   GuiManager();
   ~GuiManager();
 
-  bool Initialize(const std::string& window_title, int width, int height);
+  bool Initialize(const std::string& window_title, int width, int height, int x = -1, int y = -1);
   void Shutdown();
 
   bool ShouldClose() const;

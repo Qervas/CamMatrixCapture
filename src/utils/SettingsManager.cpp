@@ -2,6 +2,7 @@
 #include <fstream>
 #include <filesystem>
 #include <algorithm>
+#include <iostream>
 
 // CameraSettings implementation
 SimpleJSON CameraSettings::ToJson() const {
@@ -183,7 +184,10 @@ SimpleJSON AppSettings::ToJson() const {
     json.set("dark_theme", dark_theme);
     json.set("window_width", window_width);
     json.set("window_height", window_height);
+    json.set("window_x", window_x);
+    json.set("window_y", window_y);
     json.set("ui_scale", ui_scale);
+    json.set("vsync", vsync);
     return json;
 }
 
@@ -193,6 +197,9 @@ void AppSettings::FromJson(const SimpleJSON& json) {
     dark_theme = json.getBool("dark_theme", dark_theme);
     window_width = json.getInt("window_width", window_width);
     window_height = json.getInt("window_height", window_height);
+    window_x = json.getInt("window_x", window_x);
+    window_y = json.getInt("window_y", window_y);
+    vsync = json.getBool("vsync", vsync);
     
     // Load and validate UI scale
     float loaded_scale = json.getFloat("ui_scale", ui_scale);
@@ -291,6 +298,7 @@ void SettingsManager::ResetAppSettings() {
 }
 
 bool SettingsManager::Save() {
+    std::cout << "[SETTINGS] Save() method called" << std::endl;
     return SaveToFile();
 }
 
@@ -326,9 +334,9 @@ bool SettingsManager::LoadFromFile() {
             }
         }
         
-        // Load settings from JSON
-        camera_settings.FromJson(json);
-        app_settings.FromJson(json);
+        // Load settings from JSON using the full settings parser
+        LoadFullSettings(json);
+        
         
         return true;
     } catch (const std::exception&) {
@@ -337,21 +345,28 @@ bool SettingsManager::LoadFromFile() {
 }
 
 bool SettingsManager::SaveToFile() const {
+    std::cout << "[SETTINGS] SaveToFile called - writing to: " << config_file_path << std::endl;
+    
     try {
         std::ofstream file(config_file_path);
         if (!file.is_open()) {
+            std::cout << "[SETTINGS] ERROR: Could not open file for writing" << std::endl;
             return false;
         }
         
         // Combine all settings into one JSON
         auto full_json = CreateFullSettings();
         
+        std::cout << "[SETTINGS] Writing " << full_json.data.size() << " settings to file" << std::endl;
+        
         for (const auto& [key, value] : full_json.data) {
             file << key << "=" << value << std::endl;
         }
         
+        std::cout << "[SETTINGS] Settings saved successfully" << std::endl;
         return true;
-    } catch (const std::exception&) {
+    } catch (const std::exception& e) {
+        std::cout << "[SETTINGS] ERROR saving: " << e.what() << std::endl;
         return false;
     }
 }

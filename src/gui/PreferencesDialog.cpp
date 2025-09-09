@@ -2,6 +2,7 @@
 #include <imgui.h>
 #include <algorithm>
 #include <cmath>
+#include <iostream>
 
 namespace SaperaCapturePro {
 
@@ -13,12 +14,17 @@ void PreferencesDialog::Show(bool* p_open) {
   ImGui::SetNextWindowSize(ImVec2(600, 400), ImGuiCond_FirstUseEver);
   
   if (ImGui::Begin("Preferences", p_open, ImGuiWindowFlags_NoDocking)) {
-    // Load current settings on first open
-    static bool first_open = true;
-    if (first_open && settings_manager_) {
-      temp_ui_scale_ = settings_manager_->GetAppSettings().ui_scale;
-      temp_dark_theme_ = settings_manager_->GetAppSettings().dark_theme;
-      first_open = false;
+    // Load current settings every time dialog is shown
+    if (settings_manager_) {
+      const auto& app_settings = settings_manager_->GetAppSettings();
+      temp_ui_scale_ = app_settings.ui_scale;
+      temp_dark_theme_ = app_settings.dark_theme;
+      temp_vsync_ = app_settings.vsync;
+      temp_auto_save_settings_ = app_settings.auto_save_settings;
+      temp_window_width_ = app_settings.window_width;
+      temp_window_height_ = app_settings.window_height;
+      temp_window_x_ = app_settings.window_x;
+      temp_window_y_ = app_settings.window_y;
     }
     
     // Left side - category list
@@ -72,7 +78,16 @@ void PreferencesDialog::RenderGeneralTab() {
   ImGui::Separator();
   ImGui::Spacing();
   
-  ImGui::TextWrapped("Settings are saved manually using the Save button below.");
+  // Auto-save setting
+  if (ImGui::Checkbox("Auto-save settings", &temp_auto_save_settings_)) {
+    if (settings_manager_) {
+      settings_manager_->GetAppSettings().auto_save_settings = temp_auto_save_settings_;
+      settings_manager_->Save();
+    }
+  }
+  if (ImGui::IsItemHovered()) {
+    ImGui::SetTooltip("Automatically save settings when changed");
+  }
   
   ImGui::Spacing();
   ImGui::Separator();
@@ -87,8 +102,49 @@ void PreferencesDialog::RenderGeneralTab() {
     
     if (ImGui::InputText("Default Output Folder", output_folder, sizeof(output_folder))) {
       settings_manager_->GetAppSettings().last_output_folder = output_folder;
+      settings_manager_->Save(); // Auto-save to local cache
     }
   }
+  
+  ImGui::Spacing();
+  ImGui::Separator();
+  ImGui::Spacing();
+  
+  // Window settings
+  ImGui::Text("Window Position & Size");
+  ImGui::Spacing();
+  
+  if (ImGui::InputInt("Window Width", &temp_window_width_)) {
+    temp_window_width_ = std::max(800, temp_window_width_); // Minimum width
+    if (settings_manager_) {
+      settings_manager_->GetAppSettings().window_width = temp_window_width_;
+      settings_manager_->Save();
+    }
+  }
+  
+  if (ImGui::InputInt("Window Height", &temp_window_height_)) {
+    temp_window_height_ = std::max(600, temp_window_height_); // Minimum height
+    if (settings_manager_) {
+      settings_manager_->GetAppSettings().window_height = temp_window_height_;
+      settings_manager_->Save();
+    }
+  }
+  
+  if (ImGui::InputInt("Window X Position", &temp_window_x_)) {
+    if (settings_manager_) {
+      settings_manager_->GetAppSettings().window_x = temp_window_x_;
+      settings_manager_->Save();
+    }
+  }
+  
+  if (ImGui::InputInt("Window Y Position", &temp_window_y_)) {
+    if (settings_manager_) {
+      settings_manager_->GetAppSettings().window_y = temp_window_y_;
+      settings_manager_->Save();
+    }
+  }
+  
+  ImGui::TextDisabled("Note: Window position changes take effect on next app restart");
 }
 
 void PreferencesDialog::RenderAppearanceTab() {
@@ -187,9 +243,23 @@ void PreferencesDialog::RenderAppearanceTab() {
   ImGui::Text("Theme");
   if (ImGui::RadioButton("Dark Theme", temp_dark_theme_)) {
     temp_dark_theme_ = true;
+    if (settings_manager_) {
+      std::cout << "[PREFERENCES] Dark theme selected, saving..." << std::endl;
+      settings_manager_->GetAppSettings().dark_theme = temp_dark_theme_;
+      settings_manager_->Save(); // Auto-save to local cache
+    } else {
+      std::cout << "[PREFERENCES] ERROR: settings_manager_ is null!" << std::endl;
+    }
   }
   if (ImGui::RadioButton("Light Theme", !temp_dark_theme_)) {
     temp_dark_theme_ = false;
+    if (settings_manager_) {
+      std::cout << "[PREFERENCES] Light theme selected, saving..." << std::endl;
+      settings_manager_->GetAppSettings().dark_theme = temp_dark_theme_;
+      settings_manager_->Save(); // Auto-save to local cache
+    } else {
+      std::cout << "[PREFERENCES] ERROR: settings_manager_ is null!" << std::endl;
+    }
   }
   
   if (!temp_dark_theme_) {
@@ -210,7 +280,16 @@ void PreferencesDialog::RenderPerformanceTab() {
   ImGui::Separator();
   ImGui::Spacing();
   
-  ImGui::Checkbox("VSync", &temp_vsync_);
+  if (ImGui::Checkbox("VSync", &temp_vsync_)) {
+    // Auto-save VSync setting to local cache
+    if (settings_manager_) {
+      std::cout << "[PREFERENCES] VSync changed to " << (temp_vsync_ ? "ON" : "OFF") << ", saving..." << std::endl;
+      settings_manager_->GetAppSettings().vsync = temp_vsync_;
+      settings_manager_->Save();
+    } else {
+      std::cout << "[PREFERENCES] ERROR: settings_manager_ is null for VSync!" << std::endl;
+    }
+  }
   if (ImGui::IsItemHovered()) {
     ImGui::SetTooltip("Enable vertical synchronization to prevent screen tearing");
   }
@@ -272,12 +351,16 @@ void PreferencesDialog::ApplySettings() {
   // Validate and clamp UI scale
   temp_ui_scale_ = std::clamp(temp_ui_scale_, 0.5f, 8.0f);
   
-  // Apply UI scale (only update settings, don't save)
-  settings_manager_->GetAppSettings().ui_scale = temp_ui_scale_;
-  
-  // Apply other settings
-  settings_manager_->GetAppSettings().dark_theme = temp_dark_theme_;
-  // Note: auto_save removed as we're switching to manual save only
+  // Apply all settings to settings manager
+  auto& app_settings = settings_manager_->GetAppSettings();
+  app_settings.ui_scale = temp_ui_scale_;
+  app_settings.dark_theme = temp_dark_theme_;
+  app_settings.vsync = temp_vsync_;
+  app_settings.auto_save_settings = temp_auto_save_settings_;
+  app_settings.window_width = temp_window_width_;
+  app_settings.window_height = temp_window_height_;
+  app_settings.window_x = temp_window_x_;
+  app_settings.window_y = temp_window_y_;
 }
 
 void PreferencesDialog::SaveSettings() {
@@ -288,9 +371,15 @@ void PreferencesDialog::SaveSettings() {
 }
 
 void PreferencesDialog::ResetSettings() {
+  // Reset all temporary values to defaults
   temp_ui_scale_ = 1.0f;
   temp_dark_theme_ = true;
   temp_vsync_ = true;
+  temp_auto_save_settings_ = true;
+  temp_window_width_ = 1200;
+  temp_window_height_ = 800;
+  temp_window_x_ = 100;
+  temp_window_y_ = 100;
   
   // Apply UI scale immediately when resetting
   if (ui_scale_callback_) {

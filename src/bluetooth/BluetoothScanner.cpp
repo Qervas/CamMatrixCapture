@@ -32,24 +32,43 @@ void BluetoothScanner::Shutdown() {
         return;
     }
     
+    // Stop scanning first
     StopScanning();
     
-    // Clean up event handlers
+    // Clean up device watcher completely
     if (m_deviceWatcher) {
-        // Remove event handlers using the tokens
-        if (m_deviceAddedToken.value != 0) {
-            m_deviceWatcher.Added(m_deviceAddedToken);
+        try {
+            // Make sure it's stopped
+            auto status = m_deviceWatcher.Status();
+            if (status == DeviceWatcherStatus::Started || 
+                status == DeviceWatcherStatus::EnumerationCompleted ||
+                status == DeviceWatcherStatus::Stopping) {
+                m_deviceWatcher.Stop();
+                // Give it time to stop
+                std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            }
         }
-        if (m_deviceUpdatedToken.value != 0) {
-            m_deviceWatcher.Updated(m_deviceUpdatedToken);
+        catch (...) {
+            // Ignore errors during shutdown
         }
+        
+        // Clear the watcher reference
         m_deviceWatcher = nullptr;
     }
     
+    // Clear advertisement watcher if it exists
     if (m_advertisementWatcher) {
-        m_advertisementWatcher.Received(m_advertisementReceivedToken);
+        try {
+            m_advertisementWatcher.Stop();
+        }
+        catch (...) {
+            // Ignore errors
+        }
         m_advertisementWatcher = nullptr;
     }
+    
+    // Clear discovered devices
+    ClearDiscoveredDevices();
     
     m_initialized = false;
 }
@@ -100,12 +119,17 @@ void BluetoothScanner::StopScanning() {
         // Stop device watcher safely
         if (m_deviceWatcher) {
             auto status = m_deviceWatcher.Status();
-            if (status == DeviceWatcherStatus::Started || status == DeviceWatcherStatus::Stopping) {
+            if (status == DeviceWatcherStatus::Started || 
+                status == DeviceWatcherStatus::EnumerationCompleted ||
+                status == DeviceWatcherStatus::Stopping) {
                 m_deviceWatcher.Stop();
                 
                 // Wait a moment for the watcher to stop properly
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
             }
+            
+            // Clear the watcher after stopping to ensure clean state
+            m_deviceWatcher = nullptr;
         }
     }
     catch (...) {

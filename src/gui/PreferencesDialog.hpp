@@ -26,6 +26,11 @@ class PreferencesDialog {
   float temp_ui_scale_ = 1.0f;
   bool temp_dark_theme_ = true;
   bool temp_vsync_ = true;
+  bool temp_auto_save_settings_ = true;
+  int temp_window_width_ = 1200;
+  int temp_window_height_ = 800;
+  int temp_window_x_ = 100;
+  int temp_window_y_ = 100;
   
   // Callbacks
   std::function<void(float)> on_ui_scale_changed_;

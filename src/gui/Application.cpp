@@ -7,6 +7,13 @@
 #include <iomanip>
 #include <algorithm>
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <unistd.h>
+#include <limits.h>
+#endif
+
 namespace SaperaCapturePro {
 
 Application::Application() = default;
@@ -29,16 +36,53 @@ bool Application::Initialize() {
   }
 }
 
+std::string GetExecutableDirectory() {
+  #ifdef _WIN32
+    char path[MAX_PATH];
+    GetModuleFileNameA(NULL, path, MAX_PATH);
+    std::string exe_path(path);
+    size_t pos = exe_path.find_last_of("\\/");
+    return (pos != std::string::npos) ? exe_path.substr(0, pos) : ".";
+  #else
+    // For Linux/Mac if needed later
+    char path[PATH_MAX];
+    ssize_t count = readlink("/proc/self/exe", path, PATH_MAX);
+    if (count != -1) {
+        path[count] = '\0';
+        std::string exe_path(path);
+        size_t pos = exe_path.find_last_of("/");
+        return (pos != std::string::npos) ? exe_path.substr(0, pos) : ".";
+    }
+    return ".";
+  #endif
+}
+
 void Application::InitializeSettings() {
-  // Create config directory if it doesn't exist
-  std::filesystem::create_directories("config");
+  // Get the directory where the executable is located
+  std::string exe_dir = GetExecutableDirectory();
+  std::filesystem::path settings_path = std::filesystem::path(exe_dir) / "settings.json";
+  std::string settings_path_str = settings_path.string();
   
-  // Initialize settings manager
-  settings_manager_ = std::make_unique<SettingsManager>("config/settings.json");
+  std::cout << "[SETTINGS] Executable directory: " << exe_dir << std::endl;
+  std::cout << "[SETTINGS] Settings file path: " << settings_path_str << std::endl;
+  
+  // Check if settings file exists
+  if (std::filesystem::exists(settings_path_str)) {
+    std::cout << "[SETTINGS] Settings file found, loading..." << std::endl;
+  } else {
+    std::cout << "[SETTINGS] Settings file not found, will create with defaults" << std::endl;
+  }
+  
+  // Initialize settings manager with absolute path to exe directory
+  settings_manager_ = std::make_unique<SettingsManager>(settings_path_str);
   settings_manager_->Load();
   
-  // Initialize session manager
-  session_manager_ = std::make_unique<SessionManager>("neural_dataset");
+  // Initialize session manager with absolute path using settings
+  std::string dataset_folder = settings_manager_->GetAppSettings().last_output_folder;
+  std::filesystem::path dataset_path = std::filesystem::path(exe_dir) / dataset_folder;
+  std::string dataset_path_str = dataset_path.string();
+  std::cout << "[DEBUG] SessionManager dataset_path: " << dataset_path_str << std::endl;
+  session_manager_ = std::make_unique<SessionManager>(dataset_path_str);
 }
 
 void Application::InitializeGUI() {
@@ -48,12 +92,17 @@ void Application::InitializeGUI() {
   const auto& app_settings = settings_manager_->GetAppSettings();
   if (!gui_manager_->Initialize("Camera Matrix Capture", 
                                 app_settings.window_width, 
-                                app_settings.window_height)) {
+                                app_settings.window_height,
+                                app_settings.window_x,
+                                app_settings.window_y)) {
     throw std::runtime_error("Failed to initialize GUI manager");
   }
   
   // Apply saved UI scale
   gui_manager_->SetUIScale(app_settings.ui_scale);
+  
+  // Apply VSync setting
+  gui_manager_->SetVSyncEnabled(app_settings.vsync);
   
   // Initialize GUI components
   preferences_dialog_ = std::make_unique<PreferencesDialog>();
@@ -113,14 +162,32 @@ void Application::Run() {
     
     gui_manager_->EndFrame();
   }
+  
+  // If we exit the loop because window was closed, ensure proper shutdown
+  if (gui_manager_->ShouldClose()) {
+    is_running_ = false;
+    // Save settings immediately when window is closed
+    SaveSettings();
+  }
 }
 
 void Application::Shutdown() {
-  // Settings are now saved manually only
+  // Auto-save settings before shutdown
+  SaveSettings();
   
-  // Cleanup
-  bluetooth_gui_.reset();
-  // bluetooth_manager_ is a singleton, no need to delete
+  // Cleanup Bluetooth first (before GUI that uses it)
+  if (bluetooth_gui_) {
+    bluetooth_gui_->Shutdown();
+    bluetooth_gui_.reset();
+  }
+  
+  // Explicitly shutdown Bluetooth manager singleton
+  if (bluetooth_manager_) {
+    bluetooth_manager_->Shutdown();
+    bluetooth_manager_ = nullptr;
+  }
+  
+  // Cleanup other components
   log_panel_.reset();
   preferences_dialog_.reset();
   gui_manager_.reset();
@@ -585,11 +652,11 @@ void Application::RenderCapturePanel() {
                         }
                       }
                       
-                      // Double-click to open file location
+                      // Double-click to open photo directly
                       if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) {
-                        std::string command = "explorer /select,\"" + entry.path().string() + "\"";
+                        std::string command = "start \"\" \"" + entry.path().string() + "\"";
                         system(command.c_str());
-                        AddGlobalLog("[FILE] Opening file location: " + entry.path().string(), LogLevel::kInfo);
+                        AddGlobalLog("[FILE] Opening photo: " + entry.path().string(), LogLevel::kInfo);
                       }
                     }
                   }
@@ -611,9 +678,17 @@ void Application::RenderCapturePanel() {
         ImGui::Spacing();
         if (ImGui::Button("📁 Open Session Folder", ImVec2(180, 0))) {
           std::string folder_path = session->base_path;
-          std::string command = "explorer \"" + folder_path + "\"";
+          std::cout << "[DEBUG] Session base_path: " << folder_path << std::endl;
+          
+          // Convert to absolute path if needed
+          std::filesystem::path abs_path = std::filesystem::absolute(folder_path);
+          std::string abs_folder_path = abs_path.string();
+          std::cout << "[DEBUG] Absolute path: " << abs_folder_path << std::endl;
+          
+          std::string command = "explorer \"" + abs_folder_path + "\"";
+          std::cout << "[DEBUG] Explorer command: " << command << std::endl;
           system(command.c_str());
-          AddGlobalLog("[FILE] Opening session folder: " + folder_path, LogLevel::kInfo);
+          AddGlobalLog("[FILE] Opening session folder: " + abs_folder_path, LogLevel::kInfo);
         }
         
         ImGui::SameLine();
@@ -651,9 +726,17 @@ void Application::RenderCapturePanel() {
             
             // Quick action buttons for the selected image
             if (ImGui::Button("🔍 View in Explorer", ImVec2(150, 0))) {
-              std::string command = "explorer /select,\"" + selected_image_path_ + "\"";
+              std::cout << "[DEBUG] Selected image path: " << selected_image_path_ << std::endl;
+              
+              // Convert to absolute path if needed
+              std::filesystem::path abs_path = std::filesystem::absolute(selected_image_path_);
+              std::string abs_image_path = abs_path.string();
+              std::cout << "[DEBUG] Absolute image path: " << abs_image_path << std::endl;
+              
+              std::string command = "explorer /select,\"" + abs_image_path + "\"";
+              std::cout << "[DEBUG] Explorer select command: " << command << std::endl;
               system(command.c_str());
-              AddGlobalLog("[FILE] Opening image location: " + selected_image_path_, LogLevel::kInfo);
+              AddGlobalLog("[FILE] Opening image location: " + abs_image_path, LogLevel::kInfo);
             }
             
             ImGui::SameLine();
@@ -710,16 +793,27 @@ void Application::RenderNetworkPanel() {
 
 void Application::OnUIScaleChanged(float scale) {
   gui_manager_->SetUIScale(scale);
-  AddGlobalLog("UI scale changed to " + std::to_string(scale), LogLevel::kInfo);
+  
+  // Auto-save UI scale to local cache
+  settings_manager_->GetAppSettings().ui_scale = scale;
+  settings_manager_->Save();
+  
+  AddGlobalLog("UI scale changed to " + std::to_string(scale) + " and saved", LogLevel::kInfo);
 }
 
 void Application::SaveSettings() {
   if (settings_manager_) {
-    // Save window size
+    // Save window size and position
     int width, height;
     glfwGetWindowSize(gui_manager_->GetWindow(), &width, &height);
     settings_manager_->GetAppSettings().window_width = width;
     settings_manager_->GetAppSettings().window_height = height;
+    
+    // Also save window position
+    int xpos, ypos;
+    glfwGetWindowPos(gui_manager_->GetWindow(), &xpos, &ypos);
+    settings_manager_->GetAppSettings().window_x = xpos;
+    settings_manager_->GetAppSettings().window_y = ypos;
     
     settings_manager_->Save();
   }

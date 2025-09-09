@@ -12,7 +12,7 @@ GuiManager::~GuiManager() {
   Shutdown();
 }
 
-bool GuiManager::Initialize(const std::string& window_title, int width, int height) {
+bool GuiManager::Initialize(const std::string& window_title, int width, int height, int x, int y) {
   // Initialize GLFW
   if (!glfwInit()) {
     std::cerr << "Failed to initialize GLFW" << std::endl;
@@ -30,6 +30,11 @@ bool GuiManager::Initialize(const std::string& window_title, int width, int heig
     std::cerr << "Failed to create GLFW window" << std::endl;
     glfwTerminate();
     return false;
+  }
+  
+  // Set window position if provided
+  if (x >= 0 && y >= 0) {
+    glfwSetWindowPos(window_, x, y);
   }
 
   glfwMakeContextCurrent(window_);

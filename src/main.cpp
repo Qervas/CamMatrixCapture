@@ -10,6 +10,8 @@ int main(int argc, char* argv[]) {
   // Initialize WinRT apartment for Bluetooth support
   winrt::init_apartment();
   
+  int result = 0;
+  
   try {
     // Create application instance
     SaperaCapturePro::Application app;
@@ -17,20 +19,25 @@ int main(int argc, char* argv[]) {
     // Initialize all subsystems
     if (!app.Initialize()) {
       std::cerr << "Failed to initialize application" << std::endl;
-      return -1;
+      result = -1;
+    } else {
+      // Run main application loop
+      app.Run();
+      
+      // Explicitly call shutdown before destructor
+      app.Shutdown();
     }
-    
-    // Run main application loop
-    app.Run();
-    
-    // Clean shutdown handled by destructor
-    return 0;
     
   } catch (const std::exception& e) {
     std::cerr << "Application error: " << e.what() << std::endl;
-    return -1;
+    result = -1;
   } catch (...) {
     std::cerr << "Unknown error occurred" << std::endl;
-    return -1;
+    result = -1;
   }
+  
+  // Uninitialize WinRT to ensure clean shutdown
+  winrt::uninit_apartment();
+  
+  return result;
 }
