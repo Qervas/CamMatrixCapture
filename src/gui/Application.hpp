@@ -6,8 +6,8 @@
 #include "GuiManager.hpp"
 #include "PreferencesDialog.hpp"
 #include "LogPanel.hpp"
-#include "BluetoothGui.hpp"
-#include "AutomatedCapturePanel.hpp"
+#include "HardwarePanel.hpp"
+#include "widgets/CaptureStudioPanel.hpp"
 #include "../utils/SettingsManager.hpp"
 #include "../utils/SessionManager.hpp"
 #include "../bluetooth/BluetoothManager.hpp"
@@ -35,16 +35,14 @@ class Application {
   // GUI components
   std::unique_ptr<PreferencesDialog> preferences_dialog_;
   std::unique_ptr<LogPanel> log_panel_;
-  std::unique_ptr<BluetoothGui> bluetooth_gui_;
-  std::unique_ptr<AutomatedCapturePanel> automated_capture_panel_;
+  std::unique_ptr<HardwarePanel> hardware_panel_;
+  std::unique_ptr<CaptureStudioPanel> capture_studio_panel_;
   
   // Window states
   bool show_preferences_ = false;
-  bool show_camera_panel_ = true;
-  bool show_capture_panel_ = true;
-  bool show_automated_capture_panel_ = true;
+  bool show_hardware_panel_ = true;
+  bool show_capture_studio_ = true;
   bool show_log_panel_ = true;
-  bool show_bluetooth_panel_ = false;
   bool show_session_manager_ = false;
   bool show_network_panel_ = false;
   
@@ -62,8 +60,6 @@ class Application {
   void InitializeBluetooth();
   
   void RenderDockSpace();
-  void RenderCameraPanel();
-  void RenderCapturePanel();
   void RenderSessionManagerPanel();
   void RenderNetworkPanel();
   

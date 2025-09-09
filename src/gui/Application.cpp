@@ -116,12 +116,11 @@ void Application::InitializeGUI() {
   log_panel_ = std::make_unique<LogPanel>();
   SetGlobalLogPanel(log_panel_.get());
   
-  // Initialize automated capture panel
-  automated_capture_panel_ = std::make_unique<AutomatedCapturePanel>();
-  automated_capture_panel_->SetLogCallback([this](const std::string& message) {
+  // Initialize unified capture studio panel
+  capture_studio_panel_ = std::make_unique<CaptureStudioPanel>();
+  capture_studio_panel_->SetLogCallback([this](const std::string& message) {
     AddGlobalLog(message);
   });
-  automated_capture_panel_->Initialize();
 }
 
 void Application::InitializeBluetooth() {
@@ -139,14 +138,15 @@ void Application::InitializeBluetooth() {
     AddGlobalLog(message, LogLevel::kInfo);
   });
   
-  // Initialize Bluetooth GUI with the manager
-  bluetooth_gui_ = std::make_unique<BluetoothGui>();
-  bluetooth_gui_->Initialize(bluetooth_manager_);
+  // Initialize unified hardware panel
+  hardware_panel_ = std::make_unique<HardwarePanel>();
+  hardware_panel_->Initialize(bluetooth_manager_, camera_manager_, session_manager_.get());
+  hardware_panel_->SetLogCallback([this](const std::string& message) {
+    AddGlobalLog(message, LogLevel::kInfo);
+  });
   
-  // Connect automated capture panel to other systems
-  automated_capture_panel_->SetBluetoothManager(bluetooth_manager_);
-  automated_capture_panel_->SetCameraManager(camera_manager_);
-  automated_capture_panel_->SetSessionManager(session_manager_.get());
+  // Initialize unified capture studio panel with all managers
+  capture_studio_panel_->Initialize(camera_manager_, bluetooth_manager_, session_manager_.get());
   
   AddGlobalLog("Bluetooth system initialized successfully", LogLevel::kSuccess);
 }
@@ -164,11 +164,9 @@ void Application::Run() {
     RenderDockSpace();
     
     // Render panels
-    if (show_camera_panel_) RenderCameraPanel();
-    if (show_capture_panel_) RenderCapturePanel();
-    if (show_automated_capture_panel_) automated_capture_panel_->Render(&show_automated_capture_panel_);
+    if (show_hardware_panel_) hardware_panel_->Render(&show_hardware_panel_);
+    if (show_capture_studio_) capture_studio_panel_->Render();
     if (show_log_panel_) log_panel_->Render(&show_log_panel_);
-    if (show_bluetooth_panel_) bluetooth_gui_->Render(&show_bluetooth_panel_);
     if (show_session_manager_) RenderSessionManagerPanel();
     if (show_network_panel_) RenderNetworkPanel();
     
@@ -190,10 +188,10 @@ void Application::Shutdown() {
   // Auto-save settings before shutdown
   SaveSettings();
   
-  // Cleanup Bluetooth first (before GUI that uses it)
-  if (bluetooth_gui_) {
-    bluetooth_gui_->Shutdown();
-    bluetooth_gui_.reset();
+  // Cleanup hardware panel first (before GUI that uses it)
+  if (hardware_panel_) {
+    hardware_panel_->Shutdown();
+    hardware_panel_.reset();
   }
   
   // Explicitly shutdown Bluetooth manager singleton
@@ -252,11 +250,9 @@ void Application::RenderDockSpace() {
     }
     
     if (ImGui::BeginMenu("View")) {
-      ImGui::MenuItem("Camera Panel", nullptr, &show_camera_panel_);
-      ImGui::MenuItem("Capture Panel", nullptr, &show_capture_panel_);
-      ImGui::MenuItem("Automated Capture", nullptr, &show_automated_capture_panel_);
+      ImGui::MenuItem("Hardware Control", nullptr, &show_hardware_panel_);
+      ImGui::MenuItem("Capture Studio", nullptr, &show_capture_studio_);
       ImGui::MenuItem("Log", nullptr, &show_log_panel_);
-      ImGui::MenuItem("Bluetooth", nullptr, &show_bluetooth_panel_);
       ImGui::MenuItem("Session Manager", nullptr, &show_session_manager_);
       ImGui::MenuItem("Network Settings", nullptr, &show_network_panel_);
       ImGui::EndMenu();
@@ -322,19 +318,20 @@ void Application::RenderDockSpace() {
     ImGui::DockBuilderAddNode(dockspace_id, dockspace_flags | ImGuiDockNodeFlags_DockSpace);
     ImGui::DockBuilderSetNodeSize(dockspace_id, viewport->Size);
     
-    // Split the dockspace into sections
-    auto dock_id_left = ImGui::DockBuilderSplitNode(dockspace_id, ImGuiDir_Left, 0.25f, nullptr, &dockspace_id);
-    auto dock_id_right = ImGui::DockBuilderSplitNode(dockspace_id, ImGuiDir_Right, 0.4f, nullptr, &dockspace_id);
-    auto dock_id_bottom = ImGui::DockBuilderSplitNode(dockspace_id, ImGuiDir_Down, 0.35f, nullptr, &dockspace_id);
+    // Split the dockspace into sections - modern layout
+    auto dock_id_left = ImGui::DockBuilderSplitNode(dockspace_id, ImGuiDir_Left, 0.22f, nullptr, &dockspace_id);
+    auto dock_id_bottom = ImGui::DockBuilderSplitNode(dockspace_id, ImGuiDir_Down, 0.25f, nullptr, &dockspace_id);
     
-    // Dock windows to the correct names (matching the window titles)
-    ImGui::DockBuilderDockWindow("● Camera System", dock_id_left);
-    ImGui::DockBuilderDockWindow("▶ Capture Control", dock_id_right);
-    ImGui::DockBuilderDockWindow("🤖 Automated Capture", dockspace_id);  // Center panel between camera and capture
+    // Split the remaining space between capture controls and file explorer
+    auto dock_id_top = ImGui::DockBuilderSplitNode(dockspace_id, ImGuiDir_Up, 0.4f, nullptr, &dockspace_id);
+    
+    // Dock windows with modern layout
+    ImGui::DockBuilderDockWindow("🔧 Hardware Control", dock_id_left);
+    ImGui::DockBuilderDockWindow("🎬 Capture Studio", dock_id_top);  // Top for capture controls
+    ImGui::DockBuilderDockWindow("📁 File Explorer", dockspace_id);  // Main area for file explorer
     ImGui::DockBuilderDockWindow("Log", dock_id_bottom);
-    ImGui::DockBuilderDockWindow("Bluetooth Control", dock_id_right);
-    ImGui::DockBuilderDockWindow("Session Manager", dockspace_id);
-    ImGui::DockBuilderDockWindow("Network Settings", dock_id_right);
+    ImGui::DockBuilderDockWindow("Session Manager", dock_id_bottom);
+    ImGui::DockBuilderDockWindow("Network Settings", dock_id_bottom);
     
     ImGui::DockBuilderFinish(dockspace_id);
   }
@@ -342,454 +339,7 @@ void Application::RenderDockSpace() {
   ImGui::End();
 }
 
-void Application::RenderCameraPanel() {
-  if (ImGui::Begin("● Camera System", &show_camera_panel_, ImGuiWindowFlags_NoCollapse)) {
-    
-    ImGui::Text("DIRECT Sapera SDK Camera Control");
-    ImGui::Separator();
-    
-    // Control buttons
-    if (camera_manager_->IsDiscovering()) {
-      // Show buffering animation during discovery
-      ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.3f, 0.3f, 1.0f));
-      ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.3f, 0.3f, 1.0f));
-      ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.3f, 0.3f, 0.3f, 1.0f));
-      
-      // Animated dots for discovery
-      static float discovery_animation_time = 0.0f;
-      discovery_animation_time += ImGui::GetIO().DeltaTime;
-      int dot_count = static_cast<int>(discovery_animation_time * 2.0f) % 4;
-      std::string button_text = "● Discovering";
-      for (int i = 0; i < dot_count; i++) {
-        button_text += ".";
-      }
-      
-      ImGui::Button(button_text.c_str(), ImVec2(150, 35));
-      ImGui::PopStyleColor(3);
-      
-      ImGui::SameLine();
-      ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "⏳ Please wait...");
-    } else {
-      if (ImGui::Button("● Discover Cameras", ImVec2(150, 35))) {
-        camera_manager_->DiscoverCameras([this](const std::string& msg) {
-          AddGlobalLog(msg);
-        });
-      }
-    }
-    
-    ImGui::SameLine();
-    // Dynamic Connect/Disconnect button based on connection state
-    bool has_connected = camera_manager_->GetConnectedCount() > 0;
-    if (has_connected) {
-      // Show Disconnect All when cameras are connected
-      if (ImGui::Button("● Disconnect All", ImVec2(150, 35))) {
-        camera_manager_->DisconnectAllCameras();
-      }
-    } else {
-      // Show Connect All when no cameras are connected
-      if (camera_manager_->IsConnecting()) {
-        // Show buffering animation during connection
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.3f, 0.3f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.3f, 0.3f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.3f, 0.3f, 0.3f, 1.0f));
-        
-        // Animated dots for connection
-        static float connection_animation_time = 0.0f;
-        connection_animation_time += ImGui::GetIO().DeltaTime;
-        int dot_count = static_cast<int>(connection_animation_time * 2.0f) % 4;
-        std::string button_text = "● Connecting";
-        for (int i = 0; i < dot_count; i++) {
-          button_text += ".";
-        }
-        
-        ImGui::Button(button_text.c_str(), ImVec2(150, 35));
-        ImGui::PopStyleColor(3);
-        
-        ImGui::SameLine();
-        ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "⏳ Please wait...");
-      } else {
-        if (ImGui::Button("● Connect All", ImVec2(150, 35))) {
-          camera_manager_->ConnectAllCameras([this](const std::string& msg) {
-            AddGlobalLog(msg);
-          });
-        }
-      }
-    }
-    
-    ImGui::Separator();
-    
-    // Camera table
-    if (ImGui::BeginTable("CameraTable", 4, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
-      ImGui::TableSetupColumn("Camera");
-      ImGui::TableSetupColumn("Serial Number");
-      ImGui::TableSetupColumn("Model");
-      ImGui::TableSetupColumn("Status");
-      ImGui::TableHeadersRow();
-      
-      const auto& cameras = camera_manager_->GetDiscoveredCameras();
-      for (const auto& camera : cameras) {
-        ImGui::TableNextRow();
-        
-        ImGui::TableSetColumnIndex(0);
-        ImGui::Text("%s", camera.name.c_str());
-        
-        ImGui::TableSetColumnIndex(1);
-        ImGui::Text("%s", camera.serialNumber.c_str());
-        
-        ImGui::TableSetColumnIndex(2);
-        ImGui::Text("%s", camera.modelName.c_str());
-        
-        ImGui::TableSetColumnIndex(3);
-        if (camera_manager_->IsConnected(camera.id)) {
-          ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "[CONN]");
-        } else {
-          ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "[DISC]");
-        }
-      }
-      
-      ImGui::EndTable();
-    }
-    
-    const auto& cameras = camera_manager_->GetDiscoveredCameras();
-    ImGui::Text("Connected: %d / %d cameras", camera_manager_->GetConnectedCount(), static_cast<int>(cameras.size()));
-    
-    // Current resolution status
-    if (camera_manager_->GetConnectedCount() > 0) {
-      ImGui::Separator();
-      const auto& params = camera_manager_->GetParameters();
-      ImGui::Text("Current Resolution: %dx%d (Max: %dx%d)", 
-                  params.width, params.height,
-                  params.max_width, params.max_height);
-      ImGui::Text("Pixel Format: %s", params.pixel_format.c_str());
-    }
-  }
-  ImGui::End();
-}
 
-void Application::RenderCapturePanel() {
-  if (ImGui::Begin("▶ Capture Control", &show_capture_panel_, ImGuiWindowFlags_NoCollapse)) {
-    
-    ImGui::Text("DIRECT Neural Rendering Capture");
-    ImGui::Separator();
-    
-    // Session Management Section
-    ImGui::Text("◆ Session Status");
-    if (session_manager_->HasActiveSession()) {
-      auto* session = session_manager_->GetCurrentSession();
-      ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Active: %s", session->object_name.c_str());
-      ImGui::Text("Captures in session: %d", session->capture_count);
-      ImGui::Text("Session ID: %s", session->session_id.c_str());
-      
-      if (ImGui::SmallButton("■ End Session")) {
-        session_manager_->EndCurrentSession();
-        AddGlobalLog("[SESSION] Session ended from capture panel", LogLevel::kInfo);
-      }
-    } else {
-      ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "No active session");
-      ImGui::Text("Start a new session to begin capturing");
-      
-      static char new_object_name[256] = "";
-      ImGui::Text("Object Name:");
-      ImGui::SetNextItemWidth(200);
-      ImGui::InputText("##NewObjectName", new_object_name, sizeof(new_object_name));
-      ImGui::SameLine();
-      if (ImGui::Button("▶ Start Session")) {
-        std::string session_name = std::string(new_object_name);
-        
-        // Provide default name if user forgot to input
-        if (session_name.empty()) {
-          auto now = std::chrono::system_clock::now();
-          auto time_t = std::chrono::system_clock::to_time_t(now);
-          std::stringstream ss;
-          ss << "capture_" << std::put_time(std::localtime(&time_t), "%m%d_%H%M");
-          session_name = ss.str();
-          AddGlobalLog("[SESSION] Using default session name: " + session_name, LogLevel::kInfo);
-        }
-        
-        if (session_manager_->StartNewSession(session_name)) {
-          AddGlobalLog("[SESSION] New session started: " + session_name, LogLevel::kSuccess);
-          memset(new_object_name, 0, sizeof(new_object_name));
-        }
-      }
-    }
-    
-    ImGui::Separator();
-    
-    // Dataset info
-    ImGui::Text("◆ Dataset Configuration");
-    const auto& app_settings = settings_manager_->GetAppSettings();
-    ImGui::Text("Dataset: %s", app_settings.last_output_folder.c_str());
-    
-    // Format selection
-    ImGui::Text("Format:");
-    ImGui::SameLine();
-    bool capture_format_raw = camera_manager_->GetCaptureFormat();
-    if (ImGui::RadioButton("TIFF", !capture_format_raw)) {
-      camera_manager_->SetCaptureFormat(false);
-      AddGlobalLog("[IMG] Format set to TIFF", LogLevel::kInfo);
-    }
-    ImGui::SameLine();
-    if (ImGui::RadioButton("RAW", capture_format_raw)) {
-      camera_manager_->SetCaptureFormat(true);
-      AddGlobalLog("[IMG] Format set to RAW", LogLevel::kInfo);
-    }
-    
-    ImGui::Separator();
-    
-    // Capture section
-    ImGui::Text("◆ Capture Control");
-    bool can_capture = camera_manager_->GetConnectedCount() > 0 && /* session_manager_->HasActiveSession() && */ !camera_manager_->IsCapturing();
-    
-    if (can_capture) {
-      if (ImGui::Button("▶ START CAPTURE", ImVec2(300, 60))) {
-        auto* session = session_manager_->GetCurrentSession();
-        std::string sessionPath = session->GetNextCapturePath();
-        
-        // Use async capture to prevent GUI freezing
-        camera_manager_->CaptureAllCamerasAsync(sessionPath, true, 750, [this, session, sessionPath](const std::string& msg) {
-          AddGlobalLog(msg);
-          if (msg.find("completed successfully") != std::string::npos) {
-            session_manager_->RecordCapture(sessionPath);
-          }
-        });
-      }
-    } else if (camera_manager_->IsCapturing()) {
-      // Show progress indicator when capturing
-      ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.6f, 0.0f, 1.0f));
-      ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.8f, 0.6f, 0.0f, 1.0f));
-      ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.8f, 0.6f, 0.0f, 1.0f));
-      
-      // Add spinning animation
-      static float rotation = 0.0f;
-      rotation += ImGui::GetIO().DeltaTime * 3.0f;
-      if (rotation > 6.28f) rotation = 0.0f;
-      
-      ImGui::Button("⏳ CAPTURING...", ImVec2(300, 60));
-      ImGui::PopStyleColor(3);
-    } else {
-      ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 0.5f);
-      ImGui::Button("▶ START CAPTURE", ImVec2(300, 60));
-      ImGui::PopStyleVar();
-      
-      if (!session_manager_->HasActiveSession()) {
-        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "Need active session to capture");
-      }
-      if (camera_manager_->GetConnectedCount() == 0) {
-        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "Need connected cameras to capture");
-      }
-    }
-    
-    // Status display
-    ImGui::Separator();
-    ImGui::Text("◆ System Status");
-    const auto& cameras = camera_manager_->GetDiscoveredCameras();
-    int connected_count = camera_manager_->GetConnectedCount();
-    int total_count = static_cast<int>(cameras.size());
-    ImGui::Text("Cameras: %d/%d connected", connected_count, total_count);
-    
-    if (camera_manager_->IsCapturing()) {
-      ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "[BUSY] Capturing images...");
-    } else if (connected_count > 0 && session_manager_->HasActiveSession()) {
-      ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "[OK] Ready to capture");
-    } else if (connected_count == 0) {
-      ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "[WARN] No cameras connected");
-    } else {
-      ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "[WARN] No active session");
-    }
-    
-    // Exposure control
-    if (camera_manager_->GetConnectedCount() > 0) {
-      ImGui::Separator();
-      ImGui::Text("◆ Basic Camera Settings");
-      
-      int exposure_time = camera_manager_->GetExposureTime();
-      if (ImGui::SliderInt("Exposure Time (µs)", &exposure_time, 100, 100000)) {
-        camera_manager_->SetExposureTime(exposure_time);
-        camera_manager_->ApplyParameterToAllCameras("ExposureTime", std::to_string(exposure_time));
-        AddGlobalLog("[PARAM] Exposure time set to " + std::to_string(exposure_time) + "µs", LogLevel::kInfo);
-      }
-    }
-    
-    // File Explorer Section - Show captured images if there's an active session
-    if (session_manager_->HasActiveSession()) {
-      ImGui::Separator();
-      ImGui::Text("◆ Captured Images");
-      
-      auto* session = session_manager_->GetCurrentSession();
-      const auto& capture_paths = session->capture_paths;
-      
-      if (capture_paths.empty()) {
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "No captures yet - take your first capture!");
-      } else {
-        // Create a scrollable region for the file list
-        ImGui::BeginChild("file_explorer", ImVec2(0, 200), true);
-        
-        for (size_t i = 0; i < capture_paths.size(); i++) {
-          const std::string& path = capture_paths[i];
-          std::filesystem::path fs_path(path);
-          
-          // Check if directory exists and list image files
-          if (std::filesystem::exists(fs_path) && std::filesystem::is_directory(fs_path)) {
-            if (ImGui::TreeNode(("Capture " + std::to_string(i + 1) + " - " + fs_path.filename().string()).c_str())) {
-              
-              // List all image files in this capture directory
-              try {
-                for (const auto& entry : std::filesystem::directory_iterator(fs_path)) {
-                  if (entry.is_regular_file()) {
-                    std::string ext = entry.path().extension().string();
-                    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-                    
-                    if (ext == ".tiff" || ext == ".tif" || ext == ".raw" || ext == ".png" || ext == ".jpg" || ext == ".jpeg") {
-                      bool is_selected = (selected_image_path_ == entry.path().string());
-                      if (ImGui::Selectable(entry.path().filename().string().c_str(), is_selected)) {
-                        selected_image_path_ = entry.path().string();
-                        AddGlobalLog("[FILE] Selected: " + selected_image_path_, LogLevel::kInfo);
-                      }
-                      
-                      // Show file info on hover
-                      if (ImGui::IsItemHovered()) {
-                        if (ImGui::BeginTooltip()) {
-                          ImGui::Text("File: %s", entry.path().filename().string().c_str());
-                          ImGui::Text("Path: %s", entry.path().string().c_str());
-                          
-                          // Try to get file size
-                          std::error_code ec;
-                          auto file_size = std::filesystem::file_size(entry.path(), ec);
-                          if (!ec) {
-                            if (file_size > 1024 * 1024) {
-                              ImGui::Text("Size: %.2f MB", file_size / (1024.0f * 1024.0f));
-                            } else if (file_size > 1024) {
-                              ImGui::Text("Size: %.2f KB", file_size / 1024.0f);
-                            } else {
-                              ImGui::Text("Size: %llu bytes", file_size);
-                            }
-                          }
-                          
-                          ImGui::EndTooltip();
-                        }
-                      }
-                      
-                      // Double-click to open photo directly
-                      if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) {
-                        std::string command = "start \"\" \"" + entry.path().string() + "\"";
-                        system(command.c_str());
-                        AddGlobalLog("[FILE] Opening photo: " + entry.path().string(), LogLevel::kInfo);
-                      }
-                    }
-                  }
-                }
-              } catch (const std::exception&) {
-                ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "Error reading directory");
-              }
-              
-              ImGui::TreePop();
-            }
-          } else {
-            ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "Capture %zu - Directory not found", i + 1);
-          }
-        }
-        
-        ImGui::EndChild();
-        
-        // Quick action buttons
-        ImGui::Spacing();
-        if (ImGui::Button("📁 Open Session Folder", ImVec2(180, 0))) {
-          std::string folder_path = session->base_path;
-          std::cout << "[DEBUG] Session base_path: " << folder_path << std::endl;
-          
-          // Convert to absolute path if needed
-          std::filesystem::path abs_path = std::filesystem::absolute(folder_path);
-          std::string abs_folder_path = abs_path.string();
-          std::cout << "[DEBUG] Absolute path: " << abs_folder_path << std::endl;
-          
-          std::string command = "explorer \"" + abs_folder_path + "\"";
-          std::cout << "[DEBUG] Explorer command: " << command << std::endl;
-          system(command.c_str());
-          AddGlobalLog("[FILE] Opening session folder: " + abs_folder_path, LogLevel::kInfo);
-        }
-        
-        ImGui::SameLine();
-        if (ImGui::Button("🔄 Refresh", ImVec2(80, 0))) {
-          AddGlobalLog("[FILE] File list refreshed", LogLevel::kInfo);
-        }
-        
-        if (!selected_image_path_.empty()) {
-          ImGui::SameLine();
-          if (ImGui::Button("❌ Clear Selection", ImVec2(120, 0))) {
-            selected_image_path_.clear();
-            AddGlobalLog("[FILE] Selection cleared", LogLevel::kInfo);
-          }
-        }
-        
-        // Image Preview Section
-        if (!selected_image_path_.empty()) {
-          ImGui::Separator();
-          ImGui::Text("◆ Image Preview");
-          
-          std::filesystem::path selected_path(selected_image_path_);
-          if (std::filesystem::exists(selected_path)) {
-            ImGui::Text("Selected: %s", selected_path.filename().string().c_str());
-            
-            // Show image info
-            std::error_code ec;
-            auto file_size = std::filesystem::file_size(selected_path, ec);
-            if (!ec) {
-              if (file_size > 1024 * 1024) {
-                ImGui::Text("Size: %.2f MB", file_size / (1024.0f * 1024.0f));
-              } else {
-                ImGui::Text("Size: %.2f KB", file_size / 1024.0f);
-              }
-            }
-            
-            // Quick action buttons for the selected image
-            if (ImGui::Button("🔍 View in Explorer", ImVec2(150, 0))) {
-              std::cout << "[DEBUG] Selected image path: " << selected_image_path_ << std::endl;
-              
-              // Convert to absolute path if needed
-              std::filesystem::path abs_path = std::filesystem::absolute(selected_image_path_);
-              std::string abs_image_path = abs_path.string();
-              std::cout << "[DEBUG] Absolute image path: " << abs_image_path << std::endl;
-              
-              std::string command = "explorer /select,\"" + abs_image_path + "\"";
-              std::cout << "[DEBUG] Explorer select command: " << command << std::endl;
-              system(command.c_str());
-              AddGlobalLog("[FILE] Opening image location: " + abs_image_path, LogLevel::kInfo);
-            }
-            
-            ImGui::SameLine();
-            if (ImGui::Button("📱 Open with Default App", ImVec2(180, 0))) {
-              std::string command = "start \"\" \"" + selected_image_path_ + "\"";
-              system(command.c_str());
-              AddGlobalLog("[FILE] Opening image with default app: " + selected_image_path_, LogLevel::kInfo);
-            }
-            
-            // Placeholder for actual image preview (would need image loading library)
-            ImGui::Spacing();
-            ImGui::BeginChild("image_preview_area", ImVec2(0, 150), true);
-            ImGui::Text("📷 Image Preview");
-            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "File: %s", selected_path.filename().string().c_str());
-            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Preview would appear here");
-            ImGui::TextColored(ImVec4(0.5f, 0.8f, 1.0f, 1.0f), "Click buttons above to view the image");
-            ImGui::EndChild();
-            
-          } else {
-            ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "Selected file no longer exists");
-            if (ImGui::Button("Clear Selection")) {
-              selected_image_path_.clear();
-            }
-          }
-        }
-        
-        // Show session info
-        ImGui::Separator();
-        ImGui::Text("Session: %s", session->object_name.c_str());
-        ImGui::Text("Total Captures: %d", static_cast<int>(capture_paths.size()));
-        ImGui::Text("Session Path: %s", session->base_path.c_str());
-      }
-    }
-  }
-  ImGui::End();
-}
 
 void Application::RenderSessionManagerPanel() {
   if (ImGui::Begin("Session Manager", &show_session_manager_)) {

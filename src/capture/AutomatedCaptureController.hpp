@@ -55,6 +55,7 @@ public:
     void SetCaptureDelay(float seconds) { capture_delay_ms_ = static_cast<int>(seconds * 1000); }
     void SetRotationSpeed(float speed) { rotation_speed_ = speed; }
     void SetTiltSpeed(float speed) { tilt_speed_ = speed; }
+    void SetMaxCaptureWaitTime(float seconds) { max_capture_wait_seconds_ = seconds; }
     
     // Callbacks
     void SetProgressCallback(std::function<void(int, const std::string&)> callback) {
@@ -84,6 +85,7 @@ private:
     int capture_delay_ms_ = 500;   // Additional delay before capture
     float rotation_speed_ = 70.0f; // Turntable rotation speed
     float tilt_speed_ = 20.0f;     // Turntable tilt speed
+    float max_capture_wait_seconds_ = 30.0f; // Maximum time to wait for camera completion
     
     // Threading
     std::thread worker_thread_;

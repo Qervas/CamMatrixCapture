@@ -218,6 +218,17 @@ void CameraManager::ConnectAllCameras(std::function<void(const std::string&)> lo
     connected_buffers_ = temp_connected_buffers;
     connected_transfers_ = temp_connected_transfers;
     
+    // Update camera connection status in discovered_cameras_ list
+    for (auto& camera : discovered_cameras_) {
+      if (connected_devices_.find(camera.id) != connected_devices_.end()) {
+        camera.isConnected = true;
+        camera.status = CameraStatus::Connected;
+      } else {
+        camera.isConnected = false;
+        camera.status = CameraStatus::Disconnected;
+      }
+    }
+    
     Log("[OK] Connection summary: " + std::to_string(successCount) + "/" + std::to_string(discovered_cameras_.size()) + " cameras connected");
     
     if (successCount == discovered_cameras_.size() && successCount > 0) {
@@ -286,6 +297,12 @@ void CameraManager::DisconnectAllCameras() {
   connected_devices_.clear();
   connected_buffers_.clear();
   connected_transfers_.clear();
+  
+  // Update camera connection status in discovered_cameras_ list
+  for (auto& camera : discovered_cameras_) {
+    camera.isConnected = false;
+    camera.status = CameraStatus::Disconnected;
+  }
   
   Log("[OK] Successfully disconnected " + std::to_string(destroyed_count) + "/" + std::to_string(device_count) + " cameras");
 }

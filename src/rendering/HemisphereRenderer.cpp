@@ -119,14 +119,14 @@ void HemisphereRenderer::Render(float view_azimuth, float view_elevation, float 
     
     LookAt(view, cam_x, cam_y, cam_z, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f);
     
-    // Render hemisphere surface (semi-transparent)
+    // Render hemisphere surface (semi-transparent bright cyan)
     LoadIdentity(model);
     Multiply(mvp, projection, view);
     Multiply(mvp, mvp, model);
     
     glUniformMatrix4fv(mvp_matrix_location_, 1, GL_FALSE, mvp);
     glUniformMatrix4fv(model_matrix_location_, 1, GL_FALSE, model);
-    glUniform3f(color_location_, 0.3f, 0.4f, 0.6f); // Blue hemisphere
+    glUniform3f(color_location_, 0.2f, 0.7f, 0.9f); // Bright cyan hemisphere
     
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);

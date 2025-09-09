@@ -208,11 +208,11 @@ void AutomatedCaptureController::ProcessNextPosition() {
         return;
     }
     
-    // Processing (save, etc.)
+    // Images captured successfully - ready for next position
     UpdateState(ControllerState::Processing);
-    NotifyProgress(position_index, "Processing images...");
-    SleepMs(capture_delay_ms_);
+    NotifyProgress(position_index, "Images captured successfully");
     
+    // No need for additional delay - camera completion signal ensures images are saved
     LogMessage("[AUTOMATED] Position " + std::to_string(position_index + 1) + " completed");
 }
 
@@ -292,10 +292,11 @@ bool AutomatedCaptureController::CaptureAtCurrentPosition() {
                 }
             });
         
-        // Wait for capture completion with timeout
-        auto status = capture_future.wait_for(std::chrono::seconds(30));
+        // Wait for capture completion with intelligent timeout
+        int timeout_seconds = static_cast<int>(max_capture_wait_seconds_);
+        auto status = capture_future.wait_for(std::chrono::seconds(timeout_seconds));
         if (status == std::future_status::timeout) {
-            LogMessage("[AUTOMATED] WARNING: Capture timeout");
+            LogMessage("[AUTOMATED] WARNING: Capture timeout after " + std::to_string(timeout_seconds) + " seconds");
             return false;
         }
         
