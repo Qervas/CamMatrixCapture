@@ -1,4 +1,5 @@
 #include "GuiManager.hpp"
+#include <glad/glad.h>
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
 #include <iostream>
@@ -38,6 +39,14 @@ bool GuiManager::Initialize(const std::string& window_title, int width, int heig
   }
 
   glfwMakeContextCurrent(window_);
+  
+  // Initialize GLAD after OpenGL context is current
+  if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
+    std::cerr << "Failed to initialize GLAD" << std::endl;
+    glfwTerminate();
+    return false;
+  }
+  
   glfwSwapInterval(1);  // Enable vsync
 
   // Setup ImGui context

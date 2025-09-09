@@ -7,6 +7,7 @@
 #include "PreferencesDialog.hpp"
 #include "LogPanel.hpp"
 #include "BluetoothGui.hpp"
+#include "AutomatedCapturePanel.hpp"
 #include "../utils/SettingsManager.hpp"
 #include "../utils/SessionManager.hpp"
 #include "../bluetooth/BluetoothManager.hpp"
@@ -35,11 +36,13 @@ class Application {
   std::unique_ptr<PreferencesDialog> preferences_dialog_;
   std::unique_ptr<LogPanel> log_panel_;
   std::unique_ptr<BluetoothGui> bluetooth_gui_;
+  std::unique_ptr<AutomatedCapturePanel> automated_capture_panel_;
   
   // Window states
   bool show_preferences_ = false;
   bool show_camera_panel_ = true;
   bool show_capture_panel_ = true;
+  bool show_automated_capture_panel_ = true;
   bool show_log_panel_ = true;
   bool show_bluetooth_panel_ = false;
   bool show_session_manager_ = false;

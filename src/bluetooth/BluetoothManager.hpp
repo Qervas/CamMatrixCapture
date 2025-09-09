@@ -59,6 +59,7 @@ public:
     void DisconnectDevice(const std::string& deviceId);
     void DisconnectAllDevices();
     bool IsDeviceConnected(const std::string& deviceId) const;
+    bool IsConnected() const { return !GetConnectedDevices().empty(); }
     std::vector<std::string> GetConnectedDevices() const;
     
     // Command sending

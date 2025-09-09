@@ -1,6 +1,8 @@
 #include "Application.hpp"
+#include <glad/glad.h>
 #include <imgui.h>
 #include <imgui_internal.h>
+#include "../utils/SessionManager.hpp"
 #include <iostream>
 #include <filesystem>
 #include <sstream>
@@ -113,6 +115,13 @@ void Application::InitializeGUI() {
   
   log_panel_ = std::make_unique<LogPanel>();
   SetGlobalLogPanel(log_panel_.get());
+  
+  // Initialize automated capture panel
+  automated_capture_panel_ = std::make_unique<AutomatedCapturePanel>();
+  automated_capture_panel_->SetLogCallback([this](const std::string& message) {
+    AddGlobalLog(message);
+  });
+  automated_capture_panel_->Initialize();
 }
 
 void Application::InitializeBluetooth() {
@@ -134,6 +143,11 @@ void Application::InitializeBluetooth() {
   bluetooth_gui_ = std::make_unique<BluetoothGui>();
   bluetooth_gui_->Initialize(bluetooth_manager_);
   
+  // Connect automated capture panel to other systems
+  automated_capture_panel_->SetBluetoothManager(bluetooth_manager_);
+  automated_capture_panel_->SetCameraManager(camera_manager_);
+  automated_capture_panel_->SetSessionManager(session_manager_.get());
+  
   AddGlobalLog("Bluetooth system initialized successfully", LogLevel::kSuccess);
 }
 
@@ -152,6 +166,7 @@ void Application::Run() {
     // Render panels
     if (show_camera_panel_) RenderCameraPanel();
     if (show_capture_panel_) RenderCapturePanel();
+    if (show_automated_capture_panel_) automated_capture_panel_->Render(&show_automated_capture_panel_);
     if (show_log_panel_) log_panel_->Render(&show_log_panel_);
     if (show_bluetooth_panel_) bluetooth_gui_->Render(&show_bluetooth_panel_);
     if (show_session_manager_) RenderSessionManagerPanel();
@@ -239,6 +254,7 @@ void Application::RenderDockSpace() {
     if (ImGui::BeginMenu("View")) {
       ImGui::MenuItem("Camera Panel", nullptr, &show_camera_panel_);
       ImGui::MenuItem("Capture Panel", nullptr, &show_capture_panel_);
+      ImGui::MenuItem("Automated Capture", nullptr, &show_automated_capture_panel_);
       ImGui::MenuItem("Log", nullptr, &show_log_panel_);
       ImGui::MenuItem("Bluetooth", nullptr, &show_bluetooth_panel_);
       ImGui::MenuItem("Session Manager", nullptr, &show_session_manager_);
@@ -314,6 +330,7 @@ void Application::RenderDockSpace() {
     // Dock windows to the correct names (matching the window titles)
     ImGui::DockBuilderDockWindow("● Camera System", dock_id_left);
     ImGui::DockBuilderDockWindow("▶ Capture Control", dock_id_right);
+    ImGui::DockBuilderDockWindow("🤖 Automated Capture", dockspace_id);  // Center panel between camera and capture
     ImGui::DockBuilderDockWindow("Log", dock_id_bottom);
     ImGui::DockBuilderDockWindow("Bluetooth Control", dock_id_right);
     ImGui::DockBuilderDockWindow("Session Manager", dockspace_id);
@@ -521,7 +538,7 @@ void Application::RenderCapturePanel() {
     
     // Capture section
     ImGui::Text("◆ Capture Control");
-    bool can_capture = camera_manager_->GetConnectedCount() > 0 && session_manager_->HasActiveSession() && !camera_manager_->IsCapturing();
+    bool can_capture = camera_manager_->GetConnectedCount() > 0 && /* session_manager_->HasActiveSession() && */ !camera_manager_->IsCapturing();
     
     if (can_capture) {
       if (ImGui::Button("▶ START CAPTURE", ImVec2(300, 60))) {
