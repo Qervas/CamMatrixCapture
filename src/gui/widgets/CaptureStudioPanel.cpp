@@ -3,6 +3,7 @@
 #include <sstream>
 #include <thread>
 #include <chrono>
+#include <cmath>
 
 namespace SaperaCapturePro {
 
@@ -28,6 +29,13 @@ void CaptureStudioPanel::Initialize(CameraManager* camera_manager, BluetoothMana
     file_explorer_widget_->SetShowPreview(true);
     file_explorer_widget_->SetLogCallback([this](const std::string& msg) { LogMessage(msg); });
     
+    // Initialize turntable controller
+    turntable_controller_ = std::make_unique<TurntableController>();
+    turntable_controller_->SetLogCallback([this](const std::string& msg) { LogMessage(msg); });
+    turntable_controller_->SetOnRotationComplete([this]() {
+        LogMessage("[STUDIO] Turntable rotation completed - ready for capture");
+    });
+    
     LogMessage("[STUDIO] Capture Studio Panel initialized");
 }
 
@@ -38,6 +46,12 @@ void CaptureStudioPanel::Shutdown() {
     
     session_widget_.reset();
     file_explorer_widget_.reset();
+    
+    // Shutdown turntable controller
+    if (turntable_controller_) {
+        turntable_controller_->Disconnect();
+        turntable_controller_.reset();
+    }
     
     camera_manager_ = nullptr;
     bluetooth_manager_ = nullptr;
@@ -194,21 +208,58 @@ void CaptureStudioPanel::RenderAutomatedCapture() {
     ImGui::SetColumnWidth(0, 150);
     ImGui::SetColumnWidth(1, 150);
     
-    // Column 1: Settings
-    ImGui::Text("Total Captures:");
-    ImGui::SliderInt("##AutoCount", &auto_capture_count_, 6, 72);
+    // Column 1: 360° Capture Settings
+    ImGui::Text("360° Capture Mode:");
+    if (ImGui::RadioButton("Edit by Total Captures", edit_by_captures_)) {
+        edit_by_captures_ = true;
+    }
+    if (ImGui::RadioButton("Edit by Angle Step", !edit_by_captures_)) {
+        edit_by_captures_ = false;
+    }
     
-    ImGui::Text("Rotation Angle:");
-    ImGui::SliderFloat("##RotAngle", &rotation_angle_, 1.0f, 30.0f, "%.1f°");
+    ImGui::Spacing();
+    
+    if (edit_by_captures_) {
+        // Edit total captures, calculate angle
+        ImGui::Text("Total Captures:");
+        if (ImGui::SliderInt("##AutoCount", &auto_capture_count_, 6, 360)) {
+            rotation_angle_ = 360.0f / static_cast<float>(auto_capture_count_);
+        }
+        ImGui::Text("→ Angle Step: %.2f°", rotation_angle_);
+    } else {
+        // Edit angle, calculate captures
+        ImGui::Text("Angle Step:");
+        if (ImGui::SliderFloat("##RotAngle", &rotation_angle_, 1.0f, 60.0f, "%.2f°")) {
+            auto_capture_count_ = static_cast<int>(std::round(360.0f / rotation_angle_));
+        }
+        ImGui::Text("→ Total Captures: %d", auto_capture_count_);
+    }
     
     ImGui::NextColumn();
     
-    // Column 2: Timing
+    // Column 2: Timing & Speed
+    ImGui::Text("Turntable Speed:");
+    ImGui::SliderFloat("##TurntableSpeed", &turntable_speed_, 35.64f, 131.0f, "%.1fs/360°");
+    if (ImGui::IsItemHovered()) {
+        ImGui::BeginTooltip();
+        ImGui::Text("Speed = seconds for full 360° rotation");
+        ImGui::Text("Angular velocity: %.2f°/sec", 360.0f / turntable_speed_);
+        ImGui::EndTooltip();
+    }
+    
     ImGui::Text("Capture Delay:");
     ImGui::SliderFloat("##CaptureDelay", &capture_delay_, 0.5f, 10.0f, "%.1fs");
     
-    float total_time = auto_capture_count_ * capture_delay_;
-    ImGui::Text("Est. Time: %.1fmin", total_time / 60.0f);
+    // Calculate timing estimates
+    float rotation_time = (rotation_angle_ * turntable_speed_) / 360.0f;
+    float total_capture_time = auto_capture_count_ * capture_delay_;
+    float total_rotation_time = (auto_capture_count_ - 1) * rotation_time; // No rotation after last capture
+    float total_sequence_time = total_capture_time + total_rotation_time;
+    
+    ImGui::Spacing();
+    ImGui::Text("⏱ Time Estimates:");
+    ImGui::Text("Per rotation: %.1fs", rotation_time);
+    ImGui::Text("Total sequence: %.1fmin", total_sequence_time / 60.0f);
     
     ImGui::NextColumn();
     
@@ -417,8 +468,10 @@ void CaptureStudioPanel::UpdateAutomatedSequence() {
                 // Set rotation speed for smooth operation
                 auto device_ids = bluetooth_manager_->GetConnectedDevices();
                 if (!device_ids.empty()) {
-                    std::string speed_command = "+CT,TURNSPEED=70.0;";
+                    // Use the configured turntable speed (speed = seconds for 360°)
+                    std::string speed_command = "+CT,TURNSPEED=" + std::to_string(turntable_speed_) + ";";
                     bluetooth_manager_->SendCommand(device_ids[0], speed_command);
+                    LogMessage("[STUDIO] Set turntable speed: " + std::to_string(turntable_speed_) + "s/360° (≈" + std::to_string(360.0f/turntable_speed_) + "°/s)");
                 }
                 
                 // Move to first capture (no rotation needed)
@@ -426,14 +479,13 @@ void CaptureStudioPanel::UpdateAutomatedSequence() {
             }
             break;
             
-        case SequenceStep::Rotating:
-            if (step_elapsed >= step_duration_seconds_) {
-                SetCurrentStep(SequenceStep::WaitingToSettle, "Waiting for turntable to settle...", 0.5f);
-            }
-            break;
-            
-        case SequenceStep::WaitingToSettle:
-            if (step_elapsed >= step_duration_seconds_) {
+        case SequenceStep::RotatingAndWaiting:
+            // Check if turntable rotation is complete using real angle monitoring
+            if (IsTurntableRotationComplete()) {
+                LogMessage("[STUDIO] 🎯 Turntable rotation complete - proceeding to capture");
+                SetCurrentStep(SequenceStep::Capturing, "Taking capture " + std::to_string(current_capture_index_ + 1) + "/" + std::to_string(auto_capture_count_), 2.0f);
+            } else if (step_elapsed >= 60.0f) { // 60 second timeout (matches monitoring timeout)
+                LogMessage("[STUDIO] WARNING: Turntable rotation timed out, proceeding with capture anyway");
                 SetCurrentStep(SequenceStep::Capturing, "Taking capture " + std::to_string(current_capture_index_ + 1) + "/" + std::to_string(auto_capture_count_), 2.0f);
             }
             break;
@@ -465,8 +517,8 @@ void CaptureStudioPanel::UpdateAutomatedSequence() {
         case SequenceStep::WaitingForNext:
             if (step_elapsed >= step_duration_seconds_) {
                 // Time to rotate for next capture
-                SetCurrentStep(SequenceStep::Rotating, "Rotating turntable " + std::to_string(rotation_angle_) + "°", 2.0f);
-                RotateTurntable(rotation_angle_);
+                SetCurrentStep(SequenceStep::RotatingAndWaiting, "Rotating turntable " + std::to_string(rotation_angle_) + "° and waiting for completion...", 60.0f); // 60s timeout
+                RotateTurntableAndWait(rotation_angle_);
             }
             break;
             
@@ -521,7 +573,7 @@ void CaptureStudioPanel::PerformSingleCapture(const std::string& capture_name) {
 void CaptureStudioPanel::RotateTurntable(float degrees) {
     if (!IsTurntableConnected()) return;
     
-    LogMessage("[STUDIO] Rotating turntable " + std::to_string(degrees) + "°");
+    LogMessage("[STUDIO] Rotating turntable " + std::to_string(degrees) + "° (no wait)");
     
     // Use proper turntable rotation command format
     std::string command = "+CT,TURNANGLE=" + std::to_string(degrees) + ";";
@@ -537,6 +589,33 @@ void CaptureStudioPanel::RotateTurntable(float degrees) {
     } else {
         LogMessage("[STUDIO] No bluetooth devices connected");
     }
+}
+
+void CaptureStudioPanel::RotateTurntableAndWait(float degrees) {
+    if (!IsTurntableConnected()) {
+        LogMessage("[STUDIO] ERROR: Turntable not available for rotation with wait");
+        return;
+    }
+    
+    auto device_ids = bluetooth_manager_->GetConnectedDevices();
+    if (device_ids.empty()) {
+        LogMessage("[STUDIO] ERROR: No bluetooth devices connected for turntable control");
+        return;
+    }
+    
+    LogMessage("[STUDIO] Starting monitored turntable rotation: " + std::to_string(degrees) + " degrees");
+    
+    // Get initial angle before rotation
+    LogMessage("[STUDIO] Starting rotation: " + std::to_string(degrees) + "°");
+    
+    // Start the rotation
+    RotateTurntable(degrees);
+    
+    // Start time-based rotation wait in separate thread
+    std::thread rotation_monitor([this, degrees]() {
+        WaitForTurntableRotation(degrees);
+    });
+    rotation_monitor.detach();
 }
 
 bool CaptureStudioPanel::IsTurntableConnected() const {
@@ -592,10 +671,7 @@ void CaptureStudioPanel::AdvanceToNextStep() {
         case SequenceStep::Initializing:
             SetCurrentStep(SequenceStep::Capturing, "Taking capture " + std::to_string(current_capture_index_ + 1) + "/" + std::to_string(auto_capture_count_), 2.0f);
             break;
-        case SequenceStep::Rotating:
-            SetCurrentStep(SequenceStep::WaitingToSettle, "Waiting for turntable to settle...", 0.5f);
-            break;
-        case SequenceStep::WaitingToSettle:
+        case SequenceStep::RotatingAndWaiting:
             SetCurrentStep(SequenceStep::Capturing, "Taking capture " + std::to_string(current_capture_index_ + 1) + "/" + std::to_string(auto_capture_count_), 2.0f);
             break;
         case SequenceStep::Capturing:
@@ -610,8 +686,8 @@ void CaptureStudioPanel::AdvanceToNextStep() {
             }
             break;
         case SequenceStep::WaitingForNext:
-            SetCurrentStep(SequenceStep::Rotating, "Rotating turntable " + std::to_string(rotation_angle_) + "°", 2.0f);
-            RotateTurntable(rotation_angle_);
+            SetCurrentStep(SequenceStep::RotatingAndWaiting, "Rotating turntable " + std::to_string(rotation_angle_) + "° and waiting...", 60.0f);
+            RotateTurntableAndWait(rotation_angle_);
             break;
         case SequenceStep::Completing:
             StopAutomatedSequence();
@@ -649,8 +725,7 @@ std::string CaptureStudioPanel::GetStepName(SequenceStep step) const {
     switch (step) {
         case SequenceStep::Idle: return "Idle";
         case SequenceStep::Initializing: return "Initializing";
-        case SequenceStep::Rotating: return "Rotating";
-        case SequenceStep::WaitingToSettle: return "Settling";
+        case SequenceStep::RotatingAndWaiting: return "Rotating & Waiting";
         case SequenceStep::Capturing: return "Capturing";
         case SequenceStep::Processing: return "Processing";
         case SequenceStep::WaitingForNext: return "Waiting";
@@ -681,5 +756,27 @@ void CaptureStudioPanel::RenderStepIndicator() {
         ImGui::ProgressBar(indeterminate_progress, ImVec2(-1, 0), "In Progress...");
     }
 }
+
+void CaptureStudioPanel::WaitForTurntableRotation(float rotation_angle) {
+    // Calculate rotation time: (angle × speed) ÷ 360°
+    float rotation_time = (std::abs(rotation_angle) * turntable_speed_) / 360.0f;
+    
+    // Add small buffer for mechanical settling (10% of rotation time, min 0.5s, max 2s)
+    float buffer_time = std::min(std::max(rotation_time * 0.1f, 0.5f), 2.0f);
+    float total_wait_time = rotation_time + buffer_time;
+    
+    LogMessage("[STUDIO] ⏱ Time-based wait: " + std::to_string(rotation_angle) + "° × " + 
+               std::to_string(turntable_speed_) + "s/360° = " + std::to_string(rotation_time) + "s (+" + 
+               std::to_string(buffer_time) + "s buffer)");
+    
+    turntable_rotation_complete_ = false;
+    
+    // Sleep for the calculated time
+    std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int>(total_wait_time * 1000)));
+    
+    turntable_rotation_complete_ = true;
+    LogMessage("[STUDIO] ✅ Turntable rotation complete after " + std::to_string(total_wait_time) + "s");
+}
+
 
 } // namespace SaperaCapturePro

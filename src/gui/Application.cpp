@@ -140,7 +140,7 @@ void Application::InitializeBluetooth() {
   
   // Initialize unified hardware panel
   hardware_panel_ = std::make_unique<HardwarePanel>();
-  hardware_panel_->Initialize(bluetooth_manager_, camera_manager_, session_manager_.get());
+  hardware_panel_->Initialize(bluetooth_manager_, camera_manager_, session_manager_.get(), settings_manager_.get());
   hardware_panel_->SetLogCallback([this](const std::string& message) {
     AddGlobalLog(message, LogLevel::kInfo);
   });

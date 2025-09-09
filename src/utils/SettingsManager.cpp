@@ -188,6 +188,9 @@ SimpleJSON AppSettings::ToJson() const {
     json.set("window_y", window_y);
     json.set("ui_scale", ui_scale);
     json.set("vsync", vsync);
+    json.set("last_bluetooth_device_id", last_bluetooth_device_id);
+    json.set("last_bluetooth_device_name", last_bluetooth_device_name);
+    json.set("auto_connect_enabled", auto_connect_enabled);
     return json;
 }
 
@@ -200,6 +203,11 @@ void AppSettings::FromJson(const SimpleJSON& json) {
     window_x = json.getInt("window_x", window_x);
     window_y = json.getInt("window_y", window_y);
     vsync = json.getBool("vsync", vsync);
+    
+    // Load connection info
+    last_bluetooth_device_id = json.get("last_bluetooth_device_id", last_bluetooth_device_id);
+    last_bluetooth_device_name = json.get("last_bluetooth_device_name", last_bluetooth_device_name);
+    auto_connect_enabled = json.getBool("auto_connect_enabled", auto_connect_enabled);
     
     // Load and validate UI scale
     float loaded_scale = json.getFloat("ui_scale", ui_scale);

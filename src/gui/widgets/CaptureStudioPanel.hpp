@@ -4,10 +4,12 @@
 #include <string>
 #include <functional>
 #include <chrono>
+#include <atomic>
 #include <imgui.h>
 #include "../../utils/SessionManager.hpp"
 #include "../../hardware/CameraManager.hpp"
 #include "../../bluetooth/BluetoothManager.hpp"
+#include "../../bluetooth/TurntableController.hpp"
 #include "SessionWidget.hpp"
 #include "FileExplorerWidget.hpp"
 
@@ -22,8 +24,7 @@ enum class CaptureMode {
 enum class SequenceStep {
     Idle,           // Not running
     Initializing,   // Setting up sequence
-    Rotating,       // Rotating turntable
-    WaitingToSettle,// Waiting for turntable to settle
+    RotatingAndWaiting, // Rotating turntable and waiting for completion
     Capturing,      // Taking photos
     Processing,     // Processing/saving images
     WaitingForNext, // Delay before next capture
@@ -54,6 +55,7 @@ private:
     CameraManager* camera_manager_ = nullptr;
     BluetoothManager* bluetooth_manager_ = nullptr;
     SessionManager* session_manager_ = nullptr;
+    std::unique_ptr<TurntableController> turntable_controller_;
     
     // Shared UI components
     std::unique_ptr<SessionWidget> session_widget_;
@@ -72,9 +74,14 @@ private:
     int auto_capture_count_ = 36;
     float rotation_angle_ = 10.0f;
     float capture_delay_ = 2.0f;
+    bool edit_by_captures_ = true; // true = edit captures, false = edit angle
+    float turntable_speed_ = 70.0f; // Speed setting (seconds for 360°)
     int current_capture_index_ = 0;
     std::chrono::steady_clock::time_point last_capture_time_;
     bool auto_sequence_active_ = false;
+    
+    // Turntable state
+    std::atomic<bool> turntable_rotation_complete_{true};
     
     // Pauseable automation state
     SequenceStep current_step_ = SequenceStep::Idle;
@@ -123,7 +130,12 @@ private:
     
     // Turntable control
     void RotateTurntable(float degrees);
+    void RotateTurntableAndWait(float degrees); // Rotates and waits for completion
     bool IsTurntableConnected() const;
+    
+    // Turntable monitoring
+    void WaitForTurntableRotation(float rotation_angle);
+    bool IsTurntableRotationComplete() const { return turntable_rotation_complete_; }
     
     // Utility methods
     void LogMessage(const std::string& message);

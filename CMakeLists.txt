@@ -162,15 +162,6 @@ endif()
 # Set as default target
 set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT neural_capture)
 
-# TIFF Test executable
-add_executable(tiff_test
-    tiff_test.cpp
-)
-
-target_link_libraries(tiff_test PRIVATE
-    gdiplus.lib
-)
-
 # =============================================================================
 # INSTALLATION
 # =============================================================================

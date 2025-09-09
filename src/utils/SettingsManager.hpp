@@ -108,6 +108,11 @@ struct AppSettings {
     float ui_scale = 1.0f;  // UI scale factor (0.5 to 8.0)
     bool vsync = true;
     
+    // Last connection info for Quick Connect
+    std::string last_bluetooth_device_id = "";
+    std::string last_bluetooth_device_name = "";
+    bool auto_connect_enabled = true;
+    
     SimpleJSON ToJson() const;
     void FromJson(const SimpleJSON& json);
     void Reset();
