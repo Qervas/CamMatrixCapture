@@ -121,6 +121,24 @@ void Application::InitializeGUI() {
   capture_studio_panel_->SetLogCallback([this](const std::string& message) {
     AddGlobalLog(message);
   });
+
+  // Push color conversion preferences to camera manager
+  if (camera_manager_) {
+    const auto& cs = settings_manager_->GetCameraSettings();
+    CameraManager::ColorConfig cc;
+    cc.color_method = cs.color_method;
+    cc.bayer_align = cs.bayer_align;
+    cc.use_hardware = cs.use_hardware_conversion;
+    cc.color_output_format = cs.color_output_format;
+    cc.gamma = cs.gamma;
+    cc.wb_gain_r = cs.white_balance_red;
+    cc.wb_gain_g = cs.white_balance_green;
+    cc.wb_gain_b = cs.white_balance_blue;
+    cc.wb_offset_r = cs.white_balance_offset_red;
+    cc.wb_offset_g = cs.white_balance_offset_green;
+    cc.wb_offset_b = cs.white_balance_offset_blue;
+    camera_manager_->SetColorConfig(cc);
+  }
 }
 
 void Application::InitializeBluetooth() {

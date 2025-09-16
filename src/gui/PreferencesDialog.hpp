@@ -59,6 +59,14 @@ class PreferencesDialog {
   float temp_white_balance_blue_ = 1.0f;
   bool temp_auto_white_balance_ = false;
   float temp_gamma_ = 1.0f;
+  // Advanced color processing
+  int temp_color_method_ = 1;
+  int temp_bayer_align_ = 2;
+  bool temp_use_hardware_conversion_ = false;
+  int temp_output_format_index_ = 0; // 0=RGB888,1=RGB8888,2=RGB101010
+  float temp_wb_offset_r_ = 0.0f;
+  float temp_wb_offset_g_ = 0.0f;
+  float temp_wb_offset_b_ = 0.0f;
   
   // Callbacks
   std::function<void(float)> on_ui_scale_changed_;

@@ -37,6 +37,19 @@ void PreferencesDialog::Show(bool* p_open) {
       temp_white_balance_blue_ = camera_settings.white_balance_blue;
       temp_auto_white_balance_ = camera_settings.auto_white_balance;
       temp_gamma_ = camera_settings.gamma;
+      // Advanced color
+      temp_color_method_ = camera_settings.color_method;
+      temp_bayer_align_ = camera_settings.bayer_align;
+      temp_use_hardware_conversion_ = camera_settings.use_hardware_conversion;
+      // Output format mapping
+      if (camera_settings.color_output_format == std::string("RGB888")) temp_output_format_index_ = 0;
+      else if (camera_settings.color_output_format == std::string("RGB8888")) temp_output_format_index_ = 1;
+      else if (camera_settings.color_output_format == std::string("RGB101010")) temp_output_format_index_ = 2;
+      else temp_output_format_index_ = 0;
+      // WB offsets
+      temp_wb_offset_r_ = camera_settings.white_balance_offset_red;
+      temp_wb_offset_g_ = camera_settings.white_balance_offset_green;
+      temp_wb_offset_b_ = camera_settings.white_balance_offset_blue;
     }
     
     // Left side - category list
@@ -609,6 +622,77 @@ void PreferencesDialog::RenderCameraTab() {
     }
     ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Range: 0.1 - 3.0 (1.0 = linear)");
     
+    ImGui::Separator();
+    ImGui::Text("Color Conversion");
+    // Color method 1-7
+    int method = temp_color_method_;
+    if (ImGui::SliderInt("Method (1=Fast, 7=Best)", &method, 1, 7)) {
+      temp_color_method_ = method;
+      if (settings_manager_) {
+        settings_manager_->GetCameraSettings().color_method = temp_color_method_;
+        if (settings_manager_->GetAppSettings().auto_save_settings) settings_manager_->Save();
+      }
+    }
+    
+    // Bayer alignment
+    static const char* bayer_items[] = {"GBRG","BGGR","RGGB","GRBG","RGBG","BGRG"};
+    int bayer = temp_bayer_align_;
+    if (ImGui::Combo("Bayer Alignment", &bayer, bayer_items, IM_ARRAYSIZE(bayer_items))) {
+      temp_bayer_align_ = bayer;
+      if (settings_manager_) {
+        settings_manager_->GetCameraSettings().bayer_align = temp_bayer_align_;
+        if (settings_manager_->GetAppSettings().auto_save_settings) settings_manager_->Save();
+      }
+    }
+    
+    // Hardware conversion toggle
+    if (ImGui::Checkbox("Use Hardware Conversion", &temp_use_hardware_conversion_)) {
+      if (settings_manager_) {
+        settings_manager_->GetCameraSettings().use_hardware_conversion = temp_use_hardware_conversion_;
+        if (settings_manager_->GetAppSettings().auto_save_settings) settings_manager_->Save();
+      }
+    }
+
+    // Output format selection (RGB888 / RGB8888 / RGB101010)
+    static const char* kOutFmt[] = {"RGB888","RGB8888","RGB101010"};
+    int ofmt = temp_output_format_index_;
+    if (ImGui::Combo("Output Format", &ofmt, kOutFmt, IM_ARRAYSIZE(kOutFmt))) {
+      temp_output_format_index_ = ofmt;
+      if (settings_manager_) {
+        auto& cs = settings_manager_->GetCameraSettings();
+        cs.color_output_format = kOutFmt[temp_output_format_index_];
+        if (settings_manager_->GetAppSettings().auto_save_settings) settings_manager_->Save();
+      }
+    }
+    
+    // White balance offsets (advanced)
+    ImGui::Separator();
+    ImGui::Text("WB Offset (advanced)");
+    float off_r = temp_wb_offset_r_;
+    if (ImGui::InputFloat("Offset R", &off_r, 0.1f, 1.0f, "%.2f")) {
+      temp_wb_offset_r_ = off_r;
+      if (settings_manager_) {
+        settings_manager_->GetCameraSettings().white_balance_offset_red = temp_wb_offset_r_;
+        if (settings_manager_->GetAppSettings().auto_save_settings) settings_manager_->Save();
+      }
+    }
+    float off_g = temp_wb_offset_g_;
+    if (ImGui::InputFloat("Offset G", &off_g, 0.1f, 1.0f, "%.2f")) {
+      temp_wb_offset_g_ = off_g;
+      if (settings_manager_) {
+        settings_manager_->GetCameraSettings().white_balance_offset_green = temp_wb_offset_g_;
+        if (settings_manager_->GetAppSettings().auto_save_settings) settings_manager_->Save();
+      }
+    }
+    float off_b = temp_wb_offset_b_;
+    if (ImGui::InputFloat("Offset B", &off_b, 0.1f, 1.0f, "%.2f")) {
+      temp_wb_offset_b_ = off_b;
+      if (settings_manager_) {
+        settings_manager_->GetCameraSettings().white_balance_offset_blue = temp_wb_offset_b_;
+        if (settings_manager_->GetAppSettings().auto_save_settings) settings_manager_->Save();
+      }
+    }
+    
     ImGui::PopItemWidth();
   }
   
@@ -625,6 +709,18 @@ void PreferencesDialog::RenderCameraTab() {
     ImGui::BulletText("  R=%.2f, G=%.2f, B=%.2f", temp_white_balance_red_, temp_white_balance_green_, temp_white_balance_blue_);
   }
   ImGui::BulletText("Gamma: %.2f", temp_gamma_);
+  ImGui::BulletText("Color Method: %d", temp_color_method_);
+  {
+    static const char* kBayerLabels[6] = {"GBRG","BGGR","RGGB","GRBG","RGBG","BGRG"};
+    const char* bayerLabel = (temp_bayer_align_ >= 0 && temp_bayer_align_ <= 5) ? kBayerLabels[temp_bayer_align_] : "RGGB";
+    ImGui::BulletText("Bayer: %s", bayerLabel);
+  }
+  ImGui::BulletText("Hardware Conversion: %s", temp_use_hardware_conversion_ ? "Yes" : "No");
+  {
+    static const char* kOutFmtSummary[] = {"RGB888","RGB8888","RGB101010"};
+    const char* fmt = (temp_output_format_index_>=0 && temp_output_format_index_<3) ? kOutFmtSummary[temp_output_format_index_] : kOutFmtSummary[0];
+    ImGui::BulletText("Output Format: %s", fmt);
+  }
   
   ImGui::Spacing();
   ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.0f, 1.0f), "Note: Changes take effect immediately and are saved automatically.");
@@ -687,6 +783,17 @@ void PreferencesDialog::ApplySettings() {
   camera_settings.white_balance_blue = temp_white_balance_blue_;
   camera_settings.auto_white_balance = temp_auto_white_balance_;
   camera_settings.gamma = temp_gamma_;
+  camera_settings.color_method = temp_color_method_;
+  camera_settings.bayer_align = temp_bayer_align_;
+  camera_settings.use_hardware_conversion = temp_use_hardware_conversion_;
+  {
+    static const char* kOutFmtApply[] = {"RGB888","RGB8888","RGB101010"};
+    const char* fmt = (temp_output_format_index_>=0 && temp_output_format_index_<3) ? kOutFmtApply[temp_output_format_index_] : kOutFmtApply[0];
+    camera_settings.color_output_format = std::string(fmt);
+  }
+  camera_settings.white_balance_offset_red = temp_wb_offset_r_;
+  camera_settings.white_balance_offset_green = temp_wb_offset_g_;
+  camera_settings.white_balance_offset_blue = temp_wb_offset_b_;
 }
 
 void PreferencesDialog::SaveSettings() {

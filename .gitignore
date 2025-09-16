@@ -73,3 +73,5 @@ imgui.ini
 !start-system.bat 
 
 examples/*
+deploy/
+classes/

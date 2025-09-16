@@ -34,6 +34,15 @@ SimpleJSON CameraSettings::ToJson() const {
     json.set("saturation", saturation);
     json.set("hue", hue);
     json.set("gamma", gamma);
+    // Advanced Color Processing
+    json.set("color_method", color_method);
+    json.set("bayer_align", bayer_align);
+    // LUT removed
+    json.set("use_hardware_conversion", use_hardware_conversion);
+    json.set("color_output_format", color_output_format);
+    json.set("white_balance_offset_red", white_balance_offset_red);
+    json.set("white_balance_offset_green", white_balance_offset_green);
+    json.set("white_balance_offset_blue", white_balance_offset_blue);
     
     // Advanced Features
     json.set("acquisition_mode", acquisition_mode);
@@ -81,6 +90,15 @@ void CameraSettings::FromJson(const SimpleJSON& json) {
     saturation = json.getFloat("saturation", saturation);
     hue = json.getFloat("hue", hue);
     gamma = json.getFloat("gamma", gamma);
+    // Advanced Color Processing
+    color_method = json.getInt("color_method", color_method);
+    bayer_align = json.getInt("bayer_align", bayer_align);
+    // LUT removed
+    use_hardware_conversion = json.getBool("use_hardware_conversion", use_hardware_conversion);
+    color_output_format = json.get("color_output_format", color_output_format);
+    white_balance_offset_red = json.getFloat("white_balance_offset_red", white_balance_offset_red);
+    white_balance_offset_green = json.getFloat("white_balance_offset_green", white_balance_offset_green);
+    white_balance_offset_blue = json.getFloat("white_balance_offset_blue", white_balance_offset_blue);
     
     // Advanced Features
     acquisition_mode = json.get("acquisition_mode", acquisition_mode);

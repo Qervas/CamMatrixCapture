@@ -74,6 +74,16 @@ struct CameraSettings {
     float saturation = 1.0f;
     float hue = 0.0f;
     float gamma = 1.0f;
+    // Advanced Color Processing
+    int color_method = 1;            // 1-7
+    int bayer_align = 2;             // 0=GBRG,1=BGGR,2=RGGB,3=GRBG,4=RGBG,5=BGRG
+    bool use_hardware_conversion = false;
+    // Output format (SapFormat selection stored as string label)
+    std::string color_output_format = "RGB888"; // RGB888, RGB8888, RGB101010
+    // White balance offset per channel (for fine tuning)
+    float white_balance_offset_red = 0.0f;
+    float white_balance_offset_green = 0.0f;
+    float white_balance_offset_blue = 0.0f;
     
     // Advanced Features
     std::string acquisition_mode = "Continuous";

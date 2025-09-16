@@ -34,6 +34,22 @@ class CameraManager {
   void ApplyParameterToCamera(const std::string& camera_id, const std::string& feature_name, const std::string& value);
   void DetectCameraResolution();
   
+  // Color conversion configuration
+  struct ColorConfig {
+    int color_method = 1;              // 1-7
+    int bayer_align = 2;               // 0..5 mapping to SapColorConversion::Align*
+    bool use_hardware = false;
+    std::string color_output_format = "RGB888"; // RGB888, RGB8888, RGB101010
+    float gamma = 1.0f;
+    float wb_gain_r = 1.0f;
+    float wb_gain_g = 1.0f;
+    float wb_gain_b = 1.0f;
+    float wb_offset_r = 0.0f;
+    float wb_offset_g = 0.0f;
+    float wb_offset_b = 0.0f;
+  };
+  void SetColorConfig(const ColorConfig& cfg) { color_config_ = cfg; }
+
   // Getters
   const std::vector<CameraInfo>& GetDiscoveredCameras() const { return discovered_cameras_; }
   bool IsConnected(const std::string& camera_id) const;
@@ -87,6 +103,7 @@ class CameraManager {
   int exposure_time_ = 40000;
   bool capture_format_raw_ = false;
   Parameters params_;
+  ColorConfig color_config_;
   
   std::function<void(const std::string&)> log_callback_;
   

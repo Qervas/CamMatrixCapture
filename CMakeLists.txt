@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 3.16)
 
 project(NeuralRenderingCapture)
 
@@ -121,6 +121,7 @@ add_executable(neural_capture
     src/bluetooth/BluetoothManager.cpp
     src/bluetooth/BluetoothDevice.cpp
     src/bluetooth/BluetoothScanner.cpp
+    src/bluetooth/TurntableController.cpp
     src/gui/HardwarePanel.cpp
     src/gui/GuiManager.cpp
     src/gui/PreferencesDialog.cpp

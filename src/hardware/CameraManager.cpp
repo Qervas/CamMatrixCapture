@@ -479,9 +479,78 @@ bool CameraManager::CaptureCamera(const std::string& cameraId, const std::string
         return false;
       }
     } else {
-      // Save as TIFF
-      if (buffer->Save(fullPath.c_str(), "-format tiff")) {
-        Log("[OK] ✅ TIFF image saved: " + filename);
+      // Perform color conversion before saving
+      SapColorConversion colorConv(buffer);
+      if (!colorConv.Enable(TRUE, color_config_.use_hardware)) {
+        Log("[ERR] ❌ Failed to enable color conversion");
+        return false;
+      }
+      if (!colorConv.Create()) {
+        Log("[ERR] ❌ Failed to create color converter");
+        return false;
+      }
+
+      // Output format mapping
+      if (color_config_.color_output_format == std::string("RGB888")) {
+        colorConv.SetOutputFormat(SapFormatRGB888);
+      } else if (color_config_.color_output_format == std::string("RGB8888")) {
+        colorConv.SetOutputFormat(SapFormatRGB8888);
+      } else if (color_config_.color_output_format == std::string("RGB101010")) {
+        colorConv.SetOutputFormat(SapFormatRGB101010);
+      } else {
+        colorConv.SetOutputFormat(SapFormatRGB888);
+      }
+
+      // Bayer align
+      SapColorConversion::Align align = SapColorConversion::AlignRGGB;
+      switch (color_config_.bayer_align) {
+        case 0: align = SapColorConversion::AlignGBRG; break;
+        case 1: align = SapColorConversion::AlignBGGR; break;
+        case 2: align = SapColorConversion::AlignRGGB; break;
+        case 3: align = SapColorConversion::AlignGRBG; break;
+        case 4: align = SapColorConversion::AlignRGBG; break;
+        case 5: align = SapColorConversion::AlignBGRG; break;
+      }
+      colorConv.SetAlign(align);
+
+      // Method
+      SapColorConversion::Method method = SapColorConversion::Method1;
+      switch (color_config_.color_method) {
+        case 1: method = SapColorConversion::Method1; break;
+        case 2: method = SapColorConversion::Method2; break;
+        case 3: method = SapColorConversion::Method3; break;
+        case 4: method = SapColorConversion::Method4; break;
+        case 5: method = SapColorConversion::Method5; break;
+        case 6: method = SapColorConversion::Method6; break;
+        case 7: method = SapColorConversion::Method7; break;
+      }
+      colorConv.SetMethod(method);
+
+      // WB gain/offset and gamma
+      SapDataFRGB wbGain(color_config_.wb_gain_r, color_config_.wb_gain_g, color_config_.wb_gain_b);
+      colorConv.SetWBGain(wbGain);
+      SapDataFRGB wbOff(color_config_.wb_offset_r, color_config_.wb_offset_g, color_config_.wb_offset_b);
+      colorConv.SetWBOffset(wbOff);
+      colorConv.SetGamma(color_config_.gamma);
+
+      // Convert
+      if (!colorConv.Convert()) {
+        Log("[ERR] ❌ Color conversion failed");
+        colorConv.Destroy();
+        return false;
+      }
+
+      // Save converted buffer as TIFF
+      SapBuffer* outBuf = colorConv.GetOutputBuffer();
+      if (!outBuf) {
+        Log("[ERR] ❌ No output buffer from color converter");
+        colorConv.Destroy();
+        return false;
+      }
+      bool saveOk = outBuf->Save(fullPath.c_str(), "-format tiff");
+      colorConv.Destroy();
+      if (saveOk) {
+        Log("[OK] ✅ TIFF image saved with color conversion: " + filename);
         return true;
       } else {
         Log("[ERR] ❌ Failed to save TIFF image: " + filename);

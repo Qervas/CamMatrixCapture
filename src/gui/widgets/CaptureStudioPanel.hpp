@@ -137,6 +137,27 @@ private:
     void WaitForTurntableRotation(float rotation_angle);
     bool IsTurntableRotationComplete() const { return turntable_rotation_complete_; }
     
+    // Hemisphere visualization
+    void RenderHemisphereVisualization(float size = 200.0f);
+    void DrawHemisphereGrid(float size);
+    void DrawCameraPositions(float size);
+    
+    // Modern Layout System
+    struct LayoutCard {
+        std::string title;
+        std::function<void()> render_content;
+        ImVec2 min_size;
+        ImVec2 preferred_size;
+        bool collapsible;
+        bool collapsed;
+        float priority; // Higher = more important, gets more space
+    };
+    
+    void RenderCard(LayoutCard& card, ImVec2 available_size);
+    void RenderModernLayout();
+    std::vector<LayoutCard> CreateLayoutCards();
+    ImVec2 CalculateOptimalCardSize(const LayoutCard& card, ImVec2 available_space, int cards_in_row);
+    
     // Utility methods
     void LogMessage(const std::string& message);
     std::string GenerateCaptureFilename() const;
