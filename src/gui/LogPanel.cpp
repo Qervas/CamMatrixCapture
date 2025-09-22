@@ -3,6 +3,7 @@
 #include <iomanip>
 #include <sstream>
 #include <algorithm>
+#include <fstream>
 
 namespace SaperaCapturePro {
 
@@ -25,18 +26,17 @@ void LogPanel::Render(bool* p_open) {
 
 void LogPanel::AddLog(const std::string& message, LogLevel level) {
   std::lock_guard<std::mutex> lock(messages_mutex_);
-  
+
   LogMessage msg;
   msg.message = message;
   msg.level = level;
   msg.timestamp = std::chrono::system_clock::now();
-  
+
   messages_.push_back(msg);
-  
-  // Limit log size
-  const size_t max_messages = 1000;
-  if (messages_.size() > max_messages) {
-    messages_.erase(messages_.begin(), messages_.begin() + (messages_.size() - max_messages));
+
+  // Only limit log size if auto-delete is enabled and max_messages is set
+  if (auto_delete_enabled_ && max_messages_ > 0 && messages_.size() > max_messages_) {
+    messages_.erase(messages_.begin(), messages_.begin() + (messages_.size() - max_messages_));
   }
 }
 
@@ -50,7 +50,19 @@ void LogPanel::RenderToolbar() {
   if (ImGui::Button("Clear")) {
     Clear();
   }
-  
+
+  ImGui::SameLine();
+  if (ImGui::Button("Save...")) {
+    show_save_dialog_ = true;
+  }
+
+  ImGui::SameLine();
+  ImGui::Text("| Messages: %zu", messages_.size());
+  if (auto_delete_enabled_ && max_messages_ > 0) {
+    ImGui::SameLine();
+    ImGui::Text("(max: %zu)", max_messages_);
+  }
+
   ImGui::SameLine();
   ImGui::Checkbox("Auto-scroll", &auto_scroll_);
   
@@ -99,6 +111,27 @@ void LogPanel::RenderToolbar() {
 }
 
 void LogPanel::RenderMessages() {
+  // Save file dialog
+  if (show_save_dialog_) {
+    ImGui::OpenPopup("Save Log");
+    show_save_dialog_ = false;
+  }
+
+  if (ImGui::BeginPopupModal("Save Log", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    ImGui::Text("Enter filename:");
+    ImGui::InputText("##SaveFilename", save_filename_, sizeof(save_filename_));
+
+    if (ImGui::Button("Save", ImVec2(120, 0))) {
+      SaveToFile(save_filename_);
+      ImGui::CloseCurrentPopup();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+      ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+  }
+
   ImGui::BeginChild("LogMessages", ImVec2(0, 0), false, ImGuiWindowFlags_HorizontalScrollbar);
   
   ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 0));
@@ -165,6 +198,34 @@ bool LogPanel::ShouldShowMessage(const LogMessage& msg) const {
   }
   
   return true;
+}
+
+void LogPanel::SaveToFile(const std::string& filename) {
+  std::ofstream file(filename);
+  if (!file.is_open()) {
+    AddLog("Failed to save log to file: " + filename, LogLevel::kError);
+    return;
+  }
+
+  std::lock_guard<std::mutex> lock(messages_mutex_);
+
+  file << "=== Camera Matrix Capture Log Export ===\n";
+  file << "Total messages: " << messages_.size() << "\n\n";
+
+  for (const auto& msg : messages_) {
+    // Format timestamp
+    auto time_t = std::chrono::system_clock::to_time_t(msg.timestamp);
+    std::tm tm = {};
+    localtime_s(&tm, &time_t);
+
+    file << std::put_time(&tm, "[%Y-%m-%d %H:%M:%S] ");
+    file << GetLogPrefix(msg.level);
+    file << msg.message;
+    file << "\n";
+  }
+
+  file.close();
+  AddLog("Log saved to: " + filename, LogLevel::kSuccess);
 }
 
 ImVec4 LogPanel::GetLogColor(LogLevel level) const {

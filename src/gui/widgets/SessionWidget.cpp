@@ -27,10 +27,10 @@ void SessionWidget::Render() {
     CheckSessionStateChanged();
     
     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 8.0f);
-    ImGui::BeginChild("SessionWidget", ImVec2(0, 80), true, ImGuiWindowFlags_NoScrollbar);
+    ImGui::BeginChild("SessionWidget", ImVec2(0, 45), true, ImGuiWindowFlags_NoScrollbar);
     
-    ImGui::Text("📁 Session Control");
-    ImGui::Separator();
+    ImGui::Text("📁 Session:");
+    ImGui::SameLine();
     
     if (HasActiveSession()) {
         RenderActiveSession();
@@ -45,72 +45,64 @@ void SessionWidget::Render() {
 void SessionWidget::RenderActiveSession() {
     auto* session = GetCurrentSession();
     if (!session) return;
-    
-    // Session info in compact layout
-    ImGui::Columns(3, "session_cols", false);
-    ImGui::SetColumnWidth(0, 200);
-    ImGui::SetColumnWidth(1, 150);
-    
-    // Column 1: Session name and status
+
+    // Compact horizontal layout - all in one line
     ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "✓ %s", session->object_name.c_str());
-    ImGui::Text("ID: %s", session->session_id.substr(0, 8).c_str());
-    
-    ImGui::NextColumn();
-    
-    // Column 2: Stats
-    ImGui::Text("📸 %d captures", session->capture_count);
-    ImGui::Text("📂 %zu files", session->capture_paths.size());
-    
-    ImGui::NextColumn();
-    
-    // Column 3: Actions
-    if (ImGui::Button("🗂️ Open Folder", ImVec2(-1, 0))) {
+    ImGui::SameLine();
+    ImGui::Text("[%s]", session->session_id.substr(0, 8).c_str());
+    ImGui::SameLine();
+    ImGui::Text("| 📸 %d", session->capture_count);
+    ImGui::SameLine();
+    ImGui::Text("| 📂 %zu", session->capture_paths.size());
+    ImGui::SameLine();
+
+    // Right-aligned buttons
+    float button_width = 80.0f;
+    float spacing = ImGui::GetStyle().ItemSpacing.x;
+    float pos = ImGui::GetWindowWidth() - button_width * 2 - spacing * 2 - ImGui::GetStyle().WindowPadding.x;
+    if (pos > ImGui::GetCursorPosX())
+        ImGui::SetCursorPosX(pos);
+
+    if (ImGui::Button("📂 Open", ImVec2(button_width, 0))) {
         std::filesystem::path abs_path = std::filesystem::absolute(session->base_path);
         std::string command = "explorer \"" + abs_path.string() + "\"";
         system(command.c_str());
         LogMessage("[SESSION] Opened session folder: " + abs_path.string());
     }
-    
-    if (ImGui::Button("⏹ End Session", ImVec2(-1, 0))) {
+    ImGui::SameLine();
+    if (ImGui::Button("⏹ End", ImVec2(button_width, 0))) {
         session_manager_->EndCurrentSession();
         LogMessage("[SESSION] Session ended from session widget");
     }
-    
-    ImGui::Columns(1);
 }
 
 void SessionWidget::RenderSessionCreator() {
-    ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "⚠ No active session");
-    
-    ImGui::Columns(2, "create_cols", false);
-    ImGui::SetColumnWidth(0, 250);
-    
-    // Column 1: Input
-    ImGui::Text("Object Name:");
-    ImGui::SetNextItemWidth(-1);
-    ImGui::InputTextWithHint("##NewObjectName", "Enter object name or leave empty for auto-generated", 
+    // Compact horizontal layout - all in one line
+    ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "⚠ No session");
+    ImGui::SameLine();
+
+    ImGui::Text("Name:");
+    ImGui::SameLine();
+
+    ImGui::SetNextItemWidth(200);
+    ImGui::InputTextWithHint("##NewObjectName", "auto-generate if empty",
                            new_object_name_, sizeof(new_object_name_));
-    
-    ImGui::NextColumn();
-    
-    // Column 2: Action
-    ImGui::Spacing();
-    if (ImGui::Button("▶ Start New Session", ImVec2(-1, 0))) {
+    ImGui::SameLine();
+
+    if (ImGui::Button("▶ Start Session", ImVec2(120, 0))) {
         std::string session_name = std::string(new_object_name_);
-        
+
         // Generate default name if empty
         if (session_name.empty()) {
             session_name = GenerateDefaultSessionName();
             LogMessage("[SESSION] Using auto-generated name: " + session_name);
         }
-        
+
         if (session_manager_->StartNewSession(session_name)) {
             LogMessage("[SESSION] New session started: " + session_name);
             std::memset(new_object_name_, 0, sizeof(new_object_name_));
         }
     }
-    
-    ImGui::Columns(1);
 }
 
 bool SessionWidget::HasActiveSession() const {

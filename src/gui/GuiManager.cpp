@@ -3,6 +3,7 @@
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
 #include <iostream>
+#include <filesystem>
 #include <algorithm>
 
 namespace SaperaCapturePro {
@@ -59,6 +60,39 @@ bool GuiManager::Initialize(const std::string& window_title, int width, int heig
 
   // Setup ImGui style
   SetupImGuiStyle();
+
+  // Determine DPI/content scale and choose comfortable font size + geometry scaling
+  float xscale = 1.0f, yscale = 1.0f;
+  glfwGetWindowContentScale(window_, &xscale, &yscale);
+  float dpi_scale = std::max(xscale, yscale);
+  if (dpi_scale <= 0.0f) dpi_scale = 1.0f;
+
+  // Base comfortable size: 18px at 96 DPI; clamp to a reasonable range
+  float font_size_px = std::clamp(18.0f * dpi_scale, 18.0f, 28.0f);
+
+  // Load larger, crisp default fonts (prefer system Segoe UI on Windows)
+  io.Fonts->Clear();
+  bool loaded_font = false;
+  try {
+    const char* segoe_path = "C:/Windows/Fonts/segoeui.ttf";
+    if (std::filesystem::exists(segoe_path)) {
+      io.Fonts->AddFontFromFileTTF(segoe_path, font_size_px);
+      loaded_font = true;
+    }
+  } catch (...) {
+    // ignore
+  }
+  if (!loaded_font) {
+    ImFontConfig cfg;
+    cfg.SizePixels = font_size_px;
+    io.Fonts->AddFontDefault(&cfg);
+  }
+  io.FontDefault = io.Fonts->Fonts.back();
+  io.FontGlobalScale = 1.0f; // keep text crisp
+
+  // Scale geometry (widgets, padding) to match DPI, without scaling the font rendering
+  ImGuiStyle& style = ImGui::GetStyle();
+  style.ScaleAllSizes(dpi_scale);
 
   // Setup Platform/Renderer backends
   ImGui_ImplGlfw_InitForOpenGL(window_, true);
@@ -168,14 +202,24 @@ void GuiManager::ApplyDarkTheme() {
   style.Colors[ImGuiCol_TitleBgCollapsed] = ImVec4(0.0f, 0.0f, 0.0f, 0.6f);
   style.Colors[ImGuiCol_MenuBarBg] = ImVec4(0.14f, 0.14f, 0.14f, 1.0f);
   
-  // Rounding
-  style.WindowRounding = 0.0f;
-  style.ChildRounding = 0.0f;
-  style.FrameRounding = 0.0f;
-  style.GrabRounding = 0.0f;
-  style.PopupRounding = 0.0f;
-  style.ScrollbarRounding = 0.0f;
-  style.TabRounding = 0.0f;
+  // Spacing & sizing for better readability
+  style.WindowPadding = ImVec2(16.0f, 12.0f);
+  style.FramePadding = ImVec2(12.0f, 8.0f);
+  style.ItemSpacing = ImVec2(12.0f, 10.0f);
+  style.ItemInnerSpacing = ImVec2(10.0f, 8.0f);
+  style.ScrollbarSize = 18.0f;
+  style.GrabMinSize = 12.0f;
+  style.FrameBorderSize = 1.0f;
+  style.WindowBorderSize = 1.0f;
+
+  // Rounding for modern look
+  style.WindowRounding = 6.0f;
+  style.ChildRounding = 6.0f;
+  style.FrameRounding = 6.0f;
+  style.GrabRounding = 6.0f;
+  style.PopupRounding = 6.0f;
+  style.ScrollbarRounding = 6.0f;
+  style.TabRounding = 6.0f;
 }
 
 }  // namespace SaperaCapturePro

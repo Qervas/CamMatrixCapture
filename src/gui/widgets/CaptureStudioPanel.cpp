@@ -4,6 +4,8 @@
 #include <thread>
 #include <chrono>
 #include <cmath>
+#include <cstring>
+#include <filesystem>
 
 namespace SaperaCapturePro {
 
@@ -18,10 +20,7 @@ void CaptureStudioPanel::Initialize(CameraManager* camera_manager, BluetoothMana
     bluetooth_manager_ = bluetooth_manager;
     session_manager_ = session_manager;
     
-    // Initialize shared widgets
-    session_widget_ = std::make_unique<SessionWidget>();
-    session_widget_->Initialize(session_manager_);
-    session_widget_->SetLogCallback([this](const std::string& msg) { LogMessage(msg); });
+    // Session control state initialized
     
     file_explorer_widget_ = std::make_unique<FileExplorerWidget>();
     file_explorer_widget_->Initialize(); // Initialize GDI+ for TIFF loading
@@ -44,7 +43,6 @@ void CaptureStudioPanel::Shutdown() {
         StopAutomatedSequence();
     }
     
-    session_widget_.reset();
     file_explorer_widget_.reset();
     
     // Shutdown turntable controller
@@ -59,71 +57,115 @@ void CaptureStudioPanel::Shutdown() {
 }
 
 void CaptureStudioPanel::Render() {
-    if (ImGui::Begin("🎬 Capture Studio", nullptr, ImGuiWindowFlags_NoCollapse)) {
-        if (!camera_manager_ || !session_manager_) {
-            ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "❌ System not initialized");
-            ImGui::End();
-            return;
-        }
-    
-    // Update automated sequence if active
+    if (!ImGui::Begin("🎬 Capture Studio", nullptr, ImGuiWindowFlags_NoCollapse)) {
+        ImGui::End();
+        return;
+    }
+    if (!camera_manager_ || !session_manager_) {
+        ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "❌ System not initialized");
+        ImGui::End();
+        return;
+    }
+
     if (auto_sequence_active_) {
         UpdateAutomatedSequence();
     }
-    
-    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 8.0f);
-    
-    if (ImGui::BeginChild("CaptureStudioPanel", ImVec2(0, widget_height_), true)) {
-        
-        ImGui::Text("🎬 Capture Studio");
-        ImGui::SameLine();
-        
-        // Quick system status
-        if (camera_manager_->GetConnectedCount() == 0) {
+
+    const float em = ImGui::GetFontSize();
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 10.0f);
+
+    // Card: Automated Sequence (primary)
+    ImGui::BeginChild("cs_auto", ImVec2(0, 0), true);
+
+    // Integrated session control at top of panel
+    RenderSessionControl();
+    ImGui::Separator();
+
+    ImGui::Text("🔄 Automated Capture");
+    ImGui::Separator();
+
+    // Two-column layout
+    ImGui::Columns(2, "auto_cols_new", false);
+    ImGui::SetColumnWidth(0, 20.0f * em);
+
+    // Left column: Parameters
+    ImGui::Text("360° Mode");
+    if (ImGui::RadioButton("By Total Captures", edit_by_captures_)) edit_by_captures_ = true;
+    if (ImGui::RadioButton("By Angle Step", !edit_by_captures_)) edit_by_captures_ = false;
+    ImGui::Spacing();
+
+    if (edit_by_captures_) {
+        ImGui::Text("Total Captures");
+        if (ImGui::SliderInt("##AutoCountNew", &auto_capture_count_, 6, 360)) {
+            rotation_angle_ = 360.0f / static_cast<float>(auto_capture_count_);
+        }
+        ImGui::Text("Angle Step: %.2f°", rotation_angle_);
+    } else {
+        ImGui::Text("Angle Step");
+        if (ImGui::SliderFloat("##RotAngleNew", &rotation_angle_, 1.0f, 60.0f, "%.2f°")) {
+            auto_capture_count_ = static_cast<int>(std::round(360.0f / rotation_angle_));
+        }
+        ImGui::Text("Total Captures: %d", auto_capture_count_);
+    }
+
+    ImGui::Text("Turntable Speed (s/360°)");
+    ImGui::SliderFloat("##TurntableSpeedNew", &turntable_speed_, 35.64f, 131.0f, "%.1f");
+    ImGui::Text("Capture Delay (s)");
+    ImGui::SliderFloat("##CaptureDelayNew", &capture_delay_, 0.5f, 10.0f, "%.1f");
+
+    ImGui::NextColumn();
+
+    // Right column: Actions and status
+    if (auto_sequence_active_) {
+        ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "Active");
+        ImGui::Text("Progress: %d/%d", current_capture_index_, auto_capture_count_);
+        RenderStepIndicator();
+        if (ImGui::Button(sequence_paused_ ? "▶ Resume" : "⏸ Pause", ImVec2(-1, 2.5f * em))) {
+            if (sequence_paused_) ResumeSequence(); else PauseSequence();
+        }
+        if (ImGui::Button("⏭ Next Step", ImVec2(-1, 2.5f * em))) {
+            AdvanceToNextStep();
+        }
+        if (ImGui::Button("⏹ Stop", ImVec2(-1, 2.5f * em))) {
+            StopAutomatedSequence();
+        }
+    } else {
+        // Compact control section
+        bool can_start = ValidateSystemState() && IsTurntableConnected() && !is_capturing_;
+
+        // Status indicators
+        if (!camera_manager_->GetConnectedCount()) {
             ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "⚠ No cameras");
-        } else {
-            int connected_cameras = camera_manager_->GetConnectedCount();
-            ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "📷 %d cameras", connected_cameras);
         }
-        
+        if (!IsTurntableConnected()) {
+            ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "⚠ No turntable");
+        }
+
+        // Compact start button
+        if (!can_start) ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 0.5f);
+        if (ImGui::Button("▶ Start", ImVec2(100, 30))) {
+            if (can_start) StartAutomatedSequence();
+        }
+        if (!can_start) ImGui::PopStyleVar();
+
         ImGui::SameLine();
-        if (IsTurntableConnected()) {
-            ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "🔗 Turntable");
-        } else {
-            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "⭕ No turntable");
-        }
-        
-        ImGui::Separator();
-        
-        // Mode selector tabs
-        RenderModeSelector();
-        
-        ImGui::Separator();
-        
-        // Mode-specific content
-        switch (current_mode_) {
-            case CaptureMode::Quick:
-                RenderQuickCapture();
-                break;
-            case CaptureMode::Automated:
-                RenderAutomatedCapture();
-                break;
-            case CaptureMode::Advanced:
-                RenderAdvancedCapture();
-                break;
-        }
-        
-        ImGui::Separator();
-        
-        // Global capture controls
-        RenderCaptureControls();
+        float rotation_time = (rotation_angle_ * turntable_speed_) / 360.0f;
+        float total_sequence_time = auto_capture_count_ * (capture_delay_ + rotation_time);
+        ImGui::Text("Est: %.1f min", total_sequence_time / 60.0f);
+
+        ImGui::Spacing();
+        ImGui::Text("Per step: %.1fs rotation + %.1fs capture", rotation_time, capture_delay_);
     }
+
+    ImGui::Columns(1);
     ImGui::EndChild();
+
     ImGui::PopStyleVar();
-    
-        // Render shared components below
-        RenderSharedComponents();
-    }
+
+    // Render file explorer at the bottom
+    CaptureSession* current_session = session_manager_->GetCurrentSession();
+    file_explorer_widget_->Render(current_session);
+
     ImGui::End();
 }
 
@@ -403,14 +445,15 @@ void CaptureStudioPanel::RenderCaptureControls() {
     }
 }
 
-void CaptureStudioPanel::RenderSharedComponents() {
-    // Render session control
-    session_widget_->Render();
-    
-    // Render file explorer with current session
-    CaptureSession* current_session = session_manager_->GetCurrentSession();
-    file_explorer_widget_->Render(current_session);
-}
+// RenderSharedComponents is no longer needed as components are rendered inline
+// void CaptureStudioPanel::RenderSharedComponents() {
+//     // Render integrated session control
+//     RenderSessionControl();
+//
+//     // Render file explorer with current session
+//     CaptureSession* current_session = session_manager_->GetCurrentSession();
+//     file_explorer_widget_->Render(current_session);
+// }
 
 void CaptureStudioPanel::StartQuickCapture() {
     if (!ValidateSystemState()) return;
@@ -773,9 +816,81 @@ void CaptureStudioPanel::WaitForTurntableRotation(float rotation_angle) {
     
     // Sleep for the calculated time
     std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int>(total_wait_time * 1000)));
-    
+
     turntable_rotation_complete_ = true;
     LogMessage("[STUDIO] ✅ Turntable rotation complete after " + std::to_string(total_wait_time) + "s");
+}
+
+void CaptureStudioPanel::RenderSessionControl() {
+    if (!session_manager_) return;
+
+    // Inline session control without child window
+    ImGui::Text("Session:");
+    ImGui::SameLine();
+
+    CaptureSession* session = session_manager_->GetCurrentSession();
+    if (session) {
+        // Active session - compact horizontal layout
+        ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "✓ %s", session->object_name.c_str());
+        ImGui::SameLine();
+        ImGui::Text("[%s]", session->session_id.substr(0, 8).c_str());
+        ImGui::SameLine();
+        ImGui::Text("| 📸 %d", session->capture_count);
+        ImGui::SameLine();
+        ImGui::Text("| 📂 %zu", session->capture_paths.size());
+        ImGui::SameLine();
+
+        // Right-aligned buttons
+        float button_width = 60.0f;
+        float spacing = ImGui::GetStyle().ItemSpacing.x;
+        float pos = ImGui::GetWindowWidth() - button_width * 2 - spacing * 2 - ImGui::GetStyle().WindowPadding.x;
+        if (pos > ImGui::GetCursorPosX())
+            ImGui::SetCursorPosX(pos);
+
+        if (ImGui::Button("Open", ImVec2(60, 0))) {
+            std::filesystem::path abs_path = std::filesystem::absolute(session->base_path);
+            std::string command = "explorer \"" + abs_path.string() + "\"";
+            system(command.c_str());
+            LogMessage("[SESSION] Opened session folder: " + abs_path.string());
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("End", ImVec2(60, 0))) {
+            session_manager_->EndCurrentSession();
+            LogMessage("[SESSION] Session ended");
+        }
+    } else {
+        // No session - compact creation UI
+        ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "No session");
+        ImGui::SameLine();
+
+        ImGui::SetNextItemWidth(180);
+        ImGui::InputTextWithHint("##SessionName", "Name (optional)",
+                               session_name_input_, sizeof(session_name_input_));
+        ImGui::SameLine();
+
+        if (ImGui::Button("Start", ImVec2(60, 0))) {
+            std::string session_name = std::string(session_name_input_);
+
+            // Generate default name if empty
+            if (session_name.empty()) {
+                session_name = GenerateDefaultSessionName();
+                LogMessage("[SESSION] Using auto-generated name: " + session_name);
+            }
+
+            if (session_manager_->StartNewSession(session_name)) {
+                LogMessage("[SESSION] New session started: " + session_name);
+                std::memset(session_name_input_, 0, sizeof(session_name_input_));
+            }
+        }
+    }
+}
+
+std::string CaptureStudioPanel::GenerateDefaultSessionName() const {
+    auto now = std::chrono::system_clock::now();
+    auto time_t = std::chrono::system_clock::to_time_t(now);
+    std::stringstream ss;
+    ss << "capture_" << std::put_time(std::localtime(&time_t), "%m%d_%H%M");
+    return ss.str();
 }
 
 

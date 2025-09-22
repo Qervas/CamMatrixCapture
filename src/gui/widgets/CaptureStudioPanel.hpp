@@ -10,7 +10,6 @@
 #include "../../hardware/CameraManager.hpp"
 #include "../../bluetooth/BluetoothManager.hpp"
 #include "../../bluetooth/TurntableController.hpp"
-#include "SessionWidget.hpp"
 #include "FileExplorerWidget.hpp"
 
 namespace SaperaCapturePro {
@@ -57,8 +56,8 @@ private:
     SessionManager* session_manager_ = nullptr;
     std::unique_ptr<TurntableController> turntable_controller_;
     
-    // Shared UI components
-    std::unique_ptr<SessionWidget> session_widget_;
+    // Session UI state
+    char session_name_input_[256] = "";
     std::unique_ptr<FileExplorerWidget> file_explorer_widget_;
     
     // UI state
@@ -110,8 +109,22 @@ private:
     void RenderAutomatedCapture();
     void RenderAdvancedCapture();
     void RenderCaptureControls();
-    void RenderSharedComponents();
-    
+    // void RenderSharedComponents(); // No longer needed - components rendered inline
+    void RenderSessionControl();
+    std::string GenerateDefaultSessionName() const;
+
+    // Apple-inspired UI methods
+    void RenderInitializingState();
+    void RenderSetupMode();
+    void RenderSessionSetup();
+    void RenderCaptureMode();
+    void RenderCompactModeSelector();
+    void RenderQuickMode();
+    void RenderAutomatedMode();
+    void RenderActiveSequenceControls();
+    void RenderProMode();
+    void RenderStatusCard(const char* title, bool connected, const std::string& status, ImVec2 size);
+
     // Capture logic
     void StartQuickCapture();
     void StartAutomatedSequence();

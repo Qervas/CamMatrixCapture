@@ -33,249 +33,228 @@ void HardwarePanel::Render(bool* p_open) {
         ImGui::End();
         return;
     }
-    
-    // Status overview at top
+
+    const float em = ImGui::GetFontSize();
+    const ImVec2 cardPadding(1.0f * em, 0.75f * em);
+    const float cardSpacing = 0.75f * em;
+
+    // Card 1: Status Overview
+    ImGui::BeginChild("card_status", ImVec2(0, 2.5f * em), true);
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.5f * em, 0.5f * em));
+    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 0.25f * em);
     ImGui::Text("Hardware Status:");
     ImGui::SameLine();
-    
-    // Camera status
     if (AreCamerasConnected()) {
-        ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "📷 %d Cameras", GetConnectedCameraCount());
+        ImGui::TextColored(ImVec4(0.12f, 0.75f, 0.35f, 1.0f), "● %d Cameras", GetConnectedCameraCount());
     } else {
-        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "📷 No Cameras");
+        ImGui::TextColored(ImVec4(0.85f, 0.6f, 0.1f, 1.0f), "○ No Cameras");
     }
-    
     ImGui::SameLine();
     ImGui::Text("•");
     ImGui::SameLine();
-    
-    // Bluetooth status
     if (IsBluetoothConnected()) {
-        ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "🔗 Bluetooth Connected");
+        ImGui::TextColored(ImVec4(0.12f, 0.75f, 0.35f, 1.0f), "● Bluetooth Connected");
     } else {
-        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "🔗 No Bluetooth");
+        ImGui::TextColored(ImVec4(0.85f, 0.6f, 0.1f, 1.0f), "○ No Bluetooth");
     }
-    
-    ImGui::Separator();
-    
-    // Quick Connect All button
+    ImGui::PopStyleVar();
+    ImGui::EndChild();
+
+    ImGui::Dummy(ImVec2(0, cardSpacing));
+
+    // Card 2: Quick Actions (ensure tall enough to avoid scrolling)
+    ImGui::BeginChild("card_actions", ImVec2(0, 6.5f * em), true);
     RenderQuickConnectButton();
     ImGui::Spacing();
-    ImGui::Separator();
-    
-    // Tab bar for camera and bluetooth controls
+    RenderCameraControls();
+    ImGui::EndChild();
+
+    ImGui::Dummy(ImVec2(0, cardSpacing));
+
+    // Card 3: Tabbed Controls
+    ImGui::BeginChild("card_tabs", ImVec2(0, 0), true);
     if (ImGui::BeginTabBar("HardwareTabs", ImGuiTabBarFlags_None)) {
-        
-        // Camera tab
         if (ImGui::BeginTabItem("📷 Cameras")) {
             RenderCameraTab();
             ImGui::EndTabItem();
         }
-        
-        // Bluetooth tab
         if (ImGui::BeginTabItem("🔗 Bluetooth Turntable")) {
             RenderBluetoothTab();
             ImGui::EndTabItem();
         }
-        
         ImGui::EndTabBar();
     }
-    
+    ImGui::EndChild();
+
     ImGui::End();
 }
 
 void HardwarePanel::RenderCameraTab() {
+    const float em = ImGui::GetFontSize();
     ImGui::Text("Sapera SDK Camera System");
     ImGui::Separator();
-    
-    RenderCameraControls();
     ImGui::Spacing();
+
+    // List
+    ImGui::BeginChild("cam_list", ImVec2(0, 0), true);
     RenderCameraTable();
+    ImGui::EndChild();
 }
 
 void HardwarePanel::RenderBluetoothTab() {
+    const float em = ImGui::GetFontSize();
     ImGui::Text("Turntable Bluetooth Control");
     ImGui::Separator();
-    
-    RenderBluetoothControls();
     ImGui::Spacing();
+
+    ImGui::BeginChild("ble_controls", ImVec2(0, 3.5f * em), false);
+    RenderBluetoothControls();
+    ImGui::EndChild();
+
+    ImGui::Spacing();
+
+    ImGui::BeginChild("ble_list", ImVec2(0, 0), true);
     RenderBluetoothDeviceList();
-    
+
     if (IsBluetoothConnected()) {
         ImGui::Spacing();
         ImGui::Separator();
         RenderBluetoothAdvancedControls();
     }
+
+    ImGui::EndChild();
 }
 
 void HardwarePanel::RenderCameraControls() {
     if (!camera_manager_) return;
-    
+
+    const float em = ImGui::GetFontSize();
+    const ImVec2 btn(9.0f * em, 2.2f * em);
+
     // Discovery and connection controls
     if (camera_manager_->IsDiscovering()) {
-        // Show animated discovery button
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.3f, 0.3f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.3f, 0.3f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.3f, 0.3f, 0.3f, 1.0f));
-        
         static float discovery_time = 0.0f;
         discovery_time += ImGui::GetIO().DeltaTime;
         int dots = static_cast<int>(discovery_time * 2.0f) % 4;
         std::string text = "🔍 Discovering";
         for (int i = 0; i < dots; i++) text += ".";
-        
-        ImGui::Button(text.c_str(), ImVec2(150, 35));
+        ImGui::Button(text.c_str(), btn);
         ImGui::PopStyleColor(3);
     } else {
-        if (ImGui::Button("🔍 Discover Cameras", ImVec2(150, 35))) {
+        if (ImGui::Button("🔍 Discover Cameras", btn)) {
             camera_manager_->DiscoverCameras([this](const std::string& msg) {
                 LogMessage(msg);
             });
         }
     }
-    
+
     ImGui::SameLine();
-    
+
     // Connect/Disconnect button
     bool has_connected = camera_manager_->GetConnectedCount() > 0;
     if (has_connected) {
-        if (ImGui::Button("❌ Disconnect All", ImVec2(150, 35))) {
+        if (ImGui::Button("❌ Disconnect All", btn)) {
             camera_manager_->DisconnectAllCameras();
             LogMessage("[CAMERA] Disconnected all cameras");
         }
     } else {
         if (camera_manager_->IsConnecting()) {
-            // Show animated connection button
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.3f, 0.3f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.3f, 0.3f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.3f, 0.3f, 0.3f, 1.0f));
-            
             static float connection_time = 0.0f;
             connection_time += ImGui::GetIO().DeltaTime;
             int dots = static_cast<int>(connection_time * 2.0f) % 4;
             std::string text = "🔗 Connecting";
             for (int i = 0; i < dots; i++) text += ".";
-            
-            ImGui::Button(text.c_str(), ImVec2(150, 35));
+            ImGui::Button(text.c_str(), btn);
             ImGui::PopStyleColor(3);
         } else {
-            if (ImGui::Button("🔗 Connect All", ImVec2(150, 35))) {
+            if (ImGui::Button("🔗 Connect All", btn)) {
                 camera_manager_->ConnectAllCameras([this](const std::string& msg) {
                     LogMessage(msg);
                 });
             }
         }
     }
-    
-    ImGui::SameLine();
-    
-    // Quick capture button
-    bool can_capture = has_connected && session_manager_ && session_manager_->HasActiveSession() && !camera_manager_->IsCapturing();
-    if (can_capture) {
-        if (ImGui::Button("📸 Quick Capture", ImVec2(150, 35))) {
-            auto* session = session_manager_->GetCurrentSession();
-            std::string sessionPath = session->GetNextCapturePath();
-            
-            camera_manager_->CaptureAllCamerasAsync(sessionPath, true, 750, [this](const std::string& msg) {
-                LogMessage(msg);
-            });
-        }
-    } else {
-        ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 0.5f);
-        ImGui::Button("📸 Quick Capture", ImVec2(150, 35));
-        ImGui::PopStyleVar();
-        if (ImGui::IsItemHovered()) {
-            ImGui::BeginTooltip();
-            if (!has_connected) {
-                ImGui::Text("Connect cameras first");
-            } else if (!session_manager_ || !session_manager_->HasActiveSession()) {
-                ImGui::Text("Start a session first");
-            } else if (camera_manager_->IsCapturing()) {
-                ImGui::Text("Capture in progress");
-            }
-            ImGui::EndTooltip();
-        }
-    }
+
+    // Quick Capture button removed by user request
 }
 
 void HardwarePanel::RenderCameraTable() {
     if (!camera_manager_) return;
-    
+    const float em = ImGui::GetFontSize();
+
     auto cameras = camera_manager_->GetDiscoveredCameras();
     if (cameras.empty()) {
         ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "No cameras discovered. Click 'Discover Cameras' to search.");
         return;
     }
-    
-    if (ImGui::BeginTable("CameraTable", 4, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
-        ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthFixed, 80.0f);
+
+    if (ImGui::BeginTable("CameraTable", 4, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable)) {
+        ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthFixed, 8.0f * em);
         ImGui::TableSetupColumn("Camera ID", ImGuiTableColumnFlags_WidthStretch);
         ImGui::TableSetupColumn("Serial", ImGuiTableColumnFlags_WidthStretch);
         ImGui::TableSetupColumn("Model", ImGuiTableColumnFlags_WidthStretch);
         ImGui::TableHeadersRow();
-        
+
         for (const auto& camera : cameras) {
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(0);
-            
-            // Status indicator
             if (camera.isConnected) {
-                ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "● Online");
+                ImGui::TextColored(ImVec4(0.12f, 0.75f, 0.35f, 1.0f), "● Online");
             } else {
                 ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "○ Offline");
             }
-            
             ImGui::TableSetColumnIndex(1);
             ImGui::Text("%s", camera.id.c_str());
-            
             ImGui::TableSetColumnIndex(2);
             ImGui::Text("%s", camera.serialNumber.c_str());
-            
             ImGui::TableSetColumnIndex(3);
             ImGui::Text("%s", camera.modelName.c_str());
         }
-        
+
         ImGui::EndTable();
     }
 }
 
 void HardwarePanel::RenderBluetoothControls() {
     if (!bluetooth_manager_) return;
-    
-    // Scan and connection controls
+    const float em = ImGui::GetFontSize();
+    const ImVec2 btnSmall(6.5f * em, 2.2f * em);
+
     if (is_scanning_bluetooth_) {
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.3f, 0.3f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.3f, 0.3f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.3f, 0.3f, 0.3f, 1.0f));
-        
         static float scan_time = 0.0f;
         scan_time += ImGui::GetIO().DeltaTime;
         int dots = static_cast<int>(scan_time * 2.0f) % 4;
         std::string text = "📡 Scanning";
         for (int i = 0; i < dots; i++) text += ".";
-        
-        ImGui::Button(text.c_str(), ImVec2(120, 35));
+        ImGui::Button(text.c_str(), btnSmall);
         ImGui::PopStyleColor(3);
-        
         ImGui::SameLine();
-        if (ImGui::Button("⏹ Stop", ImVec2(80, 35))) {
+        if (ImGui::Button("⏹ Stop", btnSmall)) {
             bluetooth_manager_->StopScanning();
             is_scanning_bluetooth_ = false;
             LogMessage("[BLE] Stopped scanning");
         }
     } else {
-        if (ImGui::Button("📡 Scan Devices", ImVec2(120, 35))) {
+        if (ImGui::Button("📡 Scan Devices", btnSmall)) {
             bluetooth_manager_->StartScanning();
             is_scanning_bluetooth_ = true;
             LogMessage("[BLE] Started scanning for devices");
         }
     }
-    
+
     ImGui::SameLine();
-    
-    // Connect/Disconnect button
+
     if (IsBluetoothConnected()) {
-        if (ImGui::Button("❌ Disconnect", ImVec2(120, 35))) {
+        if (ImGui::Button("❌ Disconnect", btnSmall)) {
             if (!selected_bluetooth_device_id_.empty()) {
                 bluetooth_manager_->DisconnectDevice(selected_bluetooth_device_id_);
                 selected_bluetooth_device_id_.clear();
@@ -285,20 +264,20 @@ void HardwarePanel::RenderBluetoothControls() {
     } else {
         bool can_connect = !selected_bluetooth_device_id_.empty() && !is_connecting_bluetooth_;
         if (can_connect) {
-            if (ImGui::Button("🔗 Connect", ImVec2(120, 35))) {
+            if (ImGui::Button("🔗 Connect", btnSmall)) {
                 is_connecting_bluetooth_ = true;
                 bool success = bluetooth_manager_->ConnectToDevice(selected_bluetooth_device_id_);
                 is_connecting_bluetooth_ = false;
                 if (success) {
                     LogMessage("[BLE] Successfully connected to device");
-                    StoreLastConnectionInfo(); // Save connection info for quick reconnect
+                    StoreLastConnectionInfo();
                 } else {
                     LogMessage("[BLE] Failed to connect to device");
                 }
             }
         } else {
             ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 0.5f);
-            ImGui::Button("🔗 Connect", ImVec2(120, 35));
+            ImGui::Button("🔗 Connect", btnSmall);
             ImGui::PopStyleVar();
             if (ImGui::IsItemHovered()) {
                 ImGui::BeginTooltip();
@@ -315,56 +294,52 @@ void HardwarePanel::RenderBluetoothControls() {
 
 void HardwarePanel::RenderBluetoothDeviceList() {
     if (!bluetooth_manager_) return;
-    
+
     auto device_pairs = bluetooth_manager_->GetDiscoveredDevices();
     if (device_pairs.empty()) {
         ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "No devices found. Click 'Scan Devices' to search for turntables.");
         return;
     }
-    
-    if (ImGui::BeginTable("BluetoothTable", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
-        ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthFixed, 80.0f);
+
+    const float em = ImGui::GetFontSize();
+    if (ImGui::BeginTable("BluetoothTable", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable)) {
+        ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthFixed, 10.0f * em);
         ImGui::TableSetupColumn("Device Name", ImGuiTableColumnFlags_WidthStretch);
         ImGui::TableSetupColumn("Device ID", ImGuiTableColumnFlags_WidthStretch);
         ImGui::TableHeadersRow();
-        
+
         for (const auto& device_pair : device_pairs) {
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(0);
-            
             const std::string& device_id = device_pair.first;
             const std::string& device_name = device_pair.second;
-            
-            // Status indicator
             bool is_connected = bluetooth_manager_->IsDeviceConnected(device_id);
             if (is_connected) {
-                ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "● Connected");
+                ImGui::TextColored(ImVec4(0.12f, 0.75f, 0.35f, 1.0f), "● Connected");
             } else {
                 ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "○ Available");
             }
-            
             ImGui::TableSetColumnIndex(1);
             bool is_selected = (device_id == selected_bluetooth_device_id_);
             if (ImGui::Selectable(device_name.c_str(), is_selected, ImGuiSelectableFlags_SpanAllColumns)) {
                 selected_bluetooth_device_id_ = device_id;
             }
-            
             ImGui::TableSetColumnIndex(2);
             ImGui::Text("%s", device_id.c_str());
         }
-        
+
         ImGui::EndTable();
     }
 }
 
 void HardwarePanel::RenderBluetoothAdvancedControls() {
     if (!bluetooth_manager_ || !IsBluetoothConnected()) return;
-    
+
+    const float em = ImGui::GetFontSize();
+
     if (ImGui::CollapsingHeader("🎛️ Turntable Controls")) {
         ImGui::Text("Quick Test Controls:");
-        
-        // Test rotation buttons
-        if (ImGui::Button("↺ +15°", ImVec2(80, 30))) {
+        if (ImGui::Button("↺ +15°", ImVec2(5.0f * em, 2.0f * em))) {
             auto devices = bluetooth_manager_->GetConnectedDevices();
             if (!devices.empty()) {
                 bluetooth_manager_->SendCommand(devices[0], BluetoothCommands::RotateByAngle(15.0f));
@@ -372,7 +347,7 @@ void HardwarePanel::RenderBluetoothAdvancedControls() {
             }
         }
         ImGui::SameLine();
-        if (ImGui::Button("↻ -15°", ImVec2(80, 30))) {
+        if (ImGui::Button("↻ -15°", ImVec2(5.0f * em, 2.0f * em))) {
             auto devices = bluetooth_manager_->GetConnectedDevices();
             if (!devices.empty()) {
                 bluetooth_manager_->SendCommand(devices[0], BluetoothCommands::RotateByAngle(-15.0f));
@@ -380,7 +355,7 @@ void HardwarePanel::RenderBluetoothAdvancedControls() {
             }
         }
         ImGui::SameLine();
-        if (ImGui::Button("🏠 Home", ImVec2(80, 30))) {
+        if (ImGui::Button("🏠 Home", ImVec2(5.0f * em, 2.0f * em))) {
             auto devices = bluetooth_manager_->GetConnectedDevices();
             if (!devices.empty()) {
                 bluetooth_manager_->SendCommand(devices[0], BluetoothCommands::ReturnToZero());
@@ -388,19 +363,18 @@ void HardwarePanel::RenderBluetoothAdvancedControls() {
             }
         }
         ImGui::SameLine();
-        if (ImGui::Button("⏹ Stop", ImVec2(80, 30))) {
+        if (ImGui::Button("⏹ Stop", ImVec2(5.0f * em, 2.0f * em))) {
             auto devices = bluetooth_manager_->GetConnectedDevices();
             if (!devices.empty()) {
                 bluetooth_manager_->SendCommand(devices[0], BluetoothCommands::StopRotation());
                 LogMessage("[TURNTABLE] Emergency stop");
             }
         }
-        
+
         ImGui::Spacing();
-        
-        // Speed control
         static float rotation_speed = 70.0f;
         ImGui::Text("Rotation Speed:");
+        ImGui::SetNextItemWidth(12.0f * em);
         if (ImGui::SliderFloat("##speed", &rotation_speed, 35.64f, 131.0f, "%.1fs/360°")) {
             auto devices = bluetooth_manager_->GetConnectedDevices();
             if (!devices.empty()) {
@@ -415,18 +389,16 @@ void HardwarePanel::RenderBluetoothAdvancedControls() {
             ImGui::Text("Lower values = faster rotation");
             ImGui::EndTooltip();
         }
-        
+
         ImGui::Spacing();
         ImGui::Separator();
-        
-        // Custom angle rotation
+
         static float custom_angle = 10.0f;
         ImGui::Text("Custom Angle Rotation:");
-        ImGui::SetNextItemWidth(100.0f);
+        ImGui::SetNextItemWidth(8.0f * em);
         ImGui::InputFloat("##angle", &custom_angle, 0.1f, 1.0f, "%.1f°");
-        
         ImGui::SameLine();
-        if (ImGui::Button("↻ CW", ImVec2(60, 30))) {
+        if (ImGui::Button("↻ CW", ImVec2(4.5f * em, 2.0f * em))) {
             auto devices = bluetooth_manager_->GetConnectedDevices();
             if (!devices.empty()) {
                 std::string command = "+CT,TURNANGLE=" + std::to_string(custom_angle) + ";";
@@ -435,9 +407,8 @@ void HardwarePanel::RenderBluetoothAdvancedControls() {
                 LogMessage("[TURNTABLE] Rotating clockwise " + std::to_string(custom_angle) + "° (≈" + std::to_string(est_time) + "s)");
             }
         }
-        
         ImGui::SameLine();
-        if (ImGui::Button("↺ CCW", ImVec2(60, 30))) {
+        if (ImGui::Button("↺ CCW", ImVec2(4.5f * em, 2.0f * em))) {
             auto devices = bluetooth_manager_->GetConnectedDevices();
             if (!devices.empty()) {
                 std::string command = "+CT,TURNANGLE=-" + std::to_string(custom_angle) + ";";
@@ -446,33 +417,27 @@ void HardwarePanel::RenderBluetoothAdvancedControls() {
                 LogMessage("[TURNTABLE] Rotating counter-clockwise " + std::to_string(custom_angle) + "° (≈" + std::to_string(est_time) + "s)");
             }
         }
-        
-        // Show rotation time estimate
         ImGui::SameLine();
         float est_rotation_time = (custom_angle * rotation_speed) / 360.0f;
         ImGui::Text("≈%.1fs", est_rotation_time);
-        
-        // Quick angle presets
+
         ImGui::Spacing();
         ImGui::Text("Quick Presets:");
-        
-        // First row of presets
-        if (ImGui::Button("1°", ImVec2(40, 25))) { custom_angle = 1.0f; }
+        if (ImGui::Button("1°", ImVec2(3.5f * em, 1.8f * em))) { custom_angle = 1.0f; }
         ImGui::SameLine();
-        if (ImGui::Button("5°", ImVec2(40, 25))) { custom_angle = 5.0f; }
+        if (ImGui::Button("5°", ImVec2(3.5f * em, 1.8f * em))) { custom_angle = 5.0f; }
         ImGui::SameLine();
-        if (ImGui::Button("10°", ImVec2(40, 25))) { custom_angle = 10.0f; }
+        if (ImGui::Button("10°", ImVec2(3.5f * em, 1.8f * em))) { custom_angle = 10.0f; }
         ImGui::SameLine();
-        if (ImGui::Button("15°", ImVec2(40, 25))) { custom_angle = 15.0f; }
-        
-        // Second row of presets
-        if (ImGui::Button("30°", ImVec2(40, 25))) { custom_angle = 30.0f; }
+        if (ImGui::Button("15°", ImVec2(3.5f * em, 1.8f * em))) { custom_angle = 15.0f; }
+
+        if (ImGui::Button("30°", ImVec2(3.5f * em, 1.8f * em))) { custom_angle = 30.0f; }
         ImGui::SameLine();
-        if (ImGui::Button("45°", ImVec2(40, 25))) { custom_angle = 45.0f; }
+        if (ImGui::Button("45°", ImVec2(3.5f * em, 1.8f * em))) { custom_angle = 45.0f; }
         ImGui::SameLine();
-        if (ImGui::Button("90°", ImVec2(40, 25))) { custom_angle = 90.0f; }
+        if (ImGui::Button("90°", ImVec2(3.5f * em, 1.8f * em))) { custom_angle = 90.0f; }
         ImGui::SameLine();
-        if (ImGui::Button("180°", ImVec2(40, 25))) { custom_angle = 180.0f; }
+        if (ImGui::Button("180°", ImVec2(3.5f * em, 1.8f * em))) { custom_angle = 180.0f; }
     }
 }
 
@@ -490,22 +455,19 @@ int HardwarePanel::GetConnectedCameraCount() const {
 
 void HardwarePanel::RenderQuickConnectButton() {
     if (!settings_manager_) return;
-    
+
     auto& app_settings = settings_manager_->GetAppSettings();
     bool has_last_connection = !app_settings.last_bluetooth_device_id.empty();
     bool both_connected = IsBluetoothConnected() && AreCamerasConnected();
-    
-    // Large Quick Connect button
-    ImVec2 button_size(200, 45);
-    
+
+    const float em = ImGui::GetFontSize();
+    ImVec2 button_size(12.0f * em, 2.6f * em);
+
     if (both_connected) {
-        // Show "Disconnect All" when everything is connected
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.7f, 0.2f, 0.2f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.8f, 0.3f, 0.3f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.9f, 0.4f, 0.4f, 1.0f));
-        
         if (ImGui::Button("❌ Disconnect All", button_size)) {
-            // Disconnect everything
             if (bluetooth_manager_) {
                 auto devices = bluetooth_manager_->GetConnectedDevices();
                 for (const auto& device_id : devices) {
@@ -519,56 +481,25 @@ void HardwarePanel::RenderQuickConnectButton() {
         }
         ImGui::PopStyleColor(3);
     } else if (has_last_connection) {
-        // Show "Quick Connect All" when we have saved connection info
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.7f, 0.2f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.8f, 0.3f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.4f, 0.9f, 0.4f, 1.0f));
-        
-        std::string button_text = "⚡ Quick Connect All";
-        if (!app_settings.last_bluetooth_device_name.empty()) {
-            button_text += "\n(" + app_settings.last_bluetooth_device_name + " + Cameras)";
-        }
-        
-        if (ImGui::Button(button_text.c_str(), button_size)) {
+        if (ImGui::Button("⚡ Quick Connect", button_size)) {
             QuickConnectAll();
         }
         ImGui::PopStyleColor(3);
         
-        if (ImGui::IsItemHovered()) {
-            ImGui::BeginTooltip();
-            ImGui::Text("Connect to last used turntable and discover all cameras");
-            if (!app_settings.last_bluetooth_device_name.empty()) {
-                ImGui::Text("Last turntable: %s", app_settings.last_bluetooth_device_name.c_str());
-            }
-            ImGui::EndTooltip();
-        }
     } else {
-        // Show disabled button when no saved connection
         ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 0.5f);
-        ImGui::Button("⚡ Quick Connect All\n(No saved connection)", button_size);
+        ImGui::Button("⚡ Quick Connect", button_size);
         ImGui::PopStyleVar();
-        
         if (ImGui::IsItemHovered()) {
             ImGui::BeginTooltip();
             ImGui::Text("Connect to bluetooth and cameras first");
-            ImGui::Text("Your connection will be saved for quick access");
             ImGui::EndTooltip();
         }
     }
-    
-    // Show quick connect toggle
-    ImGui::SameLine();
-    ImGui::Checkbox("Auto-connect enabled", &app_settings.auto_connect_enabled);
-    if (ImGui::IsItemHovered()) {
-        ImGui::BeginTooltip();
-        ImGui::Text("Save connection info for quick reconnection");
-        ImGui::EndTooltip();
-    }
-    
-    // Save settings if changed
-    if (ImGui::IsItemDeactivatedAfterEdit()) {
-        settings_manager_->Save();
-    }
+    // Removed auto-connect checkbox to declutter header
 }
 
 void HardwarePanel::QuickConnectAll() {
@@ -576,74 +507,60 @@ void HardwarePanel::QuickConnectAll() {
         LogMessage("[QUICK] ERROR: Managers not initialized");
         return;
     }
-    
+
     auto& app_settings = settings_manager_->GetAppSettings();
     if (app_settings.last_bluetooth_device_id.empty()) {
         LogMessage("[QUICK] ERROR: No saved bluetooth connection");
         return;
     }
-    
+
     LogMessage("[QUICK] ⚡ Starting Quick Connect All...");
-    
-    // Step 1: Connect to saved bluetooth device
+
     if (!IsBluetoothConnected()) {
         LogMessage("[QUICK] 🔗 Connecting to turntable: " + app_settings.last_bluetooth_device_name);
-        
         bool bt_success = bluetooth_manager_->ConnectToDevice(app_settings.last_bluetooth_device_id);
         if (!bt_success) {
             LogMessage("[QUICK] ❌ Failed to connect to saved turntable - try scanning first");
             return;
         }
-        
         LogMessage("[QUICK] ✅ Turntable connected successfully");
         selected_bluetooth_device_id_ = app_settings.last_bluetooth_device_id;
     } else {
         LogMessage("[QUICK] 🔗 Turntable already connected");
     }
-    
-    // Step 2: Discover and connect all cameras
+
     if (camera_manager_->GetConnectedCount() == 0) {
         LogMessage("[QUICK] 📷 Discovering cameras...");
-        
         camera_manager_->DiscoverCameras([this](const std::string& msg) {
             LogMessage("[QUICK] " + msg);
         });
-        
-        // Wait a moment for discovery to complete (this is async)
-        // In a real implementation, you might want to use a callback or polling
         std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-        
         auto cameras = camera_manager_->GetDiscoveredCameras();
         if (cameras.empty()) {
             LogMessage("[QUICK] ⚠️ No cameras discovered");
         } else {
             LogMessage("[QUICK] 🔗 Connecting to " + std::to_string(cameras.size()) + " camera(s)...");
-            
             camera_manager_->ConnectAllCameras([this](const std::string& msg) {
                 LogMessage("[QUICK] " + msg);
             });
-            
             LogMessage("[QUICK] ✅ Camera connection initiated");
         }
     } else {
         LogMessage("[QUICK] 📷 Cameras already connected (" + std::to_string(camera_manager_->GetConnectedCount()) + ")");
     }
-    
+
     LogMessage("[QUICK] 🎯 Quick Connect All completed!");
 }
 
 void HardwarePanel::StoreLastConnectionInfo() {
     if (!settings_manager_ || !bluetooth_manager_) return;
-    
+
     auto& app_settings = settings_manager_->GetAppSettings();
     if (!app_settings.auto_connect_enabled) return;
-    
-    // Store currently connected bluetooth device
+
     auto connected_devices = bluetooth_manager_->GetConnectedDevices();
     if (!connected_devices.empty()) {
         app_settings.last_bluetooth_device_id = connected_devices[0];
-        
-        // Get device name from discovered devices
         auto device_pairs = bluetooth_manager_->GetDiscoveredDevices();
         for (const auto& [id, name] : device_pairs) {
             if (id == connected_devices[0]) {
@@ -651,8 +568,6 @@ void HardwarePanel::StoreLastConnectionInfo() {
                 break;
             }
         }
-        
-        // Save settings
         settings_manager_->Save();
         LogMessage("[QUICK] 💾 Saved connection info for: " + app_settings.last_bluetooth_device_name);
     }

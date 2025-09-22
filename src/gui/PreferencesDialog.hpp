@@ -2,6 +2,7 @@
 
 #include <functional>
 #include "../utils/SettingsManager.hpp"
+#include "LogPanel.hpp"
 
 namespace SaperaCapturePro {
 
@@ -67,7 +68,11 @@ class PreferencesDialog {
   float temp_wb_offset_r_ = 0.0f;
   float temp_wb_offset_g_ = 0.0f;
   float temp_wb_offset_b_ = 0.0f;
-  
+
+  // Log settings temporary values
+  bool temp_log_auto_delete_ = false;
+  int temp_log_max_messages_ = 0;  // 0 = unlimited
+
   // Callbacks
   std::function<void(float)> on_ui_scale_changed_;
   std::function<void(float)> ui_scale_callback_;  // For immediate updates

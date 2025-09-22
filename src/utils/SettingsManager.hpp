@@ -122,6 +122,10 @@ struct AppSettings {
     std::string last_bluetooth_device_id = "";
     std::string last_bluetooth_device_name = "";
     bool auto_connect_enabled = true;
+
+    // Log settings
+    bool log_auto_delete_enabled = false;  // Default: no auto-deletion
+    int log_max_messages = 0;  // 0 = unlimited
     
     SimpleJSON ToJson() const;
     void FromJson(const SimpleJSON& json);
