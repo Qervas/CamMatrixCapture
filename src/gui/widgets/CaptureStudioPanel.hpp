@@ -5,11 +5,14 @@
 #include <functional>
 #include <chrono>
 #include <atomic>
+#include <thread>
+#include <mutex>
 #include <imgui.h>
 #include "../../utils/SessionManager.hpp"
 #include "../../hardware/CameraManager.hpp"
 #include "../../bluetooth/BluetoothManager.hpp"
 #include "../../bluetooth/TurntableController.hpp"
+#include "../../utils/NotificationSounds.hpp"
 #include "FileExplorerWidget.hpp"
 
 namespace SaperaCapturePro {
@@ -77,7 +80,21 @@ private:
     float turntable_speed_ = 70.0f; // Speed setting (seconds for 360°)
     int current_capture_index_ = 0;
     std::chrono::steady_clock::time_point last_capture_time_;
+    std::chrono::steady_clock::time_point capture_start_time_;  // For async capture timing
     bool auto_sequence_active_ = false;
+    bool waiting_for_capture_completion_ = false;  // For automated sequence sync
+
+    // Background sequence threading
+    std::thread sequence_thread_;
+    std::atomic<bool> sequence_stop_requested_{false};
+    std::atomic<bool> sequence_pause_requested_{false};
+    std::mutex sequence_state_mutex_;
+
+    // Thread-safe sequence state
+    std::atomic<int> thread_safe_current_index_{0};
+    std::atomic<bool> thread_safe_sequence_active_{false};
+    std::string thread_safe_current_step_description_;
+    std::mutex step_description_mutex_;
     
     // Turntable state
     std::atomic<bool> turntable_rotation_complete_{true};
@@ -131,6 +148,12 @@ private:
     void StopAutomatedSequence();
     void UpdateAutomatedSequence();
     void PerformSingleCapture(const std::string& capture_name = "");
+    void PerformSyncCapture(const std::string& capture_name = "");  // For automated sequences
+
+    // Background sequence methods
+    void RunAutomatedSequenceInBackground();
+    void UpdateSequenceStateFromThread();
+    void StopSequenceThread();
     
     // Pauseable automation
     void PauseSequence();

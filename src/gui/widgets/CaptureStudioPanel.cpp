@@ -34,7 +34,11 @@ void CaptureStudioPanel::Initialize(CameraManager* camera_manager, BluetoothMana
     turntable_controller_->SetOnRotationComplete([this]() {
         LogMessage("[STUDIO] Turntable rotation completed - ready for capture");
     });
-    
+
+    // Initialize notification sounds
+    NotificationSounds::Instance().Initialize();
+    NotificationSounds::Instance().SetLogCallback([this](const std::string& msg) { LogMessage(msg); });
+
     LogMessage("[STUDIO] Capture Studio Panel initialized");
 }
 
@@ -42,7 +46,10 @@ void CaptureStudioPanel::Shutdown() {
     if (auto_sequence_active_) {
         StopAutomatedSequence();
     }
-    
+
+    // Stop background sequence thread
+    StopSequenceThread();
+
     file_explorer_widget_.reset();
     
     // Shutdown turntable controller
@@ -68,7 +75,18 @@ void CaptureStudioPanel::Render() {
     }
 
     if (auto_sequence_active_) {
+        UpdateSequenceStateFromThread();
         UpdateAutomatedSequence();
+    }
+
+    // Check for capture timeout (30 seconds)
+    if (is_capturing_) {
+        auto now = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - capture_start_time_).count();
+        if (elapsed > 30) {
+            LogMessage("[STUDIO] ⚠ Capture timeout after 30 seconds, resetting capture state");
+            is_capturing_ = false;
+        }
     }
 
     const float em = ImGui::GetFontSize();
@@ -119,6 +137,14 @@ void CaptureStudioPanel::Render() {
     if (auto_sequence_active_) {
         ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "Active");
         ImGui::Text("Progress: %d/%d", current_capture_index_, auto_capture_count_);
+
+        // Overall progress bar
+        float overall_progress = auto_capture_count_ > 0 ? (float)current_capture_index_ / (float)auto_capture_count_ : 0.0f;
+        char progress_label[64];
+        snprintf(progress_label, sizeof(progress_label), "%d/%d (%.1f%%)",
+                current_capture_index_, auto_capture_count_, overall_progress * 100.0f);
+        ImGui::ProgressBar(overall_progress, ImVec2(-1, 0), progress_label);
+
         RenderStepIndicator();
         if (ImGui::Button(sequence_paused_ ? "▶ Resume" : "⏸ Pause", ImVec2(-1, 2.5f * em))) {
             if (sequence_paused_) ResumeSequence(); else PauseSequence();
@@ -134,11 +160,15 @@ void CaptureStudioPanel::Render() {
         bool can_start = ValidateSystemState() && IsTurntableConnected() && !is_capturing_;
 
         // Status indicators
-        if (!camera_manager_->GetConnectedCount()) {
-            ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "⚠ No cameras");
-        }
-        if (!IsTurntableConnected()) {
-            ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "⚠ No turntable");
+        if (is_capturing_) {
+            ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "📸 Capturing...");
+        } else {
+            if (!camera_manager_->GetConnectedCount()) {
+                ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "⚠ No cameras");
+            }
+            if (!IsTurntableConnected()) {
+                ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "⚠ No turntable");
+            }
         }
 
         // Compact start button
@@ -476,24 +506,42 @@ void CaptureStudioPanel::StartQuickCapture() {
 
 void CaptureStudioPanel::StartAutomatedSequence() {
     if (!ValidateSystemState() || !IsTurntableConnected()) return;
-    
+
     LogMessage("[STUDIO] Starting automated sequence: " + std::to_string(auto_capture_count_) + " captures");
-    
+
+    // Stop any existing sequence thread first
+    StopSequenceThread();
+
+    // Reset thread-safe state
+    sequence_stop_requested_ = false;
+    sequence_pause_requested_ = false;
+    thread_safe_current_index_ = 0;
+    thread_safe_sequence_active_ = true;
+
+    // Update UI state
     auto_sequence_active_ = true;
-    sequence_paused_ = false;
     current_capture_index_ = 0;
-    last_capture_time_ = std::chrono::steady_clock::now() - std::chrono::seconds(static_cast<int>(capture_delay_));
-    
-    // Start with initialization step
-    SetCurrentStep(SequenceStep::Initializing, "Setting up automated capture sequence...", 2.0f);
+
+    // Start the sequence in a background thread
+    sequence_thread_ = std::thread(&CaptureStudioPanel::RunAutomatedSequenceInBackground, this);
 }
 
 void CaptureStudioPanel::StopAutomatedSequence() {
     if (!auto_sequence_active_) return;
-    
+
+    LogMessage("[STUDIO] Stopping automated sequence...");
+
+    // Signal background thread to stop
+    sequence_stop_requested_ = true;
+    thread_safe_sequence_active_ = false;
+
+    // Wait for thread to finish
+    StopSequenceThread();
+
     auto_sequence_active_ = false;
     sequence_paused_ = false;
     SetCurrentStep(SequenceStep::Idle, "Sequence stopped", 0.0f);
+
     LogMessage("[STUDIO] Automated sequence stopped at capture " + std::to_string(current_capture_index_) + "/" + std::to_string(auto_capture_count_));
 }
 
@@ -535,10 +583,10 @@ void CaptureStudioPanel::UpdateAutomatedSequence() {
             
         case SequenceStep::Capturing:
             if (step_elapsed >= step_duration_seconds_) {
-                // Take the capture
+                // Take the capture synchronously for automated sequence
                 std::string capture_name = "auto_" + std::to_string(current_capture_index_ + 1);
-                PerformSingleCapture(capture_name);
-                
+                PerformSyncCapture(capture_name);
+
                 SetCurrentStep(SequenceStep::Processing, "Processing and saving images...", 1.0f);
             }
             break;
@@ -581,9 +629,15 @@ void CaptureStudioPanel::UpdateAutomatedSequence() {
 
 void CaptureStudioPanel::PerformSingleCapture(const std::string& capture_name) {
     if (!ValidateSystemState()) return;
-    
+
+    // Check if already capturing
+    if (is_capturing_) {
+        LogMessage("[STUDIO] Capture already in progress, please wait...");
+        return;
+    }
+
     is_capturing_ = true;
-    
+
     try {
         // Get the next capture path from session manager (this creates a directory)
         auto* session = session_manager_->GetCurrentSession();
@@ -592,25 +646,69 @@ void CaptureStudioPanel::PerformSingleCapture(const std::string& capture_name) {
             is_capturing_ = false;
             return;
         }
-        
+
         std::string session_path = session->GetNextCapturePath();
-        LogMessage("[STUDIO] Starting capture to: " + session_path);
-        
-        // Use camera manager to perform capture with the session path
-        if (camera_manager_->CaptureAllCameras(session_path)) {
-            LogMessage("[STUDIO] Capture successful: " + session_path);
-            
-            // Record with session manager
-            session_manager_->RecordCapture(session_path);
-        } else {
-            LogMessage("[STUDIO] Capture failed");
-        }
-        
+        LogMessage("[STUDIO] 📸 Starting async capture to: " + session_path);
+
+        // Use async camera manager to perform capture without blocking UI
+        camera_manager_->CaptureAllCamerasAsync(session_path, true, 750,
+            [this, session_path](const std::string& message) {
+                // This callback runs on the capture thread, so we just log
+                LogMessage(message);
+
+                // Check if capture completed successfully
+                if (message.find("🎬 Async capture completed successfully") != std::string::npos) {
+                    // Record with session manager
+                    session_manager_->RecordCapture(session_path);
+                    LogMessage("[STUDIO] ✅ Capture recorded in session");
+                    is_capturing_ = false;
+                } else if (message.find("❌ Async capture failed") != std::string::npos) {
+                    LogMessage("[STUDIO] ❌ Capture failed");
+                    is_capturing_ = false;
+                }
+            }
+        );
+
+        // Start a timer to check capture completion
+        capture_start_time_ = std::chrono::steady_clock::now();
+
     } catch (const std::exception& e) {
         LogMessage("[STUDIO] Capture error: " + std::string(e.what()));
+        is_capturing_ = false;
     }
-    
-    is_capturing_ = false;
+}
+
+void CaptureStudioPanel::PerformSyncCapture(const std::string& capture_name) {
+    if (!ValidateSystemState()) return;
+
+    // For automated sequences, we need synchronous capture to maintain workflow order
+    LogMessage("[STUDIO] 📸 Starting sync capture for automated sequence: " + capture_name);
+
+    try {
+        // Get the next capture path from session manager (this creates a directory)
+        auto* session = session_manager_->GetCurrentSession();
+        if (!session) {
+            LogMessage("[STUDIO] No active session for capture");
+            return;
+        }
+
+        std::string session_path = session->GetNextCapturePath();
+        LogMessage("[STUDIO] Capturing to: " + session_path);
+
+        // Use synchronous camera manager for automated sequences
+        if (camera_manager_->CaptureAllCameras(session_path, true, 750)) {
+            LogMessage("[STUDIO] ✅ Sync capture successful: " + session_path);
+
+            // Record with session manager
+            session_manager_->RecordCapture(session_path);
+            LogMessage("[STUDIO] ✅ Capture recorded in session");
+        } else {
+            LogMessage("[STUDIO] ❌ Sync capture failed");
+        }
+
+    } catch (const std::exception& e) {
+        LogMessage("[STUDIO] Sync capture error: " + std::string(e.what()));
+    }
 }
 
 void CaptureStudioPanel::RotateTurntable(float degrees) {
@@ -689,18 +787,20 @@ bool CaptureStudioPanel::ValidateSystemState() const {
 // Pauseable automation methods
 void CaptureStudioPanel::PauseSequence() {
     if (!auto_sequence_active_ || sequence_paused_) return;
-    
+
     sequence_paused_ = true;
+    sequence_pause_requested_ = true;  // Signal background thread to pause
     SetCurrentStep(SequenceStep::Paused, "Sequence paused by user", 0.0f);
     LogMessage("[STUDIO] Sequence paused at step: " + GetStepName(current_step_));
 }
 
 void CaptureStudioPanel::ResumeSequence() {
     if (!auto_sequence_active_ || !sequence_paused_) return;
-    
+
     sequence_paused_ = false;
+    sequence_pause_requested_ = false;  // Signal background thread to resume
     LogMessage("[STUDIO] Sequence resumed");
-    
+
     // Resume from where we left off - reset step timer
     step_start_time_ = std::chrono::steady_clock::now();
 }
@@ -891,6 +991,134 @@ std::string CaptureStudioPanel::GenerateDefaultSessionName() const {
     std::stringstream ss;
     ss << "capture_" << std::put_time(std::localtime(&time_t), "%m%d_%H%M");
     return ss.str();
+}
+
+// Background sequence threading methods
+void CaptureStudioPanel::RunAutomatedSequenceInBackground() {
+    LogMessage("[THREAD] Starting automated sequence in background...");
+
+    try {
+        auto* session = session_manager_->GetCurrentSession();
+        if (!session) {
+            LogMessage("[THREAD] ERROR: No active session for automated capture");
+            thread_safe_sequence_active_ = false;
+            return;
+        }
+
+        for (int i = 0; i < auto_capture_count_ && !sequence_stop_requested_; ++i) {
+            if (sequence_pause_requested_) {
+                LogMessage("[THREAD] Sequence paused, waiting...");
+                while (sequence_pause_requested_ && !sequence_stop_requested_) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                }
+                if (sequence_stop_requested_) break;
+                LogMessage("[THREAD] Sequence resumed");
+            }
+
+            // Update thread-safe progress
+            thread_safe_current_index_ = i;
+
+            // Update step description for UI
+            {
+                std::lock_guard<std::mutex> lock(step_description_mutex_);
+                thread_safe_current_step_description_ = "Capturing position " + std::to_string(i + 1) + "/" + std::to_string(auto_capture_count_);
+            }
+
+            LogMessage("[THREAD] Starting capture " + std::to_string(i + 1) + "/" + std::to_string(auto_capture_count_));
+
+            // Get next capture path for this capture
+            std::string capture_path = session->GetNextCapturePath();
+
+            // Perform synchronous capture (blocks this background thread, not UI)
+            if (camera_manager_->CaptureAllCameras(capture_path, true, 750)) {
+                session_manager_->RecordCapture(capture_path);
+                LogMessage("[THREAD] Capture " + std::to_string(i + 1) + " completed successfully");
+            } else {
+                LogMessage("[THREAD] ERROR: Capture " + std::to_string(i + 1) + " failed");
+            }
+
+            // Check if this is the last capture
+            if (i == auto_capture_count_ - 1) {
+                LogMessage("[THREAD] Final capture completed, sequence finished");
+                break;
+            }
+
+            // Rotate turntable for next position
+            if (!sequence_stop_requested_) {
+                {
+                    std::lock_guard<std::mutex> lock(step_description_mutex_);
+                    thread_safe_current_step_description_ = "Rotating turntable...";
+                }
+
+                LogMessage("[THREAD] Rotating turntable " + std::to_string(rotation_angle_) + " degrees");
+                RotateTurntableAndWait(rotation_angle_);
+
+                // Wait for capture delay
+                if (capture_delay_ > 0 && !sequence_stop_requested_) {
+                    {
+                        std::lock_guard<std::mutex> lock(step_description_mutex_);
+                        thread_safe_current_step_description_ = "Waiting " + std::to_string(capture_delay_) + "s before next capture...";
+                    }
+
+                    auto delay_start = std::chrono::steady_clock::now();
+                    while (std::chrono::duration<float>(std::chrono::steady_clock::now() - delay_start).count() < capture_delay_) {
+                        if (sequence_stop_requested_) break;
+                        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                    }
+                }
+            }
+        }
+
+        // Sequence completed
+        if (!sequence_stop_requested_) {
+            LogMessage("[THREAD] ✅ Automated sequence completed successfully! Total captures: " + std::to_string(auto_capture_count_));
+            // Play completion sound
+            NotificationSounds::Instance().PlayCompletionSound();
+        } else {
+            LogMessage("[THREAD] Automated sequence stopped by user");
+        }
+
+    } catch (const std::exception& e) {
+        LogMessage("[THREAD] ERROR: Exception in automated sequence: " + std::string(e.what()));
+    } catch (...) {
+        LogMessage("[THREAD] ERROR: Unknown exception in automated sequence");
+    }
+
+    // Clean up thread state
+    thread_safe_sequence_active_ = false;
+    thread_safe_current_index_ = 0;
+    {
+        std::lock_guard<std::mutex> lock(step_description_mutex_);
+        thread_safe_current_step_description_ = "Sequence completed";
+    }
+}
+
+void CaptureStudioPanel::StopSequenceThread() {
+    if (sequence_thread_.joinable()) {
+        LogMessage("[THREAD] Stopping sequence thread...");
+        sequence_stop_requested_ = true;
+        sequence_thread_.join();
+        LogMessage("[THREAD] Sequence thread stopped");
+    }
+}
+
+void CaptureStudioPanel::UpdateSequenceStateFromThread() {
+    // Update UI state from thread-safe variables
+    current_capture_index_ = thread_safe_current_index_.load();
+    auto_sequence_active_ = thread_safe_sequence_active_.load();
+
+    // Update step description
+    {
+        std::lock_guard<std::mutex> lock(step_description_mutex_);
+        current_step_description_ = thread_safe_current_step_description_;
+    }
+
+    // Update UI state when sequence completes
+    if (!auto_sequence_active_ && sequence_thread_.joinable()) {
+        StopSequenceThread();
+        is_capturing_ = false;
+        SetCurrentStep(SequenceStep::Idle, "Sequence completed", 0.0f);
+    }
 }
 
 

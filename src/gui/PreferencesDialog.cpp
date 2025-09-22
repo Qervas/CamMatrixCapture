@@ -10,9 +10,9 @@ PreferencesDialog::PreferencesDialog() = default;
 
 void PreferencesDialog::Show(bool* p_open) {
   if (!p_open || !*p_open) return;
-  
+
   ImGui::SetNextWindowSize(ImVec2(600, 400), ImGuiCond_FirstUseEver);
-  
+
   if (ImGui::Begin("Preferences", p_open, ImGuiWindowFlags_NoDocking)) {
     // Load current settings every time dialog is shown
     if (settings_manager_) {
@@ -25,7 +25,7 @@ void PreferencesDialog::Show(bool* p_open) {
       temp_window_height_ = app_settings.window_height;
       temp_window_x_ = app_settings.window_x;
       temp_window_y_ = app_settings.window_y;
-      
+
       // Load camera settings
       const auto& camera_settings = settings_manager_->GetCameraSettings();
       temp_exposure_time_ = camera_settings.exposure_time;
@@ -43,25 +43,31 @@ void PreferencesDialog::Show(bool* p_open) {
         temp_log_auto_delete_ = log_panel->GetAutoDeleteEnabled();
         temp_log_max_messages_ = static_cast<int>(log_panel->GetMaxMessages());
       }
+
+      // Load sound settings
+      auto& sound_system = NotificationSounds::Instance();
+      temp_completion_sound_enabled_ = sound_system.IsCompletionSoundEnabled();
+      temp_completion_sound_type_ = static_cast<int>(sound_system.GetCompletionSoundType());
+      strncpy_s(temp_custom_sound_path_, sound_system.GetCustomSoundPath().c_str(), sizeof(temp_custom_sound_path_) - 1);
     }
-    
+
     // Left side - category list
     ImGui::BeginChild("left_pane", ImVec2(150, 0), true);
-    
+
     static int selected_tab = 0;
     if (ImGui::Selectable("General", selected_tab == 0)) selected_tab = 0;
     if (ImGui::Selectable("Appearance", selected_tab == 1)) selected_tab = 1;
     if (ImGui::Selectable("Performance", selected_tab == 2)) selected_tab = 2;
     if (ImGui::Selectable("Camera", selected_tab == 3)) selected_tab = 3;
     if (ImGui::Selectable("About", selected_tab == 4)) selected_tab = 4;
-    
+
     ImGui::EndChild();
-    
+
     ImGui::SameLine();
-    
+
     // Right side - settings for selected category
     ImGui::BeginChild("right_pane", ImVec2(0, -ImGui::GetFrameHeightWithSpacing()));
-    
+
     switch (selected_tab) {
       case 0: RenderGeneralTab(); break;
       case 1: RenderAppearanceTab(); break;
@@ -69,22 +75,22 @@ void PreferencesDialog::Show(bool* p_open) {
       case 3: RenderCameraTab(); break;
       case 4: RenderAboutTab(); break;
     }
-    
+
     ImGui::EndChild();
-    
+
     // Bottom buttons
     ImGui::Separator();
-    
+
     if (ImGui::Button("Save")) {
       SaveSettings();
       ApplySettings();
     }
-    
+
     ImGui::SameLine();
     if (ImGui::Button("Reset to Defaults")) {
       ResetSettings();
     }
-    
+
     ImGui::SameLine();
     if (ImGui::Button("Cancel")) {
       *p_open = false;
@@ -143,32 +149,83 @@ void PreferencesDialog::RenderGeneralTab() {
   if (ImGui::IsItemHovered()) {
     ImGui::SetTooltip("Automatically save settings when changed");
   }
-  
+
   ImGui::Spacing();
   ImGui::Separator();
   ImGui::Spacing();
-  
+
   ImGui::Text("File Paths");
   ImGui::Spacing();
-  
+
   if (settings_manager_) {
     static char output_folder[512];
     strcpy_s(output_folder, settings_manager_->GetAppSettings().last_output_folder.c_str());
-    
+
     if (ImGui::InputText("Default Output Folder", output_folder, sizeof(output_folder))) {
       settings_manager_->GetAppSettings().last_output_folder = output_folder;
       settings_manager_->Save(); // Auto-save to local cache
     }
   }
-  
+
   ImGui::Spacing();
   ImGui::Separator();
   ImGui::Spacing();
-  
+
+  // Notification sounds
+  ImGui::Text("Notification Sounds");
+  ImGui::Spacing();
+
+  if (ImGui::Checkbox("Enable completion sound", &temp_completion_sound_enabled_)) {
+    NotificationSounds::Instance().SetCompletionSoundEnabled(temp_completion_sound_enabled_);
+  }
+  ImGui::SameLine();
+  ImGui::TextDisabled("(?)");
+  if (ImGui::IsItemHovered()) {
+    ImGui::SetTooltip("Play a sound when automated capture sequences complete");
+  }
+
+  if (temp_completion_sound_enabled_) {
+    const char* sound_types[] = {
+      "Clean Bell",
+      "Trap Beat",
+      "Microwave Ding (3x)",
+      "Car Siren"
+    };
+
+    ImGui::Text("Sound type:");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(200);
+    if (ImGui::Combo("##SoundType", &temp_completion_sound_type_, sound_types, IM_ARRAYSIZE(sound_types))) {
+      NotificationSounds::Instance().SetCompletionSoundType(static_cast<NotificationSounds::SoundType>(temp_completion_sound_type_));
+    }
+
+    if (temp_completion_sound_type_ == 5) { // Custom sound file
+      ImGui::Text("Custom sound file (leave empty for custom beats):");
+      ImGui::SetNextItemWidth(300);
+      if (ImGui::InputText("##CustomSoundPath", temp_custom_sound_path_, sizeof(temp_custom_sound_path_))) {
+        NotificationSounds::Instance().SetCustomSoundPath(temp_custom_sound_path_);
+      }
+      ImGui::SameLine();
+      if (ImGui::Button("Browse...")) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("(file dialog coming soon)");
+      }
+    }
+
+    ImGui::SameLine();
+    if (ImGui::Button("Test Sound")) {
+      NotificationSounds::Instance().TestSound(static_cast<NotificationSounds::SoundType>(temp_completion_sound_type_), 0.8f);
+    }
+  }
+
+  ImGui::Spacing();
+  ImGui::Separator();
+  ImGui::Spacing();
+
   // Window settings
   ImGui::Text("Window Position & Size");
   ImGui::Spacing();
-  
+
   if (ImGui::InputInt("Window Width", &temp_window_width_)) {
     temp_window_width_ = std::max(800, temp_window_width_); // Minimum width
     if (settings_manager_) {
@@ -176,7 +233,7 @@ void PreferencesDialog::RenderGeneralTab() {
       settings_manager_->Save();
     }
   }
-  
+
   if (ImGui::InputInt("Window Height", &temp_window_height_)) {
     temp_window_height_ = std::max(600, temp_window_height_); // Minimum height
     if (settings_manager_) {
@@ -184,21 +241,21 @@ void PreferencesDialog::RenderGeneralTab() {
       settings_manager_->Save();
     }
   }
-  
+
   if (ImGui::InputInt("Window X Position", &temp_window_x_)) {
     if (settings_manager_) {
       settings_manager_->GetAppSettings().window_x = temp_window_x_;
       settings_manager_->Save();
     }
   }
-  
+
   if (ImGui::InputInt("Window Y Position", &temp_window_y_)) {
     if (settings_manager_) {
       settings_manager_->GetAppSettings().window_y = temp_window_y_;
       settings_manager_->Save();
     }
   }
-  
+
   ImGui::TextDisabled("Note: Window position changes take effect on next app restart");
 }
 
@@ -206,507 +263,153 @@ void PreferencesDialog::RenderAppearanceTab() {
   ImGui::Text("Appearance Settings");
   ImGui::Separator();
   ImGui::Spacing();
-  
-  // UI Scale slider with extended range - takes effect immediately
-  ImGui::Text("UI Scale");
-  ImGui::SetNextItemWidth(300);
-  if (ImGui::SliderFloat("##UIScale", &temp_ui_scale_, 0.5f, 8.0f, "%.2fx")) {
-    // Apply immediately when dragging
-    if (ui_scale_callback_) {
-      ui_scale_callback_(temp_ui_scale_);
-    }
-  }
-  
+
+  // UI Scale
+  ImGui::Text("UI Scale:");
   ImGui::SameLine();
-  if (ImGui::Button("Reset##UIScale")) {
-    temp_ui_scale_ = 1.0f;
-    // Apply immediately when reset
-    if (ui_scale_callback_) {
-      ui_scale_callback_(temp_ui_scale_);
+  ImGui::SetNextItemWidth(150);
+  if (ImGui::SliderFloat("##UIScale", &temp_ui_scale_, 0.5f, 2.0f, "%.2f")) {
+    if (on_ui_scale_changed_) {
+      on_ui_scale_changed_(temp_ui_scale_);
     }
   }
-  
-  // Display current scale percentage
   ImGui::SameLine();
-  ImGui::Text("(%d%%)", static_cast<int>(temp_ui_scale_ * 100));
-  
-  // Quick preset buttons - Extended range
-  ImGui::Spacing();
-  ImGui::Text("Quick Presets:");
-  
-  // First row of presets (smaller scales)
-  ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 4));
-  
-  float preset_scales_1[] = {0.5f, 0.75f, 1.0f, 1.25f, 1.5f};
-  const char* preset_labels_1[] = {"50%", "75%", "100%", "125%", "150%"};
-  
-  for (int i = 0; i < 5; i++) {
-    if (ImGui::Button(preset_labels_1[i])) {
-      temp_ui_scale_ = preset_scales_1[i];
-      // Apply immediately when preset is clicked
-      if (ui_scale_callback_) {
-        ui_scale_callback_(temp_ui_scale_);
-      }
-    }
-    if (i < 4) ImGui::SameLine();
+  ImGui::TextDisabled("(?)");
+  if (ImGui::IsItemHovered()) {
+    ImGui::SetTooltip("Scale factor for UI elements. Requires restart for full effect.");
   }
-  
-  // Second row of presets (larger scales)
-  float preset_scales_2[] = {2.0f, 3.0f, 4.0f, 6.0f, 8.0f};
-  const char* preset_labels_2[] = {"200%", "300%", "400%", "600%", "800%"};
-  
-  for (int i = 0; i < 5; i++) {
-    if (ImGui::Button(preset_labels_2[i])) {
-      temp_ui_scale_ = preset_scales_2[i];
-      // Apply immediately when preset is clicked
-      if (ui_scale_callback_) {
-        ui_scale_callback_(temp_ui_scale_);
-      }
-    }
-    if (i < 4) ImGui::SameLine();
+
+  ImGui::Spacing();
+
+  // Dark Theme
+  if (ImGui::Checkbox("Dark Theme", &temp_dark_theme_)) {
+    // Apply immediately or on save
   }
-  
-  ImGui::PopStyleVar();
-  
-  // Warning for extreme scales
-  if (temp_ui_scale_ < 0.75f) {
-    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), 
-                      "Warning: Very small UI scale may be hard to read");
-  } else if (temp_ui_scale_ > 4.0f) {
-    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), 
-                      "Warning: Very large UI scale may cause layout issues");
+  ImGui::SameLine();
+  ImGui::TextDisabled("(?)");
+  if (ImGui::IsItemHovered()) {
+    ImGui::SetTooltip("Enable dark color scheme for the interface");
   }
-  
-  // Live preview text
-  ImGui::Spacing();
-  ImGui::Separator();
-  ImGui::Spacing();
-  ImGui::Text("Live Preview (this text scales with setting):");
-  
-  // Apply temporary scale for preview
-  ImGui::PushFont(ImGui::GetFont());
-  ImGui::SetWindowFontScale(temp_ui_scale_);
-  ImGui::TextWrapped("This is preview text at %.1fx scale. The quick brown fox jumps over the lazy dog.", temp_ui_scale_);
-  ImGui::SetWindowFontScale(1.0f);
-  ImGui::PopFont();
-  
-  ImGui::Spacing();
-  ImGui::Separator();
-  ImGui::Spacing();
-  
-  // Theme selection
-  ImGui::Text("Theme");
-  if (ImGui::RadioButton("Dark Theme", temp_dark_theme_)) {
-    temp_dark_theme_ = true;
-    if (settings_manager_) {
-      std::cout << "[PREFERENCES] Dark theme selected, saving..." << std::endl;
-      settings_manager_->GetAppSettings().dark_theme = temp_dark_theme_;
-      settings_manager_->Save(); // Auto-save to local cache
-    } else {
-      std::cout << "[PREFERENCES] ERROR: settings_manager_ is null!" << std::endl;
-    }
-  }
-  if (ImGui::RadioButton("Light Theme", !temp_dark_theme_)) {
-    temp_dark_theme_ = false;
-    if (settings_manager_) {
-      std::cout << "[PREFERENCES] Light theme selected, saving..." << std::endl;
-      settings_manager_->GetAppSettings().dark_theme = temp_dark_theme_;
-      settings_manager_->Save(); // Auto-save to local cache
-    } else {
-      std::cout << "[PREFERENCES] ERROR: settings_manager_ is null!" << std::endl;
-    }
-  }
-  
-  if (!temp_dark_theme_) {
-    ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "Light theme is not yet implemented");
-  }
-  
-  ImGui::Spacing();
-  ImGui::Separator();
-  ImGui::Spacing();
-  
-  // Font settings (placeholder)
-  ImGui::Text("Font");
-  ImGui::TextDisabled("Font customization coming soon...");
 }
 
 void PreferencesDialog::RenderPerformanceTab() {
   ImGui::Text("Performance Settings");
   ImGui::Separator();
   ImGui::Spacing();
-  
-  if (ImGui::Checkbox("VSync", &temp_vsync_)) {
-    // Auto-save VSync setting to local cache
-    if (settings_manager_) {
-      std::cout << "[PREFERENCES] VSync changed to " << (temp_vsync_ ? "ON" : "OFF") << ", saving..." << std::endl;
-      settings_manager_->GetAppSettings().vsync = temp_vsync_;
-      settings_manager_->Save();
-    } else {
-      std::cout << "[PREFERENCES] ERROR: settings_manager_ is null for VSync!" << std::endl;
-    }
+
+  // VSync
+  if (ImGui::Checkbox("Enable VSync", &temp_vsync_)) {
+    // Apply immediately or on save
   }
-  if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip("Enable vertical synchronization to prevent screen tearing");
-  }
-  
-  ImGui::Spacing();
-  ImGui::Separator();
-  ImGui::Spacing();
-  
-  // Memory usage info
-  ImGui::Text("Memory Usage");
-  ImGui::TextDisabled("Application memory: N/A");
-  ImGui::TextDisabled("Image buffer memory: N/A");
-  
-  ImGui::Spacing();
-  ImGui::Separator();
-  ImGui::Spacing();
-  
-  // Cache settings
-  ImGui::Text("Cache Settings");
-  if (ImGui::Button("Clear Image Cache")) {
-    // TODO: Implement cache clearing
-  }
-  
   ImGui::SameLine();
-  ImGui::TextDisabled("0 MB cached");
+  ImGui::TextDisabled("(?)");
+  if (ImGui::IsItemHovered()) {
+    ImGui::SetTooltip("Vertical synchronization to prevent screen tearing");
+  }
 }
 
 void PreferencesDialog::RenderCameraTab() {
   ImGui::Text("Camera Settings");
   ImGui::Separator();
   ImGui::Spacing();
-  
-  ImGui::TextColored(ImVec4(0.7f, 0.9f, 1.0f, 1.0f), "These settings apply to all cameras in the system.");
-  ImGui::Spacing();
-  
-  // === EXPOSURE CONTROL ===
-  if (ImGui::CollapsingHeader("Exposure Control", ImGuiTreeNodeFlags_DefaultOpen)) {
-    ImGui::PushItemWidth(200);
-    
-    // Exposure Time with input validation and range
-    int temp_exposure = temp_exposure_time_;
-    if (ImGui::InputInt("Exposure Time (microseconds)", &temp_exposure, 100, 10000)) {
-      temp_exposure_time_ = std::max(100, std::min(100000, temp_exposure));
-      if (settings_manager_) {
-        settings_manager_->GetCameraSettings().exposure_time = temp_exposure_time_;
-        if (settings_manager_->GetAppSettings().auto_save_settings) {
-          settings_manager_->Save();
-        }
-        
-        // Apply immediately to active cameras
-        if (on_exposure_changed_) {
-          on_exposure_changed_(temp_exposure_time_);
-        }
-        if (on_camera_settings_changed_) {
-          on_camera_settings_changed_();
-        }
-      }
+
+  // Exposure Time
+  ImGui::Text("Exposure Time (us):");
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(150);
+  if (ImGui::InputInt("##Exposure", &temp_exposure_time_)) {
+    if (temp_exposure_time_ < 1) temp_exposure_time_ = 1;
+    if (on_exposure_changed_) {
+      on_exposure_changed_(temp_exposure_time_);
     }
-    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Range: 100 - 100,000 μs");
-    
-    // Auto exposure checkbox
-    if (ImGui::Checkbox("Auto Exposure", &temp_auto_exposure_)) {
-      if (settings_manager_) {
-        settings_manager_->GetCameraSettings().auto_exposure = temp_auto_exposure_;
-        if (settings_manager_->GetAppSettings().auto_save_settings) {
-          settings_manager_->Save();
-        }
-      }
-    }
-    
-    // Quick exposure presets
-    ImGui::Spacing();
-    ImGui::Text("Quick Presets:");
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 4));
-    
-    if (ImGui::Button("Fast (1ms)")) {
-      temp_exposure_time_ = 1000;
-      if (settings_manager_) {
-        settings_manager_->GetCameraSettings().exposure_time = temp_exposure_time_;
-        if (settings_manager_->GetAppSettings().auto_save_settings) {
-          settings_manager_->Save();
-        }
-        
-        // Apply immediately to active cameras
-        if (on_exposure_changed_) {
-          on_exposure_changed_(temp_exposure_time_);
-        }
-        if (on_camera_settings_changed_) {
-          on_camera_settings_changed_();
-        }
-      }
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Normal (10ms)")) {
-      temp_exposure_time_ = 10000;
-      if (settings_manager_) {
-        settings_manager_->GetCameraSettings().exposure_time = temp_exposure_time_;
-        if (settings_manager_->GetAppSettings().auto_save_settings) {
-          settings_manager_->Save();
-        }
-        
-        // Apply immediately to active cameras
-        if (on_exposure_changed_) {
-          on_exposure_changed_(temp_exposure_time_);
-        }
-        if (on_camera_settings_changed_) {
-          on_camera_settings_changed_();
-        }
-      }
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Long (40ms)")) {
-      temp_exposure_time_ = 40000;
-      if (settings_manager_) {
-        settings_manager_->GetCameraSettings().exposure_time = temp_exposure_time_;
-        if (settings_manager_->GetAppSettings().auto_save_settings) {
-          settings_manager_->Save();
-        }
-        
-        // Apply immediately to active cameras
-        if (on_exposure_changed_) {
-          on_exposure_changed_(temp_exposure_time_);
-        }
-        if (on_camera_settings_changed_) {
-          on_camera_settings_changed_();
-        }
-      }
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Very Long (100ms)")) {
-      temp_exposure_time_ = 100000;
-      if (settings_manager_) {
-        settings_manager_->GetCameraSettings().exposure_time = temp_exposure_time_;
-        if (settings_manager_->GetAppSettings().auto_save_settings) {
-          settings_manager_->Save();
-        }
-        
-        // Apply immediately to active cameras
-        if (on_exposure_changed_) {
-          on_exposure_changed_(temp_exposure_time_);
-        }
-        if (on_camera_settings_changed_) {
-          on_camera_settings_changed_();
-        }
-      }
-    }
-    
-    ImGui::PopStyleVar();
-    ImGui::PopItemWidth();
   }
-  
-  // === GAIN CONTROL ===
-  if (ImGui::CollapsingHeader("Gain Control", ImGuiTreeNodeFlags_DefaultOpen)) {
-    ImGui::PushItemWidth(200);
-    
-    // Gain with input validation
-    float temp_gain = temp_gain_;
-    if (ImGui::InputFloat("Gain (dB)", &temp_gain, 0.1f, 1.0f, "%.1f")) {
-      temp_gain_ = std::max(0.0f, std::min(30.0f, temp_gain));
-      if (settings_manager_) {
-        settings_manager_->GetCameraSettings().gain = temp_gain_;
-        if (settings_manager_->GetAppSettings().auto_save_settings) {
-          settings_manager_->Save();
-        }
-        
-        // Apply immediately to active cameras
-        if (on_gain_changed_) {
-          on_gain_changed_(temp_gain_);
-        }
-        if (on_camera_settings_changed_) {
-          on_camera_settings_changed_();
-        }
-      }
+
+  // Gain
+  ImGui::Text("Gain:");
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(150);
+  if (ImGui::SliderFloat("##Gain", &temp_gain_, 0.0f, 10.0f, "%.2f")) {
+    if (on_gain_changed_) {
+      on_gain_changed_(temp_gain_);
     }
-    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Range: 0.0 - 30.0 dB");
-    
-    // Auto gain checkbox
-    if (ImGui::Checkbox("Auto Gain", &temp_auto_gain_)) {
-      if (settings_manager_) {
-        settings_manager_->GetCameraSettings().auto_gain = temp_auto_gain_;
-        if (settings_manager_->GetAppSettings().auto_save_settings) {
-          settings_manager_->Save();
-        }
-      }
-    }
-    
-    ImGui::PopItemWidth();
   }
-  
-  // === WHITE BALANCE ===
-  if (ImGui::CollapsingHeader("White Balance", ImGuiTreeNodeFlags_DefaultOpen)) {
-    ImGui::PushItemWidth(200);
-    
-    // Auto white balance checkbox
-    if (ImGui::Checkbox("Auto White Balance", &temp_auto_white_balance_)) {
-      if (settings_manager_) {
-        settings_manager_->GetCameraSettings().auto_white_balance = temp_auto_white_balance_;
-        if (settings_manager_->GetAppSettings().auto_save_settings) {
-          settings_manager_->Save();
-        }
-      }
-    }
-    
-    // Manual white balance controls (disabled if auto is on)
-    ImGui::BeginDisabled(temp_auto_white_balance_);
-    
-    float temp_wb_red = temp_white_balance_red_;
-    if (ImGui::InputFloat("Red Gain", &temp_wb_red, 0.01f, 0.1f, "%.2f")) {
-      temp_white_balance_red_ = std::max(0.1f, std::min(4.0f, temp_wb_red));
-      if (settings_manager_) {
-        settings_manager_->GetCameraSettings().white_balance_red = temp_white_balance_red_;
-        if (settings_manager_->GetAppSettings().auto_save_settings) {
-          settings_manager_->Save();
-        }
-      }
-    }
-    
-    float temp_wb_green = temp_white_balance_green_;
-    if (ImGui::InputFloat("Green Gain", &temp_wb_green, 0.01f, 0.1f, "%.2f")) {
-      temp_white_balance_green_ = std::max(0.1f, std::min(4.0f, temp_wb_green));
-      if (settings_manager_) {
-        settings_manager_->GetCameraSettings().white_balance_green = temp_white_balance_green_;
-        if (settings_manager_->GetAppSettings().auto_save_settings) {
-          settings_manager_->Save();
-        }
-      }
-    }
-    
-    float temp_wb_blue = temp_white_balance_blue_;
-    if (ImGui::InputFloat("Blue Gain", &temp_wb_blue, 0.01f, 0.1f, "%.2f")) {
-      temp_white_balance_blue_ = std::max(0.1f, std::min(4.0f, temp_wb_blue));
-      if (settings_manager_) {
-        settings_manager_->GetCameraSettings().white_balance_blue = temp_white_balance_blue_;
-        if (settings_manager_->GetAppSettings().auto_save_settings) {
-          settings_manager_->Save();
-        }
-      }
-    }
-    
-    ImGui::EndDisabled();
-    
-    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Range: 0.1 - 4.0 for all color channels");
-    
-    // White balance presets
-    if (!temp_auto_white_balance_) {
-      ImGui::Spacing();
-      ImGui::Text("White Balance Presets:");
-      ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 4));
-      
-      if (ImGui::Button("Neutral")) {
-        temp_white_balance_red_ = temp_white_balance_green_ = temp_white_balance_blue_ = 1.0f;
-        if (settings_manager_) {
-          auto& cam_settings = settings_manager_->GetCameraSettings();
-          cam_settings.white_balance_red = cam_settings.white_balance_green = cam_settings.white_balance_blue = 1.0f;
-          if (settings_manager_->GetAppSettings().auto_save_settings) {
-            settings_manager_->Save();
-          }
-        }
-      }
-      ImGui::SameLine();
-      if (ImGui::Button("Daylight")) {
-        temp_white_balance_red_ = 1.0f; temp_white_balance_green_ = 1.0f; temp_white_balance_blue_ = 1.3f;
-        if (settings_manager_) {
-          auto& cam_settings = settings_manager_->GetCameraSettings();
-          cam_settings.white_balance_red = 1.0f; cam_settings.white_balance_green = 1.0f; cam_settings.white_balance_blue = 1.3f;
-          if (settings_manager_->GetAppSettings().auto_save_settings) {
-            settings_manager_->Save();
-          }
-        }
-      }
-      ImGui::SameLine();
-      if (ImGui::Button("Tungsten")) {
-        temp_white_balance_red_ = 1.4f; temp_white_balance_green_ = 1.0f; temp_white_balance_blue_ = 0.8f;
-        if (settings_manager_) {
-          auto& cam_settings = settings_manager_->GetCameraSettings();
-          cam_settings.white_balance_red = 1.4f; cam_settings.white_balance_green = 1.0f; cam_settings.white_balance_blue = 0.8f;
-          if (settings_manager_->GetAppSettings().auto_save_settings) {
-            settings_manager_->Save();
-          }
-        }
-      }
-      
-      ImGui::PopStyleVar();
-    }
-    
-    ImGui::PopItemWidth();
+
+  // Auto Exposure
+  if (ImGui::Checkbox("Auto Exposure", &temp_auto_exposure_)) {
+    // Apply to camera
   }
-  
-  // === GAMMA CONTROL ===
-  if (ImGui::CollapsingHeader("Image Enhancement")) {
-    ImGui::PushItemWidth(200);
-    
-    // Gamma correction
-    float temp_gamma = temp_gamma_;
-    if (ImGui::SliderFloat("Gamma", &temp_gamma, 0.1f, 3.0f, "%.2f")) {
-      temp_gamma_ = temp_gamma;
-      if (settings_manager_) {
-        settings_manager_->GetCameraSettings().gamma = temp_gamma_;
-        if (settings_manager_->GetAppSettings().auto_save_settings) {
-          settings_manager_->Save();
-        }
-      }
+
+  // Auto Gain
+  if (ImGui::Checkbox("Auto Gain", &temp_auto_gain_)) {
+    // Apply to camera
+  }
+
+  // White Balance
+  ImGui::Text("White Balance:");
+  ImGui::Text("Red:");
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(100);
+  if (ImGui::SliderFloat("##WBRed", &temp_white_balance_red_, 0.1f, 5.0f, "%.2f")) {
+    if (on_white_balance_changed_) {
+      on_white_balance_changed_(temp_white_balance_red_, temp_white_balance_green_, temp_white_balance_blue_);
     }
-    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Range: 0.1 - 3.0 (1.0 = linear)");
-    
-    ImGui::PopItemWidth();
   }
-  
-  // === INFORMATION ===
-  ImGui::Spacing();
-  ImGui::Separator();
-  ImGui::Spacing();
-  
-  ImGui::Text("Current Settings Summary:");
-  ImGui::BulletText("Exposure: %d μs (%s)", temp_exposure_time_, temp_auto_exposure_ ? "Auto" : "Manual");
-  ImGui::BulletText("Gain: %.1f dB (%s)", temp_gain_, temp_auto_gain_ ? "Auto" : "Manual");
-  ImGui::BulletText("White Balance: %s", temp_auto_white_balance_ ? "Auto" : "Manual");
-  if (!temp_auto_white_balance_) {
-    ImGui::BulletText("  R=%.2f, G=%.2f, B=%.2f", temp_white_balance_red_, temp_white_balance_green_, temp_white_balance_blue_);
+
+  ImGui::Text("Green:");
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(100);
+  if (ImGui::SliderFloat("##WBGreen", &temp_white_balance_green_, 0.1f, 5.0f, "%.2f")) {
+    if (on_white_balance_changed_) {
+      on_white_balance_changed_(temp_white_balance_red_, temp_white_balance_green_, temp_white_balance_blue_);
+    }
   }
-  ImGui::BulletText("Gamma: %.2f", temp_gamma_);
-  
-  ImGui::Spacing();
-  ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.0f, 1.0f), "Note: Changes take effect immediately and are saved automatically.");
-  ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Restart the application to ensure all cameras use new settings.");
+
+  ImGui::Text("Blue:");
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(100);
+  if (ImGui::SliderFloat("##WBBlue", &temp_white_balance_blue_, 0.1f, 5.0f, "%.2f")) {
+    if (on_white_balance_changed_) {
+      on_white_balance_changed_(temp_white_balance_red_, temp_white_balance_green_, temp_white_balance_blue_);
+    }
+  }
+
+  // Auto White Balance
+  if (ImGui::Checkbox("Auto White Balance", &temp_auto_white_balance_)) {
+    // Apply to camera
+  }
+
+  // Gamma
+  ImGui::Text("Gamma:");
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(150);
+  ImGui::SliderFloat("##Gamma", &temp_gamma_, 0.1f, 5.0f, "%.2f");
 }
 
 void PreferencesDialog::RenderAboutTab() {
-  ImGui::Text("About");
+  ImGui::Text("About Camera Matrix Capture");
   ImGui::Separator();
   ImGui::Spacing();
-  
-  ImGui::Text("Camera Matrix Capture");
-  ImGui::Text("Version 1.0.0");
-  ImGui::Spacing();
-  
-  ImGui::TextWrapped("A professional camera capture application for multi-camera setups with Sapera SDK integration.");
-  
-  ImGui::Spacing();
-  ImGui::Separator();
-  ImGui::Spacing();
-  
-  ImGui::Text("System Information");
-  ImGui::BulletText("ImGui Version: %s", IMGUI_VERSION);
-  ImGui::BulletText("OpenGL Version: 3.3");
-  ImGui::BulletText("Sapera SDK: Integrated");
-  
+
+  ImGui::Text("Version: 1.0.0");
+  ImGui::Text("Built with:");
+  ImGui::BulletText("ImGui");
+  ImGui::BulletText("OpenGL");
+  ImGui::BulletText("Sapera SDK");
+  ImGui::BulletText("Bluetooth LE");
+
   ImGui::Spacing();
   ImGui::Separator();
   ImGui::Spacing();
-  
-  ImGui::Text("Credits");
-  ImGui::TextWrapped("Built with Dear ImGui, GLFW, and Teledyne Sapera SDK");
+
+  if (ImGui::Button("Open GitHub Repository")) {
+    // Open URL
+  }
 }
 
 void PreferencesDialog::ApplySettings() {
   if (!settings_manager_) return;
-  
-  // Validate and clamp UI scale
-  temp_ui_scale_ = std::clamp(temp_ui_scale_, 0.5f, 8.0f);
-  
-  // Apply all settings to settings manager
+
+  // Apply app settings
   auto& app_settings = settings_manager_->GetAppSettings();
   app_settings.ui_scale = temp_ui_scale_;
   app_settings.dark_theme = temp_dark_theme_;
@@ -716,7 +419,7 @@ void PreferencesDialog::ApplySettings() {
   app_settings.window_height = temp_window_height_;
   app_settings.window_x = temp_window_x_;
   app_settings.window_y = temp_window_y_;
-  
+
   // Apply camera settings
   auto& camera_settings = settings_manager_->GetCameraSettings();
   camera_settings.exposure_time = temp_exposure_time_;
@@ -728,17 +431,23 @@ void PreferencesDialog::ApplySettings() {
   camera_settings.white_balance_blue = temp_white_balance_blue_;
   camera_settings.auto_white_balance = temp_auto_white_balance_;
   camera_settings.gamma = temp_gamma_;
+
+  // Call callbacks
+  if (on_camera_settings_changed_) {
+    on_camera_settings_changed_();
+  }
 }
 
 void PreferencesDialog::SaveSettings() {
-  if (!settings_manager_) return;
-  
-  // Save settings to file
-  settings_manager_->Save();
+  if (settings_manager_) {
+    settings_manager_->Save();
+  }
 }
 
 void PreferencesDialog::ResetSettings() {
-  // Reset all temporary values to defaults
+  if (!settings_manager_) return;
+
+  // Reset to defaults
   temp_ui_scale_ = 1.0f;
   temp_dark_theme_ = true;
   temp_vsync_ = true;
@@ -747,8 +456,7 @@ void PreferencesDialog::ResetSettings() {
   temp_window_height_ = 800;
   temp_window_x_ = 100;
   temp_window_y_ = 100;
-  
-  // Reset camera parameter values to defaults
+
   temp_exposure_time_ = 40000;
   temp_gain_ = 1.0f;
   temp_auto_exposure_ = false;
@@ -758,11 +466,13 @@ void PreferencesDialog::ResetSettings() {
   temp_white_balance_blue_ = 1.0f;
   temp_auto_white_balance_ = false;
   temp_gamma_ = 1.0f;
-  
-  // Apply UI scale immediately when resetting
-  if (ui_scale_callback_) {
-    ui_scale_callback_(1.0f);
-  }
+
+  temp_log_auto_delete_ = false;
+  temp_log_max_messages_ = 0;
+
+  temp_completion_sound_enabled_ = true;
+  temp_completion_sound_type_ = 0;
+  strcpy_s(temp_custom_sound_path_, "");
 }
 
-}  // namespace SaperaCapturePro
+} // namespace SaperaCapturePro

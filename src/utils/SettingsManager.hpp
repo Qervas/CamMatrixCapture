@@ -126,7 +126,12 @@ struct AppSettings {
     // Log settings
     bool log_auto_delete_enabled = false;  // Default: no auto-deletion
     int log_max_messages = 0;  // 0 = unlimited
-    
+
+    // Notification sound settings
+    bool enable_completion_sound = true;  // Enable sound when sequence completes
+    std::string completion_sound = "Windows Ding";  // Sound name/type
+    float notification_volume = 0.5f;  // Volume 0.0 to 1.0
+
     SimpleJSON ToJson() const;
     void FromJson(const SimpleJSON& json);
     void Reset();

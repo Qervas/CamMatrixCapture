@@ -2,6 +2,7 @@
 
 #include <functional>
 #include "../utils/SettingsManager.hpp"
+#include "../utils/NotificationSounds.hpp"
 #include "LogPanel.hpp"
 
 namespace SaperaCapturePro {
@@ -12,34 +13,34 @@ class PreferencesDialog {
   ~PreferencesDialog() = default;
 
   void Show(bool* p_open);
-  
+
   void SetSettings(SettingsManager* settings) { settings_manager_ = settings; }
-  
+
   void SetOnUIScaleChanged(std::function<void(float)> callback) {
     on_ui_scale_changed_ = callback;
     ui_scale_callback_ = callback;  // Also set immediate callback
   }
-  
+
   // Camera setting callbacks
   void SetOnCameraSettingsChanged(std::function<void()> callback) {
     on_camera_settings_changed_ = callback;
   }
-  
+
   void SetOnExposureChanged(std::function<void(int)> callback) {
     on_exposure_changed_ = callback;
   }
-  
+
   void SetOnGainChanged(std::function<void(float)> callback) {
     on_gain_changed_ = callback;
   }
-  
+
   void SetOnWhiteBalanceChanged(std::function<void(float, float, float)> callback) {
     on_white_balance_changed_ = callback;
   }
 
  private:
   SettingsManager* settings_manager_ = nullptr;
-  
+
   // Temporary values for editing
   float temp_ui_scale_ = 1.0f;
   bool temp_dark_theme_ = true;
@@ -49,7 +50,7 @@ class PreferencesDialog {
   int temp_window_height_ = 800;
   int temp_window_x_ = 100;
   int temp_window_y_ = 100;
-  
+
   // Camera parameter temporary values
   int temp_exposure_time_ = 40000;
   float temp_gain_ = 1.0f;
@@ -73,22 +74,27 @@ class PreferencesDialog {
   bool temp_log_auto_delete_ = false;
   int temp_log_max_messages_ = 0;  // 0 = unlimited
 
+  // Sound settings temporary values
+  bool temp_completion_sound_enabled_ = true;
+  int temp_completion_sound_type_ = 0; // 0=WindowsDing, 1=WindowsNotification, etc.
+  char temp_custom_sound_path_[256] = "";
+
   // Callbacks
   std::function<void(float)> on_ui_scale_changed_;
   std::function<void(float)> ui_scale_callback_;  // For immediate updates
-  
+
   // Camera setting callbacks
   std::function<void()> on_camera_settings_changed_;
   std::function<void(int)> on_exposure_changed_;
   std::function<void(float)> on_gain_changed_;
   std::function<void(float, float, float)> on_white_balance_changed_;
-  
+
   void RenderGeneralTab();
   void RenderAppearanceTab();
   void RenderPerformanceTab();
   void RenderCameraTab();
   void RenderAboutTab();
-  
+
   void ApplySettings();
   void SaveSettings();
   void ResetSettings();
