@@ -18,9 +18,8 @@
 namespace SaperaCapturePro {
 
 enum class CaptureMode {
-    Quick,
-    Automated,
-    Advanced
+    Manual,
+    Automated
 };
 
 enum class SequenceStep {
@@ -64,13 +63,16 @@ private:
     std::unique_ptr<FileExplorerWidget> file_explorer_widget_;
     
     // UI state
-    CaptureMode current_mode_ = CaptureMode::Quick;
+    CaptureMode current_mode_ = CaptureMode::Manual;
     bool is_capturing_ = false;
     float widget_height_ = 250.0f;
     
-    // Quick capture state
-    int quick_capture_count_ = 1;
-    char quick_capture_name_[256] = "";
+    // Manual capture state
+    int manual_capture_count_ = 1;
+    char manual_capture_name_[256] = "";
+    bool single_camera_mode_ = false;
+    std::string selected_camera_id_ = "";
+    int selected_camera_index_ = -1;
     
     // Automated capture state
     int auto_capture_count_ = 36;
@@ -122,9 +124,8 @@ private:
     
     // UI rendering methods
     void RenderModeSelector();
-    void RenderQuickCapture();
+    void RenderManualCapture();
     void RenderAutomatedCapture();
-    void RenderAdvancedCapture();
     void RenderCaptureControls();
     // void RenderSharedComponents(); // No longer needed - components rendered inline
     void RenderSessionControl();
@@ -136,14 +137,14 @@ private:
     void RenderSessionSetup();
     void RenderCaptureMode();
     void RenderCompactModeSelector();
-    void RenderQuickMode();
+    void RenderManualMode();
     void RenderAutomatedMode();
     void RenderActiveSequenceControls();
-    void RenderProMode();
     void RenderStatusCard(const char* title, bool connected, const std::string& status, ImVec2 size);
 
     // Capture logic
-    void StartQuickCapture();
+    void StartManualCapture();
+    void StartSingleCameraCapture();
     void StartAutomatedSequence();
     void StopAutomatedSequence();
     void UpdateAutomatedSequence();

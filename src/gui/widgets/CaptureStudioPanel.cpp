@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstring>
 #include <filesystem>
+#include <algorithm>
 
 namespace SaperaCapturePro {
 
@@ -92,103 +93,29 @@ void CaptureStudioPanel::Render() {
     const float em = ImGui::GetFontSize();
     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 10.0f);
 
-    // Card: Automated Sequence (primary)
-    ImGui::BeginChild("cs_auto", ImVec2(0, 0), true);
-
     // Integrated session control at top of panel
     RenderSessionControl();
     ImGui::Separator();
 
-    ImGui::Text("🔄 Automated Capture");
-    ImGui::Separator();
+    // Tab system for Manual vs Automated capture
+    ImGuiTabBarFlags tab_bar_flags = ImGuiTabBarFlags_None;
 
-    // Two-column layout
-    ImGui::Columns(2, "auto_cols_new", false);
-    ImGui::SetColumnWidth(0, 20.0f * em);
+    if (ImGui::BeginTabBar("CaptureModeTabs", tab_bar_flags)) {
 
-    // Left column: Parameters
-    ImGui::Text("360° Mode");
-    if (ImGui::RadioButton("By Total Captures", edit_by_captures_)) edit_by_captures_ = true;
-    if (ImGui::RadioButton("By Angle Step", !edit_by_captures_)) edit_by_captures_ = false;
-    ImGui::Spacing();
-
-    if (edit_by_captures_) {
-        ImGui::Text("Total Captures");
-        if (ImGui::SliderInt("##AutoCountNew", &auto_capture_count_, 6, 360)) {
-            rotation_angle_ = 360.0f / static_cast<float>(auto_capture_count_);
+        if (ImGui::BeginTabItem("📷 Manual")) {
+            current_mode_ = CaptureMode::Manual;
+            RenderManualCapture();
+            ImGui::EndTabItem();
         }
-        ImGui::Text("Angle Step: %.2f°", rotation_angle_);
-    } else {
-        ImGui::Text("Angle Step");
-        if (ImGui::SliderFloat("##RotAngleNew", &rotation_angle_, 1.0f, 60.0f, "%.2f°")) {
-            auto_capture_count_ = static_cast<int>(std::round(360.0f / rotation_angle_));
+
+        if (ImGui::BeginTabItem("🔄 Automated")) {
+            current_mode_ = CaptureMode::Automated;
+            RenderAutomatedCapture();
+            ImGui::EndTabItem();
         }
-        ImGui::Text("Total Captures: %d", auto_capture_count_);
+
+        ImGui::EndTabBar();
     }
-
-    ImGui::Text("Turntable Speed (s/360°)");
-    ImGui::SliderFloat("##TurntableSpeedNew", &turntable_speed_, 35.64f, 131.0f, "%.1f");
-    ImGui::Text("Capture Delay (s)");
-    ImGui::SliderFloat("##CaptureDelayNew", &capture_delay_, 0.5f, 10.0f, "%.1f");
-
-    ImGui::NextColumn();
-
-    // Right column: Actions and status
-    if (auto_sequence_active_) {
-        ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "Active");
-        ImGui::Text("Progress: %d/%d", current_capture_index_, auto_capture_count_);
-
-        // Overall progress bar
-        float overall_progress = auto_capture_count_ > 0 ? (float)current_capture_index_ / (float)auto_capture_count_ : 0.0f;
-        char progress_label[64];
-        snprintf(progress_label, sizeof(progress_label), "%d/%d (%.1f%%)",
-                current_capture_index_, auto_capture_count_, overall_progress * 100.0f);
-        ImGui::ProgressBar(overall_progress, ImVec2(-1, 0), progress_label);
-
-        RenderStepIndicator();
-        if (ImGui::Button(sequence_paused_ ? "▶ Resume" : "⏸ Pause", ImVec2(-1, 2.5f * em))) {
-            if (sequence_paused_) ResumeSequence(); else PauseSequence();
-        }
-        if (ImGui::Button("⏭ Next Step", ImVec2(-1, 2.5f * em))) {
-            AdvanceToNextStep();
-        }
-        if (ImGui::Button("⏹ Stop", ImVec2(-1, 2.5f * em))) {
-            StopAutomatedSequence();
-        }
-    } else {
-        // Compact control section
-        bool can_start = ValidateSystemState() && IsTurntableConnected() && !is_capturing_;
-
-        // Status indicators
-        if (is_capturing_) {
-            ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "📸 Capturing...");
-        } else {
-            if (!camera_manager_->GetConnectedCount()) {
-                ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "⚠ No cameras");
-            }
-            if (!IsTurntableConnected()) {
-                ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "⚠ No turntable");
-            }
-        }
-
-        // Compact start button
-        if (!can_start) ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 0.5f);
-        if (ImGui::Button("▶ Start", ImVec2(100, 30))) {
-            if (can_start) StartAutomatedSequence();
-        }
-        if (!can_start) ImGui::PopStyleVar();
-
-        ImGui::SameLine();
-        float rotation_time = (rotation_angle_ * turntable_speed_) / 360.0f;
-        float total_sequence_time = auto_capture_count_ * (capture_delay_ + rotation_time);
-        ImGui::Text("Est: %.1f min", total_sequence_time / 60.0f);
-
-        ImGui::Spacing();
-        ImGui::Text("Per step: %.1fs rotation + %.1fs capture", rotation_time, capture_delay_);
-    }
-
-    ImGui::Columns(1);
-    ImGui::EndChild();
 
     ImGui::PopStyleVar();
 
@@ -201,279 +128,374 @@ void CaptureStudioPanel::Render() {
 
 void CaptureStudioPanel::RenderModeSelector() {
     ImGuiTabBarFlags tab_bar_flags = ImGuiTabBarFlags_None;
-    
+
     if (ImGui::BeginTabBar("CaptureModes", tab_bar_flags)) {
-        
-        if (ImGui::BeginTabItem("⚡ Quick")) {
-            current_mode_ = CaptureMode::Quick;
+
+        if (ImGui::BeginTabItem("📷 Manual")) {
+            current_mode_ = CaptureMode::Manual;
             ImGui::EndTabItem();
         }
-        
+
         if (ImGui::BeginTabItem("🔄 Automated")) {
             current_mode_ = CaptureMode::Automated;
             ImGui::EndTabItem();
         }
-        
-        if (ImGui::BeginTabItem("⚙️ Advanced")) {
-            current_mode_ = CaptureMode::Advanced;
-            ImGui::EndTabItem();
-        }
-        
+
         ImGui::EndTabBar();
     }
 }
 
-void CaptureStudioPanel::RenderQuickCapture() {
-    ImGui::Text("Quick single or multi-shot capture");
-    
-    ImGui::Columns(2, "quick_cols", false);
-    ImGui::SetColumnWidth(0, 200);
-    
+void CaptureStudioPanel::RenderManualCapture() {
+    ImGui::Text("Manual single or multi-shot capture");
+
+    const float em = ImGui::GetFontSize();
+    const ImVec2 content_region = ImGui::GetContentRegionAvail();
+    const float column_width = content_region.x * 0.4f; // Dynamic 40% for first column
+
+    ImGui::Columns(2, "manual_cols", false);
+    ImGui::SetColumnWidth(0, column_width);
+
     // Column 1: Settings
-    ImGui::Text("Capture Count:");
-    ImGui::SliderInt("##QuickCount", &quick_capture_count_, 1, 10);
-    
+    ImGui::Text("Capture Mode:");
+    if (ImGui::RadioButton("All Cameras", !single_camera_mode_)) {
+        single_camera_mode_ = false;
+    }
+    if (ImGui::RadioButton("Single Camera", single_camera_mode_)) {
+        single_camera_mode_ = true;
+    }
+
+    ImGui::Spacing();
+
+    // Single camera selection
+    if (single_camera_mode_) {
+        ImGui::Text("Select Camera:");
+        const auto& cameras = camera_manager_->GetDiscoveredCameras();
+
+        if (cameras.empty()) {
+            ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "No cameras discovered");
+        } else {
+            // Build camera list for combo
+            std::vector<std::string> camera_names;
+            for (size_t i = 0; i < cameras.size(); ++i) {
+                std::string display_name = cameras[i].name;
+                if (!cameras[i].serialNumber.empty()) {
+                    display_name += " (" + cameras[i].serialNumber + ")";
+                }
+                if (cameras[i].isConnected) {
+                    display_name += " ✓";
+                } else {
+                    display_name += " ❌";
+                }
+                camera_names.push_back(display_name);
+            }
+
+            // Ensure valid selection
+            if (selected_camera_index_ >= static_cast<int>(cameras.size())) {
+                selected_camera_index_ = -1;
+                selected_camera_id_ = "";
+            }
+
+            // Camera selection combo
+            if (ImGui::BeginCombo("##CameraSelect",
+                                selected_camera_index_ >= 0 ? camera_names[selected_camera_index_].c_str() : "Choose camera...")) {
+                for (size_t i = 0; i < cameras.size(); ++i) {
+                    bool is_selected = (selected_camera_index_ == static_cast<int>(i));
+                    if (ImGui::Selectable(camera_names[i].c_str(), is_selected)) {
+                        selected_camera_index_ = static_cast<int>(i);
+                        selected_camera_id_ = cameras[i].id;
+                    }
+                    if (is_selected) {
+                        ImGui::SetItemDefaultFocus();
+                    }
+                }
+                ImGui::EndCombo();
+            }
+        }
+    } else {
+        ImGui::Text("Capture Count:");
+        ImGui::SetNextItemWidth(100.0f);
+        ImGui::SliderInt("##ManualCount", &manual_capture_count_, 1, 10);
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(60.0f);
+        ImGui::InputInt("##ManualCountInput", &manual_capture_count_);
+        if (manual_capture_count_ < 1) manual_capture_count_ = 1;
+        if (manual_capture_count_ > 10) manual_capture_count_ = 10;
+    }
+
+    ImGui::Spacing();
     ImGui::Text("Custom Name:");
-    ImGui::InputTextWithHint("##QuickName", "Optional custom name", 
-                           quick_capture_name_, sizeof(quick_capture_name_));
-    
+    ImGui::InputTextWithHint("##ManualName", "Optional custom name",
+                           manual_capture_name_, sizeof(manual_capture_name_));
+
     ImGui::NextColumn();
-    
+
     // Column 2: Action
     ImGui::Spacing();
-    
+
     bool can_capture = ValidateSystemState() && !is_capturing_;
-    
-    if (!can_capture) {
+
+    // Additional validation for single camera mode
+    if (single_camera_mode_) {
+        can_capture = can_capture && (selected_camera_index_ >= 0) &&
+                     !selected_camera_id_.empty();
+
+        const auto& cameras = camera_manager_->GetDiscoveredCameras();
+        if (selected_camera_index_ >= 0 && selected_camera_index_ < static_cast<int>(cameras.size())) {
+            can_capture = can_capture && cameras[selected_camera_index_].isConnected;
+        }
+    }
+
+    // Make capture button colorful and compact
+    if (can_capture) {
+        if (single_camera_mode_) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.7f, 0.9f, 1.0f));         // Light blue
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.8f, 1.0f, 1.0f));  // Brighter blue
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.1f, 0.6f, 0.8f, 1.0f));   // Darker blue
+        } else {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.8f, 0.2f, 1.0f));         // Green
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.9f, 0.3f, 1.0f));  // Brighter green
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.1f, 0.7f, 0.1f, 1.0f));   // Darker green
+        }
+    } else {
         ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 0.5f);
     }
-    
-    if (ImGui::Button("📸 Capture Now", ImVec2(-1, 40))) {
+
+    const char* button_text = single_camera_mode_ ? "📸 Single" : "📸 All Cameras";
+    const ImVec2 button_size(120.0f, em * 2.0f); // Compact size
+
+    if (ImGui::Button(button_text, button_size)) {
         if (can_capture) {
-            StartQuickCapture();
-        }
-    }
-    
-    if (!can_capture) {
-        ImGui::PopStyleVar();
-        
-        if (ImGui::IsItemHovered()) {
-            ImGui::BeginTooltip();
-            if (!session_manager_->HasActiveSession()) {
-                ImGui::Text("❌ No active session");
-            } else if (camera_manager_->GetConnectedCount() == 0) {
-                ImGui::Text("❌ No cameras connected");
-            } else if (is_capturing_) {
-                ImGui::Text("⏳ Capture in progress");
+            if (single_camera_mode_) {
+                StartSingleCameraCapture();
+            } else {
+                StartManualCapture();
             }
-            ImGui::EndTooltip();
         }
     }
-    
+
+    if (can_capture) {
+        ImGui::PopStyleColor(3); // Pop the 3 button colors
+    } else {
+        ImGui::PopStyleVar(); // Pop alpha
+    }
+
+    if (!can_capture && ImGui::IsItemHovered()) {
+        ImGui::BeginTooltip();
+        if (!session_manager_->HasActiveSession()) {
+            ImGui::Text("❌ No active session");
+        } else if (camera_manager_->GetConnectedCount() == 0) {
+            ImGui::Text("❌ No cameras connected");
+        } else if (is_capturing_) {
+            ImGui::Text("⏳ Capture in progress");
+        } else if (single_camera_mode_ && selected_camera_index_ < 0) {
+            ImGui::Text("❌ Select a camera first");
+        } else if (single_camera_mode_ && selected_camera_index_ >= 0) {
+            const auto& cameras = camera_manager_->GetDiscoveredCameras();
+            if (selected_camera_index_ < static_cast<int>(cameras.size()) &&
+                !cameras[selected_camera_index_].isConnected) {
+                ImGui::Text("❌ Selected camera not connected");
+            }
+        }
+        ImGui::EndTooltip();
+    }
+
+    // Status information
+    ImGui::Spacing();
+    if (single_camera_mode_ && selected_camera_index_ >= 0) {
+        const auto& cameras = camera_manager_->GetDiscoveredCameras();
+        if (selected_camera_index_ < static_cast<int>(cameras.size())) {
+            const auto& camera = cameras[selected_camera_index_];
+            ImGui::Text("Camera: %s", camera.name.c_str());
+            ImGui::Text("Status: %s", camera.isConnected ? "Connected" : "Disconnected");
+            if (!camera.serialNumber.empty()) {
+                ImGui::Text("Serial: %s", camera.serialNumber.c_str());
+            }
+        }
+    } else if (!single_camera_mode_) {
+        ImGui::Text("Connected: %d cameras", camera_manager_->GetConnectedCount());
+        ImGui::Text("Shots per camera: %d", manual_capture_count_);
+    }
+
     ImGui::Columns(1);
 }
 
 void CaptureStudioPanel::RenderAutomatedCapture() {
     ImGui::Text("Automated turntable sequence capture");
-    
-    ImGui::Columns(3, "auto_cols", false);
-    ImGui::SetColumnWidth(0, 150);
-    ImGui::SetColumnWidth(1, 150);
-    
-    // Column 1: 360° Capture Settings
-    ImGui::Text("360° Capture Mode:");
-    if (ImGui::RadioButton("Edit by Total Captures", edit_by_captures_)) {
-        edit_by_captures_ = true;
-    }
-    if (ImGui::RadioButton("Edit by Angle Step", !edit_by_captures_)) {
-        edit_by_captures_ = false;
-    }
-    
+
+    const float em = ImGui::GetFontSize();
+    const ImVec2 content_region = ImGui::GetContentRegionAvail();
+
+    // Better layout: Use 50/50 split for balanced appearance
+    const float column_width = content_region.x * 0.5f;
+
+    ImGui::Columns(2, "auto_cols_new", false);
+    ImGui::SetColumnWidth(0, column_width);
+
+    // Left column: Parameters
+    ImGui::Text("📐 360° Capture Mode");
+    ImGui::Separator();
+
+    if (ImGui::RadioButton("By Total Captures", edit_by_captures_)) edit_by_captures_ = true;
+    if (ImGui::RadioButton("By Angle Step", !edit_by_captures_)) edit_by_captures_ = false;
     ImGui::Spacing();
-    
+
     if (edit_by_captures_) {
-        // Edit total captures, calculate angle
         ImGui::Text("Total Captures:");
-        if (ImGui::SliderInt("##AutoCount", &auto_capture_count_, 6, 360)) {
+        const float slider_width = content_region.x * 0.25f; // 25% of total width
+        const float input_width = 50.0f;
+
+        ImGui::SetNextItemWidth(slider_width);
+        if (ImGui::SliderInt("##AutoCountNew", &auto_capture_count_, 6, 360)) {
+            rotation_angle_ = 360.0f / static_cast<float>(auto_capture_count_);
+        }
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(input_width);
+        if (ImGui::InputInt("##AutoCountInput", &auto_capture_count_)) {
+            if (auto_capture_count_ < 6) auto_capture_count_ = 6;
+            if (auto_capture_count_ > 360) auto_capture_count_ = 360;
             rotation_angle_ = 360.0f / static_cast<float>(auto_capture_count_);
         }
         ImGui::Text("→ Angle Step: %.2f°", rotation_angle_);
     } else {
-        // Edit angle, calculate captures
         ImGui::Text("Angle Step:");
-        if (ImGui::SliderFloat("##RotAngle", &rotation_angle_, 1.0f, 60.0f, "%.2f°")) {
+        const float slider_width = content_region.x * 0.25f;
+        const float input_width = 50.0f;
+
+        ImGui::SetNextItemWidth(slider_width);
+        if (ImGui::SliderFloat("##RotAngleNew", &rotation_angle_, 1.0f, 60.0f, "%.2f°")) {
+            auto_capture_count_ = static_cast<int>(std::round(360.0f / rotation_angle_));
+        }
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(input_width);
+        if (ImGui::InputFloat("##RotAngleInput", &rotation_angle_, 0.1f, 1.0f, "%.2f")) {
+            if (rotation_angle_ < 1.0f) rotation_angle_ = 1.0f;
+            if (rotation_angle_ > 60.0f) rotation_angle_ = 60.0f;
             auto_capture_count_ = static_cast<int>(std::round(360.0f / rotation_angle_));
         }
         ImGui::Text("→ Total Captures: %d", auto_capture_count_);
     }
-    
-    ImGui::NextColumn();
-    
-    // Column 2: Timing & Speed
-    ImGui::Text("Turntable Speed:");
-    ImGui::SliderFloat("##TurntableSpeed", &turntable_speed_, 35.64f, 131.0f, "%.1fs/360°");
-    if (ImGui::IsItemHovered()) {
-        ImGui::BeginTooltip();
-        ImGui::Text("Speed = seconds for full 360° rotation");
-        ImGui::Text("Angular velocity: %.2f°/sec", 360.0f / turntable_speed_);
-        ImGui::EndTooltip();
-    }
-    
-    ImGui::Text("Capture Delay:");
-    ImGui::SliderFloat("##CaptureDelay", &capture_delay_, 0.5f, 10.0f, "%.1fs");
-    
-    // Calculate timing estimates
-    float rotation_time = (rotation_angle_ * turntable_speed_) / 360.0f;
-    float total_capture_time = auto_capture_count_ * capture_delay_;
-    float total_rotation_time = (auto_capture_count_ - 1) * rotation_time; // No rotation after last capture
-    float total_sequence_time = total_capture_time + total_rotation_time;
-    
+
     ImGui::Spacing();
-    ImGui::Text("⏱ Time Estimates:");
-    ImGui::Text("Per rotation: %.1fs", rotation_time);
-    ImGui::Text("Total sequence: %.1fmin", total_sequence_time / 60.0f);
-    
+    ImGui::Text("⚙️ Timing Settings");
+    ImGui::Separator();
+
+    ImGui::Text("Turntable Speed (s/360°):");
+    const float slider_width = content_region.x * 0.25f;
+    const float input_width = 50.0f;
+
+    ImGui::SetNextItemWidth(slider_width);
+    ImGui::SliderFloat("##TurntableSpeedNew", &turntable_speed_, 35.64f, 131.0f, "%.1f");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(input_width);
+    if (ImGui::InputFloat("##TurntableSpeedInput", &turntable_speed_, 1.0f, 5.0f, "%.1f")) {
+        if (turntable_speed_ < 35.64f) turntable_speed_ = 35.64f;
+        if (turntable_speed_ > 131.0f) turntable_speed_ = 131.0f;
+    }
+
+    ImGui::Text("Capture Delay (s):");
+    ImGui::SetNextItemWidth(slider_width);
+    ImGui::SliderFloat("##CaptureDelayNew", &capture_delay_, 0.5f, 10.0f, "%.1f");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(input_width);
+    if (ImGui::InputFloat("##CaptureDelayInput", &capture_delay_, 0.1f, 1.0f, "%.1f")) {
+        if (capture_delay_ < 0.5f) capture_delay_ = 0.5f;
+        if (capture_delay_ > 10.0f) capture_delay_ = 10.0f;
+    }
+
     ImGui::NextColumn();
-    
-    // Column 3: Controls & Status
+
+    // Right column: Control and Status
+    ImGui::Text("🎯 Sequence Control");
+    ImGui::Separator();
+
     if (auto_sequence_active_) {
-        if (sequence_paused_) {
-            ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.0f, 1.0f), "⏸ Paused");
-        } else {
-            ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "🔄 Active");
-        }
-        ImGui::Text("Progress: %d/%d", current_capture_index_, auto_capture_count_);
-        
-        // Render step indicator
-        RenderStepIndicator();
-        
+        // Active sequence status
+        ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "🔄 Sequence Active");
+        ImGui::Text("Progress: %d/%d captures", current_capture_index_, auto_capture_count_);
+
+        // Progress bar
+        float overall_progress = auto_capture_count_ > 0 ? (float)current_capture_index_ / (float)auto_capture_count_ : 0.0f;
+        char progress_label[64];
+        snprintf(progress_label, sizeof(progress_label), "%d/%d (%.1f%%)",
+                current_capture_index_, auto_capture_count_, overall_progress * 100.0f);
+        ImGui::ProgressBar(overall_progress, ImVec2(-1, 0), progress_label);
+
         ImGui::Spacing();
-        
-        // Pause/Resume button
-        if (sequence_paused_) {
-            if (ImGui::Button("▶ Resume", ImVec2(80, 0))) {
-                ResumeSequence();
-            }
-        } else {
-            if (ImGui::Button("⏸ Pause", ImVec2(80, 0))) {
-                PauseSequence();
-            }
+        RenderStepIndicator();
+
+        // Control buttons
+        ImGui::Spacing();
+        const float button_width = (content_region.x * 0.4f) / 3; // Fit 3 buttons in right column
+
+        if (ImGui::Button(sequence_paused_ ? "▶ Resume" : "⏸ Pause", ImVec2(button_width, em * 2.0f))) {
+            if (sequence_paused_) ResumeSequence(); else PauseSequence();
         }
-        
         ImGui::SameLine();
-        if (ImGui::Button("⏭ Next Step", ImVec2(80, 0))) {
+        if (ImGui::Button("⏭ Next", ImVec2(button_width, em * 2.0f))) {
             AdvanceToNextStep();
         }
-        
-        if (ImGui::Button("⏹ Stop Sequence", ImVec2(-1, 0))) {
+        ImGui::SameLine();
+        if (ImGui::Button("⏹ Stop", ImVec2(button_width, em * 2.0f))) {
             StopAutomatedSequence();
         }
     } else {
+        // Ready to start status
         bool can_start = ValidateSystemState() && IsTurntableConnected() && !is_capturing_;
-        
-        if (!can_start) {
+
+        // System status
+        ImGui::Text("📊 System Status:");
+        if (is_capturing_) {
+            ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "📸 Capturing...");
+        } else {
+            if (camera_manager_->GetConnectedCount() > 0) {
+                ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "✓ %d cameras ready", camera_manager_->GetConnectedCount());
+            } else {
+                ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "⚠ No cameras");
+            }
+
+            if (IsTurntableConnected()) {
+                ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "✓ Turntable connected");
+            } else {
+                ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "⚠ No turntable");
+            }
+        }
+
+        ImGui::Spacing();
+        ImGui::Text("📋 Sequence Preview:");
+        float rotation_time = (rotation_angle_ * turntable_speed_) / 360.0f;
+        float total_sequence_time = auto_capture_count_ * (capture_delay_ + rotation_time);
+        ImGui::BulletText("Total time: %.1f minutes", total_sequence_time / 60.0f);
+        ImGui::BulletText("Per step: %.1fs rotate + %.1fs capture", rotation_time, capture_delay_);
+        ImGui::BulletText("%d positions around 360°", auto_capture_count_);
+
+        ImGui::Spacing();
+
+        // Start button
+        if (can_start) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.9f, 0.4f, 0.1f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1.0f, 0.5f, 0.2f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.8f, 0.3f, 0.0f, 1.0f));
+        } else {
             ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 0.5f);
         }
-        
-        if (ImGui::Button("▶ Start Sequence", ImVec2(-1, 0))) {
-            if (can_start) {
-                StartAutomatedSequence();
-            }
+
+        const float start_button_width = content_region.x * 0.35f;
+        if (ImGui::Button("▶ Start Sequence", ImVec2(start_button_width, em * 2.5f))) {
+            if (can_start) StartAutomatedSequence();
         }
-        
-        if (!can_start) {
+
+        if (can_start) {
+            ImGui::PopStyleColor(3);
+        } else {
             ImGui::PopStyleVar();
-            
-            if (ImGui::IsItemHovered()) {
-                ImGui::BeginTooltip();
-                if (!IsTurntableConnected()) {
-                    ImGui::Text("❌ Turntable not connected");
-                } else if (!session_manager_->HasActiveSession()) {
-                    ImGui::Text("❌ No active session");
-                } else if (camera_manager_->GetConnectedCount() == 0) {
-                    ImGui::Text("❌ No cameras connected");
-                }
-                ImGui::EndTooltip();
-            }
         }
     }
-    
+
     ImGui::Columns(1);
 }
 
-void CaptureStudioPanel::RenderAdvancedCapture() {
-    ImGui::Text("Advanced capture techniques and settings");
-    
-    ImGui::Columns(2, "advanced_cols", false);
-    ImGui::SetColumnWidth(0, 250);
-    
-    // Column 1: Advanced Settings
-    ImGui::Text("📷 Exposure Bracketing");
-    ImGui::Checkbox("Enable HDR Bracketing", &advanced_settings_.enable_exposure_bracketing);
-    
-    if (advanced_settings_.enable_exposure_bracketing) {
-        ImGui::Text("Exposure Stops: -1, 0, +1 EV");
-    }
-    
-    ImGui::Spacing();
-    ImGui::Text("🔍 Focus Stacking");
-    ImGui::Checkbox("Enable Focus Stack", &advanced_settings_.enable_focus_stacking);
-    
-    if (advanced_settings_.enable_focus_stacking) {
-        ImGui::SliderInt("Focus Steps", &advanced_settings_.focus_steps, 3, 20);
-        ImGui::SliderFloat("Step Size", &advanced_settings_.focus_step_size, 0.05f, 1.0f, "%.2f");
-    }
-    
-    ImGui::Spacing();
-    ImGui::Text("💡 Lighting Variation");
-    ImGui::Checkbox("Enable Multi-Light", &advanced_settings_.enable_lighting_variation);
-    
-    ImGui::NextColumn();
-    
-    // Column 2: Preview & Execute
-    ImGui::Text("📊 Capture Preview");
-    
-    int total_shots = 1;
-    if (advanced_settings_.enable_exposure_bracketing) total_shots *= 3;
-    if (advanced_settings_.enable_focus_stacking) total_shots *= advanced_settings_.focus_steps;
-    if (advanced_settings_.enable_lighting_variation) total_shots *= 2;
-    
-    ImGui::Text("Total shots per position: %d", total_shots);
-    ImGui::Text("Est. time per position: %.1fs", total_shots * 0.5f);
-    
-    ImGui::Spacing();
-    
-    bool can_capture = ValidateSystemState() && !is_capturing_;
-    
-    if (!can_capture) {
-        ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 0.5f);
-    }
-    
-    if (ImGui::Button("🎯 Advanced Capture", ImVec2(-1, 40))) {
-        if (can_capture) {
-            LogMessage("[STUDIO] Advanced capture not yet implemented");
-        }
-    }
-    
-    if (!can_capture) {
-        ImGui::PopStyleVar();
-    }
-    
-    ImGui::Columns(1);
-}
 
-void CaptureStudioPanel::RenderCaptureControls() {
-    if (is_capturing_) {
-        ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.0f, 1.0f), "⏳ Capturing...");
-        ImGui::SameLine();
-        
-        // Simple progress indicator
-        static float progress = 0.0f;
-        progress += 0.02f;
-        if (progress > 1.0f) progress = 0.0f;
-        ImGui::ProgressBar(progress, ImVec2(-1, 0), "");
-    }
-}
+
 
 // RenderSharedComponents is no longer needed as components are rendered inline
 // void CaptureStudioPanel::RenderSharedComponents() {
@@ -485,22 +507,87 @@ void CaptureStudioPanel::RenderCaptureControls() {
 //     file_explorer_widget_->Render(current_session);
 // }
 
-void CaptureStudioPanel::StartQuickCapture() {
+void CaptureStudioPanel::StartManualCapture() {
     if (!ValidateSystemState()) return;
-    
-    std::string capture_name = std::string(quick_capture_name_);
+
+    std::string capture_name = std::string(manual_capture_name_);
     if (capture_name.empty()) {
         capture_name = GenerateCaptureFilename();
     }
     
-    LogMessage("[STUDIO] Starting quick capture: " + capture_name + " (" + std::to_string(quick_capture_count_) + " shots)");
+    LogMessage("[STUDIO] Starting manual capture: " + capture_name + " (" + std::to_string(manual_capture_count_) + " shots)");
     
-    for (int i = 0; i < quick_capture_count_; i++) {
+    for (int i = 0; i < manual_capture_count_; i++) {
         std::string shot_name = capture_name;
-        if (quick_capture_count_ > 1) {
+        if (manual_capture_count_ > 1) {
             shot_name += "_" + std::to_string(i + 1);
         }
         PerformSingleCapture(shot_name);
+    }
+}
+
+void CaptureStudioPanel::StartSingleCameraCapture() {
+    if (!ValidateSystemState()) return;
+
+    if (selected_camera_id_.empty() || selected_camera_index_ < 0) {
+        LogMessage("[STUDIO] Error: No camera selected for single camera capture");
+        return;
+    }
+
+    const auto& cameras = camera_manager_->GetDiscoveredCameras();
+    if (selected_camera_index_ >= static_cast<int>(cameras.size())) {
+        LogMessage("[STUDIO] Error: Selected camera index out of range");
+        return;
+    }
+
+    const auto& selected_camera = cameras[selected_camera_index_];
+    if (!selected_camera.isConnected) {
+        LogMessage("[STUDIO] Error: Selected camera is not connected");
+        return;
+    }
+
+    std::string capture_name = std::string(manual_capture_name_);
+    if (capture_name.empty()) {
+        capture_name = GenerateCaptureFilename();
+    }
+
+    // Add camera identifier to filename
+    std::string camera_identifier = selected_camera.name;
+    if (!selected_camera.serialNumber.empty()) {
+        camera_identifier += "_" + selected_camera.serialNumber;
+    }
+
+    // Clean camera identifier for filename
+    std::replace_if(camera_identifier.begin(), camera_identifier.end(),
+                   [](char c) { return !std::isalnum(c); }, '_');
+
+    std::string final_name = capture_name + "_" + camera_identifier;
+
+    LogMessage("[STUDIO] Starting single camera capture: " + selected_camera.name + " -> " + final_name);
+
+    // Get current session path
+    CaptureSession* current_session = session_manager_->GetCurrentSession();
+    if (!current_session) {
+        LogMessage("[STUDIO] Error: No active session");
+        return;
+    }
+
+    is_capturing_ = true;
+    capture_start_time_ = std::chrono::steady_clock::now();
+
+    // Capture using the selected camera ID
+    bool success = camera_manager_->CaptureCamera(selected_camera_id_, current_session->base_path);
+
+    is_capturing_ = false;
+
+    if (success) {
+        LogMessage("[STUDIO] ✅ Single camera capture completed successfully");
+        // Play completion sound
+        NotificationSounds::Instance().PlayCompletionSound();
+    } else {
+        LogMessage("[STUDIO] ❌ Single camera capture failed");
+        // Play notification sound for error
+        NotificationSounds::Instance().PlayNotificationSound(NotificationSounds::SoundType::CarSiren);
     }
 }
 

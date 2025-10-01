@@ -45,6 +45,8 @@ class Application {
   bool show_log_panel_ = true;
   bool show_session_manager_ = false;
   bool show_network_panel_ = false;
+  bool show_about_dialog_ = false;
+  bool show_documentation_dialog_ = false;
   
   // Application state
   bool is_running_ = true;
@@ -62,6 +64,8 @@ class Application {
   void RenderDockSpace();
   void RenderSessionManagerPanel();
   void RenderNetworkPanel();
+  void RenderAboutDialog();
+  void RenderDocumentationDialog();
   
   void OnUIScaleChanged(float scale);
   void SaveSettings();

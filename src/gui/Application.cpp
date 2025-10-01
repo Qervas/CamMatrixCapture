@@ -190,6 +190,8 @@ void Application::Run() {
     
     // Render dialogs
     preferences_dialog_->Show(&show_preferences_);
+    if (show_about_dialog_) RenderAboutDialog();
+    if (show_documentation_dialog_) RenderDocumentationDialog();
     
     gui_manager_->EndFrame();
   }
@@ -314,10 +316,10 @@ void Application::RenderDockSpace() {
     
     if (ImGui::BeginMenu("Help")) {
       if (ImGui::MenuItem("About...")) {
-        // TODO: Show about dialog
+        show_about_dialog_ = true;
       }
       if (ImGui::MenuItem("Documentation")) {
-        // TODO: Open documentation
+        show_documentation_dialog_ = true;
       }
       ImGui::EndMenu();
     }
@@ -407,6 +409,180 @@ void Application::SaveSettings() {
 void Application::LoadSettings() {
   if (settings_manager_) {
     settings_manager_->Load();
+  }
+}
+
+void Application::RenderAboutDialog() {
+  ImGui::OpenPopup("About Camera Matrix Capture");
+
+  ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+  ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+  ImGui::SetNextWindowSize(ImVec2(400, 300), ImGuiCond_Appearing);
+
+  if (ImGui::BeginPopupModal("About Camera Matrix Capture", &show_about_dialog_, ImGuiWindowFlags_AlwaysAutoResize)) {
+    ImGui::Text("Camera Matrix Capture");
+    ImGui::Separator();
+
+    ImGui::Text("Multi-camera capture system for neural rendering datasets");
+    ImGui::Spacing();
+
+    ImGui::Text("Features:");
+    ImGui::BulletText("Support for multiple Teledyne DALSA cameras");
+    ImGui::BulletText("Manual and automated capture modes");
+    ImGui::BulletText("Bluetooth turntable integration");
+    ImGui::BulletText("Session-based file organization");
+    ImGui::BulletText("Real-time camera parameter control");
+
+    ImGui::Spacing();
+    ImGui::Text("Technical Stack:");
+    ImGui::BulletText("Sapera SDK for camera control");
+    ImGui::BulletText("ImGui for user interface");
+    ImGui::BulletText("WinRT for Bluetooth communication");
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Text("Master's thesis implementation");
+
+    ImGui::Spacing();
+    if (ImGui::Button("Close", ImVec2(120, 0))) {
+      show_about_dialog_ = false;
+    }
+
+    ImGui::EndPopup();
+  }
+}
+
+void Application::RenderDocumentationDialog() {
+  ImGui::OpenPopup("Documentation");
+
+  ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+  ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+  ImGui::SetNextWindowSize(ImVec2(600, 500), ImGuiCond_Appearing);
+
+  if (ImGui::BeginPopupModal("Documentation", &show_documentation_dialog_)) {
+    ImGui::Text("How to Use Camera Matrix Capture");
+    ImGui::Separator();
+
+    if (ImGui::BeginTabBar("DocTabs")) {
+      if (ImGui::BeginTabItem("Quick Start")) {
+        ImGui::TextWrapped("Welcome! This guide will help you get started with capturing images for neural rendering:");
+        ImGui::Spacing();
+
+        ImGui::Text("1. Setup");
+        ImGui::BulletText("Connect your cameras and ensure they appear in the Hardware panel");
+        ImGui::BulletText("If using automated mode, connect your Bluetooth turntable");
+
+        ImGui::Spacing();
+        ImGui::Text("2. Start a Session");
+        ImGui::BulletText("Go to Capture Studio panel");
+        ImGui::BulletText("Enter an object name (e.g., 'chair', 'statue')");
+        ImGui::BulletText("Click 'Start Session' to create a timestamped folder");
+
+        ImGui::Spacing();
+        ImGui::Text("3. Capture Images");
+        ImGui::BulletText("Manual mode: Choose 'All Cameras' or 'Single Camera'");
+        ImGui::BulletText("Automated mode: Set rotation angle and capture count");
+        ImGui::BulletText("Click the capture button to take photos");
+
+        ImGui::Spacing();
+        ImGui::Text("4. Find Your Images");
+        ImGui::BulletText("Images are saved in: neural_dataset/images/[timestamp]/");
+        ImGui::BulletText("Each camera saves as: camera1_capture_001.tiff, etc.");
+
+        ImGui::EndTabItem();
+      }
+
+      if (ImGui::BeginTabItem("Manual Mode")) {
+        ImGui::TextWrapped("Manual mode gives you full control over when to capture:");
+        ImGui::Spacing();
+
+        ImGui::Text("All Cameras Mode:");
+        ImGui::BulletText("Captures from all connected cameras at once");
+        ImGui::BulletText("Set capture count (1-10) for multiple shots");
+        ImGui::BulletText("Perfect for static object photography");
+
+        ImGui::Spacing();
+        ImGui::Text("Single Camera Mode:");
+        ImGui::BulletText("Select one specific camera from the dropdown");
+        ImGui::BulletText("Great for testing individual cameras");
+        ImGui::BulletText("Useful for calibration or troubleshooting");
+
+        ImGui::Spacing();
+        ImGui::Text("Tips:");
+        ImGui::BulletText("Use custom names to organize your captures");
+        ImGui::BulletText("Check camera status (✓ = connected, ❌ = disconnected)");
+        ImGui::BulletText("Make sure session is active before capturing");
+
+        ImGui::EndTabItem();
+      }
+
+      if (ImGui::BeginTabItem("Automated Mode")) {
+        ImGui::TextWrapped("Automated mode captures while rotating the turntable:");
+        ImGui::Spacing();
+
+        ImGui::Text("Setup Required:");
+        ImGui::BulletText("Bluetooth turntable must be connected");
+        ImGui::BulletText("Object should be placed on the turntable");
+        ImGui::BulletText("Ensure sufficient lighting and stable setup");
+
+        ImGui::Spacing();
+        ImGui::Text("Configuration:");
+        ImGui::BulletText("By Total Captures: Set how many photos (6-360)");
+        ImGui::BulletText("By Angle Step: Set rotation degrees per shot (1-60°)");
+        ImGui::BulletText("Turntable Speed: How fast to rotate (35-131 sec/360°)");
+        ImGui::BulletText("Capture Delay: Wait time before each shot (0.5-10 sec)");
+
+        ImGui::Spacing();
+        ImGui::Text("Process:");
+        ImGui::BulletText("Click 'Start' to begin automated sequence");
+        ImGui::BulletText("Turntable rotates → cameras capture → repeat");
+        ImGui::BulletText("Use Pause/Resume for adjustments");
+        ImGui::BulletText("Click Stop to end sequence early");
+
+        ImGui::EndTabItem();
+      }
+
+      if (ImGui::BeginTabItem("Troubleshooting")) {
+        ImGui::TextWrapped("Common issues and solutions:");
+        ImGui::Spacing();
+
+        ImGui::Text("No Cameras Connected:");
+        ImGui::BulletText("Check GigE network adapter settings");
+        ImGui::BulletText("Verify Sapera SDK installation");
+        ImGui::BulletText("Use Hardware panel to discover/connect cameras");
+
+        ImGui::Spacing();
+        ImGui::Text("Bluetooth Issues:");
+        ImGui::BulletText("Ensure turntable is powered and in pairing mode");
+        ImGui::BulletText("Use Windows Bluetooth settings if needed");
+        ImGui::BulletText("Check device appears in Bluetooth panel");
+
+        ImGui::Spacing();
+        ImGui::Text("Capture Problems:");
+        ImGui::BulletText("Verify active session exists");
+        ImGui::BulletText("Check available disk space");
+        ImGui::BulletText("Ensure camera settings are valid");
+        ImGui::BulletText("Try single camera mode to isolate issues");
+
+        ImGui::Spacing();
+        ImGui::Text("Performance:");
+        ImGui::BulletText("Reduce capture count for faster sequences");
+        ImGui::BulletText("Increase capture delay for stability");
+        ImGui::BulletText("Check network bandwidth with many cameras");
+
+        ImGui::EndTabItem();
+      }
+
+      ImGui::EndTabBar();
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    if (ImGui::Button("Close", ImVec2(120, 0))) {
+      show_documentation_dialog_ = false;
+    }
+
+    ImGui::EndPopup();
   }
 }
 
