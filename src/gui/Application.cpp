@@ -90,37 +90,28 @@ void Application::InitializeSettings() {
 void Application::InitializeGUI() {
   // Initialize GUI manager
   gui_manager_ = std::make_unique<GuiManager>();
-  
+
   const auto& app_settings = settings_manager_->GetAppSettings();
-  if (!gui_manager_->Initialize("Camera Matrix Capture", 
-                                app_settings.window_width, 
+  if (!gui_manager_->Initialize("Camera Matrix Capture",
+                                app_settings.window_width,
                                 app_settings.window_height,
                                 app_settings.window_x,
                                 app_settings.window_y)) {
     throw std::runtime_error("Failed to initialize GUI manager");
   }
-  
+
   // Apply saved UI scale
   gui_manager_->SetUIScale(app_settings.ui_scale);
-  
+
   // Apply VSync setting
   gui_manager_->SetVSyncEnabled(app_settings.vsync);
-  
-  // Initialize GUI components
-  preferences_dialog_ = std::make_unique<PreferencesDialog>();
-  preferences_dialog_->SetSettings(settings_manager_.get());
-  preferences_dialog_->SetOnUIScaleChanged([this](float scale) {
-    OnUIScaleChanged(scale);
-  });
-  
+
+  // Initialize log panel
   log_panel_ = std::make_unique<LogPanel>();
   SetGlobalLogPanel(log_panel_.get());
-  
-  // Initialize unified capture studio panel
-  capture_studio_panel_ = std::make_unique<CaptureStudioPanel>();
-  capture_studio_panel_->SetLogCallback([this](const std::string& message) {
-    AddGlobalLog(message);
-  });
+
+  // Initialize navigation rail
+  navigation_rail_ = std::make_unique<NavigationRail>();
 
   // Push color conversion preferences to camera manager
   if (camera_manager_) {
@@ -147,55 +138,39 @@ void Application::InitializeBluetooth() {
   if (!bluetooth_manager_->Initialize()) {
     throw std::runtime_error("Failed to initialize Bluetooth Manager");
   }
-  
+
   // Get Camera manager singleton
   camera_manager_ = &CameraManager::GetInstance();
-  
+
   // Set log callback for Bluetooth manager
   bluetooth_manager_->SetLogCallback([this](const std::string& message) {
     AddGlobalLog(message, LogLevel::kInfo);
   });
-  
-  // Initialize unified hardware panel
-  hardware_panel_ = std::make_unique<HardwarePanel>();
-  hardware_panel_->Initialize(bluetooth_manager_, camera_manager_, session_manager_.get(), settings_manager_.get());
-  hardware_panel_->SetLogCallback([this](const std::string& message) {
-    AddGlobalLog(message, LogLevel::kInfo);
-  });
-  
-  // Initialize unified capture studio panel with all managers
-  capture_studio_panel_->Initialize(camera_manager_, bluetooth_manager_, session_manager_.get());
-  
-  AddGlobalLog("Bluetooth system initialized successfully", LogLevel::kSuccess);
+
+  // Initialize all views
+  capture_view_ = std::make_unique<CaptureView>(camera_manager_, session_manager_.get(), bluetooth_manager_, settings_manager_.get());
+  files_view_ = std::make_unique<FilesView>(session_manager_.get());
+  hardware_view_ = std::make_unique<HardwareView>(bluetooth_manager_, camera_manager_,
+                                                   session_manager_.get(), settings_manager_.get());
+  settings_view_ = std::make_unique<SettingsView>(settings_manager_.get());
+
+  AddGlobalLog("System initialized successfully", LogLevel::kSuccess);
 }
 
 void Application::Run() {
   while (!gui_manager_->ShouldClose() && is_running_) {
     gui_manager_->BeginFrame();
-    
-    // Handle keyboard shortcuts
-    if (ImGui::IsKeyPressed(ImGuiKey_Comma) && ImGui::GetIO().KeyCtrl) {
-      show_preferences_ = true;  // Ctrl+, opens preferences
-    }
-    
-    // Render dockspace (includes main menu)
-    RenderDockSpace();
-    
-    // Render panels
-    if (show_hardware_panel_) hardware_panel_->Render(&show_hardware_panel_);
-    if (show_capture_studio_) capture_studio_panel_->Render();
-    if (show_log_panel_) log_panel_->Render(&show_log_panel_);
-    if (show_session_manager_) RenderSessionManagerPanel();
-    if (show_network_panel_) RenderNetworkPanel();
-    
+
+    // Render main content
+    RenderMainContent();
+
     // Render dialogs
-    preferences_dialog_->Show(&show_preferences_);
     if (show_about_dialog_) RenderAboutDialog();
     if (show_documentation_dialog_) RenderDocumentationDialog();
-    
+
     gui_manager_->EndFrame();
   }
-  
+
   // If we exit the loop because window was closed, ensure proper shutdown
   if (gui_manager_->ShouldClose()) {
     is_running_ = false;
@@ -207,60 +182,51 @@ void Application::Run() {
 void Application::Shutdown() {
   // Auto-save settings before shutdown
   SaveSettings();
-  
-  // Cleanup hardware panel first (before GUI that uses it)
-  if (hardware_panel_) {
-    hardware_panel_->Shutdown();
-    hardware_panel_.reset();
-  }
-  
+
+  // Cleanup views
+  settings_view_.reset();
+  hardware_view_.reset();
+  files_view_.reset();
+  capture_view_.reset();
+  navigation_rail_.reset();
+
   // Explicitly shutdown Bluetooth manager singleton
   if (bluetooth_manager_) {
     bluetooth_manager_->Shutdown();
     bluetooth_manager_ = nullptr;
   }
-  
+
   // Cleanup other components
   log_panel_.reset();
-  preferences_dialog_.reset();
   gui_manager_.reset();
   session_manager_.reset();
   settings_manager_.reset();
 }
 
 
-void Application::RenderDockSpace() {
-  static ImGuiDockNodeFlags dockspace_flags = ImGuiDockNodeFlags_None;
-  
-  ImGuiWindowFlags window_flags = ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoDocking;
+void Application::RenderMainContent() {
   ImGuiViewport* viewport = ImGui::GetMainViewport();
   ImGui::SetNextWindowPos(viewport->WorkPos);
   ImGui::SetNextWindowSize(viewport->WorkSize);
   ImGui::SetNextWindowViewport(viewport->ID);
-  
-  window_flags |= ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse;
-  window_flags |= ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove;
-  window_flags |= ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus;
-  
+
+  ImGuiWindowFlags window_flags = ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoTitleBar |
+                                  ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize |
+                                  ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus |
+                                  ImGuiWindowFlags_NoNavFocus | ImGuiWindowFlags_NoDocking;
+
   ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
   ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
-  
-  ImGui::Begin("DockSpace Demo", nullptr, window_flags);
+
+  ImGui::Begin("MainWindow", nullptr, window_flags);
   ImGui::PopStyleVar(3);
-  
-  // Render menu bar inside the dockspace window
+
+  // Render menu bar
   if (ImGui::BeginMenuBar()) {
     if (ImGui::BeginMenu("File")) {
       if (ImGui::MenuItem("New Session", "Ctrl+N")) {
         session_manager_->StartNewSession("NewObject");
-      }
-      if (ImGui::MenuItem("Open Session...", "Ctrl+O")) {
-        // TODO: Implement open session dialog
-      }
-      ImGui::Separator();
-      if (ImGui::MenuItem("Preferences...", "Ctrl+,")) {
-        show_preferences_ = true;
       }
       ImGui::Separator();
       if (ImGui::MenuItem("Exit", "Alt+F4")) {
@@ -268,16 +234,7 @@ void Application::RenderDockSpace() {
       }
       ImGui::EndMenu();
     }
-    
-    if (ImGui::BeginMenu("View")) {
-      ImGui::MenuItem("Hardware Control", nullptr, &show_hardware_panel_);
-      ImGui::MenuItem("Capture Studio", nullptr, &show_capture_studio_);
-      ImGui::MenuItem("Log", nullptr, &show_log_panel_);
-      ImGui::MenuItem("Session Manager", nullptr, &show_session_manager_);
-      ImGui::MenuItem("Network Settings", nullptr, &show_network_panel_);
-      ImGui::EndMenu();
-    }
-    
+
     if (ImGui::BeginMenu("Camera")) {
       if (ImGui::MenuItem("Discover Cameras", "F5")) {
         camera_manager_->DiscoverCameras([this](const std::string& msg) {
@@ -292,28 +249,9 @@ void Application::RenderDockSpace() {
       if (ImGui::MenuItem("Disconnect All", "F7")) {
         camera_manager_->DisconnectAllCameras();
       }
-      ImGui::Separator();
-      if (ImGui::MenuItem("Capture All", "Space", false, !camera_manager_->IsCapturing())) {
-        if (session_manager_->HasActiveSession() && camera_manager_->GetConnectedCount() > 0) {
-          auto* session = session_manager_->GetCurrentSession();
-          std::string sessionPath = session->GetNextCapturePath();
-          
-          // Use async capture
-          camera_manager_->CaptureAllCamerasAsync(sessionPath, true, 750, [this, session, sessionPath](const std::string& msg) {
-            AddGlobalLog(msg);
-            if (msg.find("completed successfully") != std::string::npos) {
-              session_manager_->RecordCapture(sessionPath);
-            }
-          });
-        } else if (!session_manager_->HasActiveSession()) {
-          AddGlobalLog("[SESSION] No active session - please start a session first", LogLevel::kWarning);
-        } else if (camera_manager_->GetConnectedCount() == 0) {
-          AddGlobalLog("[NET] No cameras connected", LogLevel::kWarning);
-        }
-      }
       ImGui::EndMenu();
     }
-    
+
     if (ImGui::BeginMenu("Help")) {
       if (ImGui::MenuItem("About...")) {
         show_about_dialog_ = true;
@@ -325,56 +263,48 @@ void Application::RenderDockSpace() {
     }
     ImGui::EndMenuBar();
   }
-  
-  ImGuiID dockspace_id = ImGui::GetID("MyDockSpace");
-  ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), dockspace_flags);
-  
-  // Set up default layout on first run
-  static bool first_time = true;
-  if (first_time) {
-    first_time = false;
-    
-    ImGui::DockBuilderRemoveNode(dockspace_id);
-    ImGui::DockBuilderAddNode(dockspace_id, dockspace_flags | ImGuiDockNodeFlags_DockSpace);
-    ImGui::DockBuilderSetNodeSize(dockspace_id, viewport->Size);
-    
-    // Split the dockspace into sections - modern layout
-    auto dock_id_left = ImGui::DockBuilderSplitNode(dockspace_id, ImGuiDir_Left, 0.22f, nullptr, &dockspace_id);
-    auto dock_id_bottom = ImGui::DockBuilderSplitNode(dockspace_id, ImGuiDir_Down, 0.25f, nullptr, &dockspace_id);
-    
-    // Split the remaining space between capture controls and file explorer
-    auto dock_id_top = ImGui::DockBuilderSplitNode(dockspace_id, ImGuiDir_Up, 0.4f, nullptr, &dockspace_id);
-    
-    // Dock windows with modern layout
-    ImGui::DockBuilderDockWindow("🔧 Hardware Control", dock_id_left);
-    ImGui::DockBuilderDockWindow("🎬 Capture Studio", dock_id_top);  // Top for capture controls
-    ImGui::DockBuilderDockWindow("📁 File Explorer", dockspace_id);  // Main area for file explorer
-    ImGui::DockBuilderDockWindow("Log", dock_id_bottom);
-    ImGui::DockBuilderDockWindow("Session Manager", dock_id_bottom);
-    ImGui::DockBuilderDockWindow("Network Settings", dock_id_bottom);
-    
-    ImGui::DockBuilderFinish(dockspace_id);
+
+  // Main layout: Navigation rail (left) + Content area (right)
+  const float nav_width = 70.0f;
+  const float log_height = 200.0f;
+  ImVec2 content_size = ImGui::GetContentRegionAvail();
+
+  // Navigation rail on left
+  ImGui::BeginChild("NavRail", ImVec2(nav_width, content_size.y - log_height), true,
+                    ImGuiWindowFlags_NoScrollbar);
+  current_view_ = navigation_rail_->Render(current_view_);
+  ImGui::EndChild();
+
+  ImGui::SameLine();
+
+  // Main content area (right side)
+  ImGui::BeginGroup();
+
+  // Content panel
+  ImGui::BeginChild("ContentArea", ImVec2(content_size.x - nav_width, content_size.y - log_height), true);
+
+  switch (current_view_) {
+    case NavigationItem::Capture:
+      if (capture_view_) capture_view_->Render();
+      break;
+    case NavigationItem::Files:
+      if (files_view_) files_view_->Render();
+      break;
+    case NavigationItem::Hardware:
+      if (hardware_view_) hardware_view_->Render();
+      break;
+    case NavigationItem::Settings:
+      if (settings_view_) settings_view_->Render();
+      break;
   }
-  
-  ImGui::End();
-}
 
+  ImGui::EndChild();
 
+  // Log panel at bottom
+  if (log_panel_) log_panel_->RenderContent();
 
-void Application::RenderSessionManagerPanel() {
-  if (ImGui::Begin("Session Manager", &show_session_manager_)) {
-    // TODO: Implement session manager content
-    ImGui::Text("Session management will be here");
-  }
-  ImGui::End();
-}
+  ImGui::EndGroup();
 
-
-void Application::RenderNetworkPanel() {
-  if (ImGui::Begin("Network Settings", &show_network_panel_)) {
-    // TODO: Implement network settings content
-    ImGui::Text("Network settings will be here");
-  }
   ImGui::End();
 }
 

@@ -128,7 +128,13 @@ add_executable(neural_capture
     src/gui/PreferencesDialog.cpp
     src/gui/LogPanel.cpp
     src/gui/Application.cpp
+    src/gui/core/NavigationRail.cpp
+    src/gui/views/CaptureView.cpp
+    src/gui/views/FilesView.cpp
+    src/gui/views/HardwareView.cpp
+    src/gui/views/SettingsView.cpp
     src/gui/widgets/FileExplorerWidget.cpp
+    src/gui/widgets/SessionWidget.cpp
     src/gui/widgets/CaptureStudioPanel.cpp
 )
 

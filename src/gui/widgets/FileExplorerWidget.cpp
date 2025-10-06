@@ -123,6 +123,53 @@ void FileExplorerWidget::Render(CaptureSession* session) {
     ImGui::End();
 }
 
+void FileExplorerWidget::RenderContent(CaptureSession* session) {
+    // Ensure initialization is complete
+#ifdef _WIN32
+    if (!gdiplus_initialized_) {
+        Initialize();
+    }
+#endif
+
+    // Header with actions
+    if (ImGui::SmallButton("🔄 Refresh")) {
+        RefreshFiles();
+    }
+    ImGui::SameLine();
+    if (HasSelection()) {
+        if (ImGui::SmallButton("❌ Clear")) {
+            ClearSelection();
+        }
+    }
+
+    ImGui::Separator();
+
+    if (!session) {
+        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "No active session - start a session to view files");
+    } else {
+        LoadFilesFromSession(session);
+
+        // Two-panel layout: File tree on left, Preview on right
+        ImVec2 available_size = ImGui::GetContentRegionAvail();
+
+        // File tree panel (left side, 40% width)
+        ImGui::BeginChild("FileTreePanel", ImVec2(available_size.x * 0.4f, 0), true, ImGuiWindowFlags_HorizontalScrollbar);
+        ImGui::Text("📂 Files");
+        ImGui::Separator();
+        RenderFileTree(session);
+        ImGui::EndChild();
+
+        ImGui::SameLine();
+
+        // Preview panel (right side, remaining width)
+        ImGui::BeginChild("PreviewPanel", ImVec2(0, 0), true);
+        ImGui::Text("🔍 Preview");
+        ImGui::Separator();
+        RenderPreview();
+        ImGui::EndChild();
+    }
+}
+
 void FileExplorerWidget::RenderFileTree(CaptureSession* session) {
     if (capture_files_.empty()) {
         ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "No captures yet - take your first capture!");

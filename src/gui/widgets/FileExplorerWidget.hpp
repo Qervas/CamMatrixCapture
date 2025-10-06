@@ -27,6 +27,7 @@ public:
 
     void Initialize();
     void Render(CaptureSession* session = nullptr);
+    void RenderContent(CaptureSession* session); // Render without window wrapper
     void Shutdown();
 
     // State queries
