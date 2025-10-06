@@ -118,6 +118,7 @@ add_executable(neural_capture
     src/hardware/CameraManager.cpp
     src/utils/SessionManager.cpp
     src/utils/SettingsManager.cpp
+    src/utils/NotificationSounds.cpp
     src/bluetooth/BluetoothManager.cpp
     src/bluetooth/BluetoothDevice.cpp
     src/bluetooth/BluetoothScanner.cpp
@@ -127,7 +128,6 @@ add_executable(neural_capture
     src/gui/PreferencesDialog.cpp
     src/gui/LogPanel.cpp
     src/gui/Application.cpp
-    src/gui/widgets/SessionWidget.cpp
     src/gui/widgets/FileExplorerWidget.cpp
     src/gui/widgets/CaptureStudioPanel.cpp
 )
