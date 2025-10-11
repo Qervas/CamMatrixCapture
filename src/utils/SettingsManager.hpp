@@ -40,7 +40,14 @@ struct IndividualCameraSettings {
     int roi_width = 1920;
     int roi_height = 1080;
     bool roi_enabled = false;
-    
+
+    // Crop settings (for preview and capture)
+    bool crop_enabled = false;
+    int crop_offset_x = 0;
+    int crop_offset_y = 0;
+    int crop_width = 4112;   // Full width by default
+    int crop_height = 3008;  // Full height by default
+
     SimpleJSON ToJson() const;
     void FromJson(const SimpleJSON& json);
     void Reset();
@@ -96,7 +103,16 @@ struct CameraSettings {
     int roi_width = 1920;
     int roi_height = 1080;
     bool roi_enabled = false;
-    
+
+    // Crop settings (for preview and capture)
+    bool crop_enabled = false;
+    int crop_offset_x = 0;
+    int crop_offset_y = 0;
+    int crop_width = 4112;   // Full width by default
+    int crop_height = 3008;  // Full height by default
+    bool crop_maintain_aspect = true;
+    float crop_aspect_ratio = 1.37f; // 4112/3008 default ratio
+
     // Transport Layer
     int packet_size = 1500;
     int packet_delay = 0;

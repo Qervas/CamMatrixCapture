@@ -13,6 +13,7 @@ class PreferencesDialog {
   ~PreferencesDialog() = default;
 
   void Show(bool* p_open);
+  void RenderContent();  // Render without window wrapper
 
   void SetSettings(SettingsManager* settings) { settings_manager_ = settings; }
 

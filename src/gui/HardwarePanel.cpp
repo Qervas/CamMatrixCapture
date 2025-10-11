@@ -34,6 +34,12 @@ void HardwarePanel::Render(bool* p_open) {
         return;
     }
 
+    RenderContent();
+
+    ImGui::End();
+}
+
+void HardwarePanel::RenderContent() {
     const float em = ImGui::GetFontSize();
     const ImVec2 cardPadding(1.0f * em, 0.75f * em);
     const float cardSpacing = 0.75f * em;
@@ -74,19 +80,17 @@ void HardwarePanel::Render(bool* p_open) {
     // Card 3: Tabbed Controls
     ImGui::BeginChild("card_tabs", ImVec2(0, 0), true);
     if (ImGui::BeginTabBar("HardwareTabs", ImGuiTabBarFlags_None)) {
-        if (ImGui::BeginTabItem("📷 Cameras")) {
+        if (ImGui::BeginTabItem("◆ Cameras")) {
             RenderCameraTab();
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem("🔗 Bluetooth Turntable")) {
+        if (ImGui::BeginTabItem("◉ Bluetooth Turntable")) {
             RenderBluetoothTab();
             ImGui::EndTabItem();
         }
         ImGui::EndTabBar();
     }
     ImGui::EndChild();
-
-    ImGui::End();
 }
 
 void HardwarePanel::RenderCameraTab() {
@@ -156,7 +160,7 @@ void HardwarePanel::RenderCameraControls() {
     // Connect/Disconnect button
     bool has_connected = camera_manager_->GetConnectedCount() > 0;
     if (has_connected) {
-        if (ImGui::Button("❌ Disconnect All", btn)) {
+        if (ImGui::Button("❌ Disconnect Cameras", btn)) {
             camera_manager_->DisconnectAllCameras();
             LogMessage("[CAMERA] Disconnected all cameras");
         }

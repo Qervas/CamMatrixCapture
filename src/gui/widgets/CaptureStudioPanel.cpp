@@ -16,18 +16,23 @@ CaptureStudioPanel::~CaptureStudioPanel() {
     Shutdown();
 }
 
-void CaptureStudioPanel::Initialize(CameraManager* camera_manager, BluetoothManager* bluetooth_manager, SessionManager* session_manager) {
+void CaptureStudioPanel::Initialize(CameraManager* camera_manager, BluetoothManager* bluetooth_manager, SessionManager* session_manager, SettingsManager* settings_manager) {
     camera_manager_ = camera_manager;
     bluetooth_manager_ = bluetooth_manager;
     session_manager_ = session_manager;
-    
+    settings_manager_ = settings_manager;
+
     // Session control state initialized
-    
+
     file_explorer_widget_ = std::make_unique<FileExplorerWidget>();
     file_explorer_widget_->Initialize(); // Initialize GDI+ for TIFF loading
     file_explorer_widget_->SetHeight(200.0f);
     file_explorer_widget_->SetShowPreview(true);
     file_explorer_widget_->SetLogCallback([this](const std::string& msg) { LogMessage(msg); });
+
+    camera_preview_widget_ = std::make_unique<CameraPreviewWidget>();
+    camera_preview_widget_->Initialize(camera_manager, settings_manager);
+    camera_preview_widget_->SetLogCallback([this](const std::string& msg) { LogMessage(msg); });
     
     // Initialize turntable controller
     turntable_controller_ = std::make_unique<TurntableController>();
@@ -52,6 +57,7 @@ void CaptureStudioPanel::Shutdown() {
     StopSequenceThread();
 
     file_explorer_widget_.reset();
+    camera_preview_widget_.reset();
     
     // Shutdown turntable controller
     if (turntable_controller_) {
@@ -69,9 +75,15 @@ void CaptureStudioPanel::Render() {
         ImGui::End();
         return;
     }
+
+    RenderContent();
+
+    ImGui::End();
+}
+
+void CaptureStudioPanel::RenderContent() {
     if (!camera_manager_ || !session_manager_) {
         ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "❌ System not initialized");
-        ImGui::End();
         return;
     }
 
@@ -97,20 +109,32 @@ void CaptureStudioPanel::Render() {
     RenderSessionControl();
     ImGui::Separator();
 
-    // Tab system for Manual vs Automated capture
+    // Tab system for Manual, Automated, and Files
     ImGuiTabBarFlags tab_bar_flags = ImGuiTabBarFlags_None;
 
     if (ImGui::BeginTabBar("CaptureModeTabs", tab_bar_flags)) {
 
-        if (ImGui::BeginTabItem("📷 Manual")) {
+        if (ImGui::BeginTabItem("◆ Manual")) {
             current_mode_ = CaptureMode::Manual;
             RenderManualCapture();
             ImGui::EndTabItem();
         }
 
-        if (ImGui::BeginTabItem("🔄 Automated")) {
+        if (ImGui::BeginTabItem("● Automated")) {
             current_mode_ = CaptureMode::Automated;
             RenderAutomatedCapture();
+            ImGui::EndTabItem();
+        }
+
+        if (ImGui::BeginTabItem("◉ Preview")) {
+            // Render camera preview widget
+            if (camera_preview_widget_) {
+                camera_preview_widget_->RenderContent();
+            } else {
+                ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f),
+                    "❌ Camera preview not available");
+            }
+
             ImGui::EndTabItem();
         }
 
@@ -118,12 +142,6 @@ void CaptureStudioPanel::Render() {
     }
 
     ImGui::PopStyleVar();
-
-    // Render file explorer at the bottom
-    CaptureSession* current_session = session_manager_->GetCurrentSession();
-    file_explorer_widget_->Render(current_session);
-
-    ImGui::End();
 }
 
 void CaptureStudioPanel::RenderModeSelector() {
@@ -159,6 +177,11 @@ void CaptureStudioPanel::RenderManualCapture() {
     if (ImGui::RadioButton("Single", single_camera_mode_)) {
         single_camera_mode_ = true;
     }
+
+    ImGui::SameLine();
+    ImGui::Dummy(ImVec2(20, 0));
+    ImGui::SameLine();
+    ImGui::Checkbox("Apply Crop", &apply_crop_manual_);
 
     ImGui::Separator();
 
@@ -448,6 +471,9 @@ void CaptureStudioPanel::RenderAutomatedCapture() {
             ImGui::Text("→ %d", auto_capture_count_);
             ImGui::PopStyleColor();
         }
+
+        // Apply crop checkbox
+        ImGui::Checkbox("Apply Crop", &apply_crop_automated_);
 
         // Timing
         ImGui::Text("Speed");

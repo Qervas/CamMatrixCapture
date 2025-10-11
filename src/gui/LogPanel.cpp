@@ -15,13 +15,17 @@ LogPanel::LogPanel() {
 
 void LogPanel::Render(bool* p_open) {
   if (!p_open || !*p_open) return;
-  
+
   if (ImGui::Begin("Log", p_open)) {
-    RenderToolbar();
-    ImGui::Separator();
-    RenderMessages();
+    RenderContent();
   }
   ImGui::End();
+}
+
+void LogPanel::RenderContent() {
+  RenderToolbar();
+  ImGui::Separator();
+  RenderMessages();
 }
 
 void LogPanel::AddLog(const std::string& message, LogLevel level) {

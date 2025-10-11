@@ -19,6 +19,7 @@ public:
 
     void Initialize(BluetoothManager* bluetooth_manager, CameraManager* camera_manager, SessionManager* session_manager, SettingsManager* settings_manager);
     void Render(bool* p_open);
+    void RenderContent();  // Render without window wrapper
     void Shutdown();
 
     // Status getters

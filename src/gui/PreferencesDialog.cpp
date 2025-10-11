@@ -14,89 +14,88 @@ void PreferencesDialog::Show(bool* p_open) {
   ImGui::SetNextWindowSize(ImVec2(600, 400), ImGuiCond_FirstUseEver);
 
   if (ImGui::Begin("Preferences", p_open, ImGuiWindowFlags_NoDocking)) {
-    // Load current settings every time dialog is shown
-    if (settings_manager_) {
-      const auto& app_settings = settings_manager_->GetAppSettings();
-      temp_ui_scale_ = app_settings.ui_scale;
-      temp_dark_theme_ = app_settings.dark_theme;
-      temp_vsync_ = app_settings.vsync;
-      temp_auto_save_settings_ = app_settings.auto_save_settings;
-      temp_window_width_ = app_settings.window_width;
-      temp_window_height_ = app_settings.window_height;
-      temp_window_x_ = app_settings.window_x;
-      temp_window_y_ = app_settings.window_y;
-
-      // Load camera settings
-      const auto& camera_settings = settings_manager_->GetCameraSettings();
-      temp_exposure_time_ = camera_settings.exposure_time;
-      temp_gain_ = camera_settings.gain;
-      temp_auto_exposure_ = camera_settings.auto_exposure;
-      temp_auto_gain_ = camera_settings.auto_gain;
-      temp_white_balance_red_ = camera_settings.white_balance_red;
-      temp_white_balance_green_ = camera_settings.white_balance_green;
-      temp_white_balance_blue_ = camera_settings.white_balance_blue;
-      temp_auto_white_balance_ = camera_settings.auto_white_balance;
-      temp_gamma_ = camera_settings.gamma;
-
-      // Load log settings
-      if (auto* log_panel = GetGlobalLogPanel()) {
-        temp_log_auto_delete_ = log_panel->GetAutoDeleteEnabled();
-        temp_log_max_messages_ = static_cast<int>(log_panel->GetMaxMessages());
-      }
-
-      // Load sound settings
-      auto& sound_system = NotificationSounds::Instance();
-      temp_completion_sound_enabled_ = sound_system.IsCompletionSoundEnabled();
-      temp_completion_sound_type_ = static_cast<int>(sound_system.GetCompletionSoundType());
-      strncpy_s(temp_custom_sound_path_, sound_system.GetCustomSoundPath().c_str(), sizeof(temp_custom_sound_path_) - 1);
-    }
-
-    // Left side - category list
-    ImGui::BeginChild("left_pane", ImVec2(150, 0), true);
-
-    static int selected_tab = 0;
-    if (ImGui::Selectable("General", selected_tab == 0)) selected_tab = 0;
-    if (ImGui::Selectable("Appearance", selected_tab == 1)) selected_tab = 1;
-    if (ImGui::Selectable("Performance", selected_tab == 2)) selected_tab = 2;
-    if (ImGui::Selectable("Camera", selected_tab == 3)) selected_tab = 3;
-    if (ImGui::Selectable("About", selected_tab == 4)) selected_tab = 4;
-
-    ImGui::EndChild();
-
-    ImGui::SameLine();
-
-    // Right side - settings for selected category
-    ImGui::BeginChild("right_pane", ImVec2(0, -ImGui::GetFrameHeightWithSpacing()));
-
-    switch (selected_tab) {
-      case 0: RenderGeneralTab(); break;
-      case 1: RenderAppearanceTab(); break;
-      case 2: RenderPerformanceTab(); break;
-      case 3: RenderCameraTab(); break;
-      case 4: RenderAboutTab(); break;
-    }
-
-    ImGui::EndChild();
-
-    // Bottom buttons
-    ImGui::Separator();
-
-    if (ImGui::Button("Save")) {
-      SaveSettings();
-      ApplySettings();
-    }
-
-    ImGui::SameLine();
-    if (ImGui::Button("Reset to Defaults")) {
-      ResetSettings();
-    }
-
-    ImGui::SameLine();
-    if (ImGui::Button("Cancel")) {
-      *p_open = false;
-    }
+    RenderContent();
   }
   ImGui::End();
+}
+
+void PreferencesDialog::RenderContent() {
+  // Load current settings every time dialog is shown
+  if (settings_manager_) {
+    const auto& app_settings = settings_manager_->GetAppSettings();
+    temp_ui_scale_ = app_settings.ui_scale;
+    temp_dark_theme_ = app_settings.dark_theme;
+    temp_vsync_ = app_settings.vsync;
+    temp_auto_save_settings_ = app_settings.auto_save_settings;
+    temp_window_width_ = app_settings.window_width;
+    temp_window_height_ = app_settings.window_height;
+    temp_window_x_ = app_settings.window_x;
+    temp_window_y_ = app_settings.window_y;
+
+    // Load camera settings
+    const auto& camera_settings = settings_manager_->GetCameraSettings();
+    temp_exposure_time_ = camera_settings.exposure_time;
+    temp_gain_ = camera_settings.gain;
+    temp_auto_exposure_ = camera_settings.auto_exposure;
+    temp_auto_gain_ = camera_settings.auto_gain;
+    temp_white_balance_red_ = camera_settings.white_balance_red;
+    temp_white_balance_green_ = camera_settings.white_balance_green;
+    temp_white_balance_blue_ = camera_settings.white_balance_blue;
+    temp_auto_white_balance_ = camera_settings.auto_white_balance;
+    temp_gamma_ = camera_settings.gamma;
+
+    // Load log settings
+    if (auto* log_panel = GetGlobalLogPanel()) {
+      temp_log_auto_delete_ = log_panel->GetAutoDeleteEnabled();
+      temp_log_max_messages_ = static_cast<int>(log_panel->GetMaxMessages());
+    }
+
+    // Load sound settings
+    auto& sound_system = NotificationSounds::Instance();
+    temp_completion_sound_enabled_ = sound_system.IsCompletionSoundEnabled();
+    temp_completion_sound_type_ = static_cast<int>(sound_system.GetCompletionSoundType());
+    strncpy_s(temp_custom_sound_path_, sound_system.GetCustomSoundPath().c_str(), sizeof(temp_custom_sound_path_) - 1);
+  }
+
+  // Left side - category list
+  ImGui::BeginChild("left_pane", ImVec2(150, 0), true);
+
+  static int selected_tab = 0;
+  if (ImGui::Selectable("General", selected_tab == 0)) selected_tab = 0;
+  if (ImGui::Selectable("Appearance", selected_tab == 1)) selected_tab = 1;
+  if (ImGui::Selectable("Performance", selected_tab == 2)) selected_tab = 2;
+  if (ImGui::Selectable("Camera", selected_tab == 3)) selected_tab = 3;
+  if (ImGui::Selectable("About", selected_tab == 4)) selected_tab = 4;
+
+  ImGui::EndChild();
+
+  ImGui::SameLine();
+
+  // Right side - settings for selected category
+  ImGui::BeginChild("right_pane", ImVec2(0, -ImGui::GetFrameHeightWithSpacing()));
+
+  switch (selected_tab) {
+    case 0: RenderGeneralTab(); break;
+    case 1: RenderAppearanceTab(); break;
+    case 2: RenderPerformanceTab(); break;
+    case 3: RenderCameraTab(); break;
+    case 4: RenderAboutTab(); break;
+  }
+
+  ImGui::EndChild();
+
+  // Bottom buttons
+  ImGui::Separator();
+
+  if (ImGui::Button("Save")) {
+    SaveSettings();
+    ApplySettings();
+  }
+
+  ImGui::SameLine();
+  if (ImGui::Button("Reset to Defaults")) {
+    ResetSettings();
+  }
 }
 
 void PreferencesDialog::RenderGeneralTab() {

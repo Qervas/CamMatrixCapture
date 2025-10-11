@@ -14,6 +14,7 @@
 #include "../../bluetooth/TurntableController.hpp"
 #include "../../utils/NotificationSounds.hpp"
 #include "FileExplorerWidget.hpp"
+#include "CameraPreviewWidget.hpp"
 
 namespace SaperaCapturePro {
 
@@ -38,8 +39,9 @@ public:
     CaptureStudioPanel();
     ~CaptureStudioPanel();
 
-    void Initialize(CameraManager* camera_manager, BluetoothManager* bluetooth_manager, SessionManager* session_manager);
+    void Initialize(CameraManager* camera_manager, BluetoothManager* bluetooth_manager, SessionManager* session_manager, SettingsManager* settings_manager);
     void Render();
+    void RenderContent();  // Render without window wrapper
     void Shutdown();
 
     // State queries
@@ -56,11 +58,13 @@ private:
     CameraManager* camera_manager_ = nullptr;
     BluetoothManager* bluetooth_manager_ = nullptr;
     SessionManager* session_manager_ = nullptr;
+    SettingsManager* settings_manager_ = nullptr;
     std::unique_ptr<TurntableController> turntable_controller_;
     
     // Session UI state
     char session_name_input_[256] = "";
     std::unique_ptr<FileExplorerWidget> file_explorer_widget_;
+    std::unique_ptr<CameraPreviewWidget> camera_preview_widget_;
     
     // UI state
     CaptureMode current_mode_ = CaptureMode::Manual;
@@ -73,6 +77,7 @@ private:
     bool single_camera_mode_ = false;
     std::string selected_camera_id_ = "";
     int selected_camera_index_ = -1;
+    bool apply_crop_manual_ = false;  // Apply crop during manual capture
     
     // Automated capture state
     int auto_capture_count_ = 36;
@@ -80,6 +85,7 @@ private:
     float capture_delay_ = 2.0f;
     bool edit_by_captures_ = true; // true = edit captures, false = edit angle
     float turntable_speed_ = 70.0f; // Speed setting (seconds for 360°)
+    bool apply_crop_automated_ = false;  // Apply crop during automated capture
     int current_capture_index_ = 0;
     std::chrono::steady_clock::time_point last_capture_time_;
     std::chrono::steady_clock::time_point capture_start_time_;  // For async capture timing

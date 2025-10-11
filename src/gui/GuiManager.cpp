@@ -73,21 +73,75 @@ bool GuiManager::Initialize(const std::string& window_title, int width, int heig
   // Load larger, crisp default fonts (prefer system Segoe UI on Windows)
   io.Fonts->Clear();
   bool loaded_font = false;
+  ImFont* main_font = nullptr;
+
   try {
     const char* segoe_path = "C:/Windows/Fonts/segoeui.ttf";
     if (std::filesystem::exists(segoe_path)) {
-      io.Fonts->AddFontFromFileTTF(segoe_path, font_size_px);
+      main_font = io.Fonts->AddFontFromFileTTF(segoe_path, font_size_px);
       loaded_font = true;
     }
   } catch (...) {
     // ignore
   }
+
   if (!loaded_font) {
     ImFontConfig cfg;
     cfg.SizePixels = font_size_px;
-    io.Fonts->AddFontDefault(&cfg);
+    main_font = io.Fonts->AddFontDefault(&cfg);
   }
-  io.FontDefault = io.Fonts->Fonts.back();
+
+  // Merge emoji font for emoji support
+  try {
+    const char* emoji_path = "C:/Windows/Fonts/seguiemj.ttf";
+    if (std::filesystem::exists(emoji_path)) {
+      ImFontConfig emoji_config;
+      emoji_config.MergeMode = true;
+      emoji_config.GlyphMinAdvanceX = font_size_px;
+      emoji_config.PixelSnapH = true;
+
+      // Unicode ranges for basic emojis and symbols (16-bit compatible)
+      // For full emoji support beyond U+FFFF, we'd need ImGui with FreeType backend
+      static const ImWchar emoji_ranges[] = {
+        0x2300, 0x23FF,   // Miscellaneous technical
+        0x2460, 0x24FF,   // Enclosed alphanumerics
+        0x2500, 0x257F,   // Box drawing
+        0x2580, 0x259F,   // Block elements
+        0x25A0, 0x25FF,   // Geometric shapes
+        0x2600, 0x26FF,   // Miscellaneous symbols (includes common emoji)
+        0x2700, 0x27BF,   // Dingbats
+        0x2B00, 0x2BFF,   // Miscellaneous symbols and arrows
+        0x2900, 0x297F,   // Supplemental arrows-B
+        0x2190, 0x21FF,   // Arrows
+        0,
+      };
+
+      io.Fonts->AddFontFromFileTTF(emoji_path, font_size_px, &emoji_config, emoji_ranges);
+
+      // Load full emoji range using glyph builder (for emojis beyond U+FFFF)
+      ImFontGlyphRangesBuilder builder;
+      builder.AddRanges(emoji_ranges);
+      // Add some common emojis manually (these are beyond U+FFFF so we need to handle them specially)
+      builder.AddChar(0x1F4F7); // Camera emoji
+      builder.AddChar(0x1F4C1); // Folder emoji
+      builder.AddChar(0x1F527); // Wrench emoji
+      builder.AddChar(0x2699);  // Gear emoji
+      builder.AddChar(0x1F504); // Arrows emoji
+      builder.AddChar(0x1F4F8); // Camera with flash
+      builder.AddChar(0x1F50D); // Magnifying glass
+
+      ImVector<ImWchar> ranges_vec;
+      builder.BuildRanges(&ranges_vec);
+
+      if (ranges_vec.Size > 0) {
+        io.Fonts->AddFontFromFileTTF(emoji_path, font_size_px, &emoji_config, ranges_vec.Data);
+      }
+    }
+  } catch (...) {
+    // emoji font loading failed, continue without emoji support
+  }
+
+  io.FontDefault = main_font;
   io.FontGlobalScale = 1.0f; // keep text crisp
 
   // Scale geometry (widgets, padding) to match DPI, without scaling the font rendering

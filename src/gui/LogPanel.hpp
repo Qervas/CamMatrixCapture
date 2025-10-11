@@ -28,6 +28,7 @@ class LogPanel {
   ~LogPanel() = default;
 
   void Render(bool* p_open);
+  void RenderContent();  // Render without window wrapper
 
   void AddLog(const std::string& message, LogLevel level = LogLevel::kInfo);
   void Clear();
