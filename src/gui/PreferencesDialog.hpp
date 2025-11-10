@@ -42,6 +42,11 @@ class PreferencesDialog {
  private:
   SettingsManager* settings_manager_ = nullptr;
 
+  // State tracking
+  bool settings_loaded_ = false;
+  bool settings_changed_ = false;
+  float settings_applied_timer_ = 0.0f;  // For showing "Applied!" message
+
   // Temporary values for editing
   float temp_ui_scale_ = 1.0f;
   bool temp_dark_theme_ = true;
@@ -71,6 +76,11 @@ class PreferencesDialog {
   float temp_wb_offset_g_ = 0.0f;
   float temp_wb_offset_b_ = 0.0f;
 
+  // Parallel capture settings temporary values
+  int temp_parallel_capture_groups_ = 1;
+  int temp_capture_delay_ms_ = 750;
+  int temp_stagger_delay_ms_ = 150;
+
   // Log settings temporary values
   bool temp_log_auto_delete_ = false;
   int temp_log_max_messages_ = 0;  // 0 = unlimited
@@ -99,6 +109,8 @@ class PreferencesDialog {
   void ApplySettings();
   void SaveSettings();
   void ResetSettings();
+  void LoadSettingsOnce();  // Load settings only when dialog first opens
+  bool HasSettingsChanged() const;  // Check if any settings differ from saved
 };
 
 }  // namespace SaperaCapturePro

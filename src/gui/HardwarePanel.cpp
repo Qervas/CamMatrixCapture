@@ -99,6 +99,31 @@ void HardwarePanel::RenderCameraTab() {
     ImGui::Separator();
     ImGui::Spacing();
 
+    // Camera ordering controls
+    if (settings_manager_) {
+        auto& order_settings = settings_manager_->GetCameraOrderSettings();
+
+        ImGui::BeginChild("cam_order_controls", ImVec2(0, 2.5f * em), true);
+        ImGui::Checkbox("Enable Custom Camera Ordering", &order_settings.use_custom_ordering);
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Reorder cameras to match physical layout.\nDrag rows up/down to reorder.");
+        }
+
+        if (order_settings.use_custom_ordering) {
+            ImGui::SameLine();
+            if (ImGui::Button("Apply Ordering")) {
+                camera_manager_->ApplyCameraOrdering(order_settings);
+                settings_manager_->Save();
+                LogMessage("[ORDER] Camera ordering applied and saved");
+            }
+        }
+        ImGui::EndChild();
+
+        ImGui::Spacing();
+    }
+
     // List
     ImGui::BeginChild("cam_list", ImVec2(0, 0), true);
     RenderCameraTable();
@@ -151,6 +176,16 @@ void HardwarePanel::RenderCameraControls() {
         if (ImGui::Button("🔍 Discover Cameras", btn)) {
             camera_manager_->DiscoverCameras([this](const std::string& msg) {
                 LogMessage(msg);
+                // Auto-apply camera ordering after discovery completes
+                if (msg.find("Discovery complete") != std::string::npos) {
+                    if (settings_manager_) {
+                        auto& order_settings = settings_manager_->GetCameraOrderSettings();
+                        if (order_settings.use_custom_ordering) {
+                            camera_manager_->ApplyCameraOrdering(order_settings);
+                            LogMessage("[ORDER] Applied camera ordering from config");
+                        }
+                    }
+                }
             });
         }
     }
@@ -189,7 +224,7 @@ void HardwarePanel::RenderCameraControls() {
 }
 
 void HardwarePanel::RenderCameraTable() {
-    if (!camera_manager_) return;
+    if (!camera_manager_ || !settings_manager_) return;
     const float em = ImGui::GetFontSize();
 
     auto cameras = camera_manager_->GetDiscoveredCameras();
@@ -198,27 +233,118 @@ void HardwarePanel::RenderCameraTable() {
         return;
     }
 
-    if (ImGui::BeginTable("CameraTable", 4, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable)) {
+    auto& order_settings = settings_manager_->GetCameraOrderSettings();
+    bool ordering_enabled = order_settings.use_custom_ordering;
+
+    // Initialize ordering for newly discovered cameras
+    if (ordering_enabled) {
+        for (size_t i = 0; i < cameras.size(); ++i) {
+            if (!order_settings.HasCamera(cameras[i].serialNumber)) {
+                order_settings.SetDisplayPosition(cameras[i].serialNumber, static_cast<int>(i));
+            }
+        }
+        // Auto-apply ordering to update camera names
+        camera_manager_->ApplyCameraOrdering(order_settings);
+    } else {
+        // Reset ordering if disabled
+        camera_manager_->ApplyCameraOrdering(order_settings);
+    }
+
+    // Get ordered camera list
+    auto display_cameras = ordering_enabled ? camera_manager_->GetOrderedCameras() : cameras;
+
+    int column_count = ordering_enabled ? 6 : 4;
+    if (ImGui::BeginTable("CameraTable", column_count, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable)) {
+        if (ordering_enabled) {
+            ImGui::TableSetupColumn("Order", ImGuiTableColumnFlags_WidthFixed, 4.0f * em);
+            ImGui::TableSetupColumn("Actions", ImGuiTableColumnFlags_WidthFixed, 6.0f * em);
+        }
         ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthFixed, 8.0f * em);
-        ImGui::TableSetupColumn("Camera ID", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("Camera Name", ImGuiTableColumnFlags_WidthStretch);
         ImGui::TableSetupColumn("Serial", ImGuiTableColumnFlags_WidthStretch);
         ImGui::TableSetupColumn("Model", ImGuiTableColumnFlags_WidthStretch);
         ImGui::TableHeadersRow();
 
-        for (const auto& camera : cameras) {
+        for (size_t i = 0; i < display_cameras.size(); ++i) {
+            const auto& camera = display_cameras[i];
+            ImGui::PushID(i);
             ImGui::TableNextRow();
-            ImGui::TableSetColumnIndex(0);
+
+            if (ordering_enabled) {
+                // Order column
+                ImGui::TableSetColumnIndex(0);
+                int current_pos = order_settings.GetDisplayPosition(camera.serialNumber);
+                if (current_pos < 0) current_pos = static_cast<int>(i);
+                ImGui::Text("%d", current_pos + 1);
+
+                // Actions column
+                ImGui::TableSetColumnIndex(1);
+                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2, 2));
+
+                // Move up button
+                if (i > 0) {
+                    if (ImGui::SmallButton("↑")) {
+                        // Swap positions
+                        const auto& prev_camera = display_cameras[i - 1];
+                        int prev_pos = order_settings.GetDisplayPosition(prev_camera.serialNumber);
+                        int curr_pos = order_settings.GetDisplayPosition(camera.serialNumber);
+
+                        if (prev_pos < 0) prev_pos = static_cast<int>(i - 1);
+                        if (curr_pos < 0) curr_pos = static_cast<int>(i);
+
+                        order_settings.SetDisplayPosition(prev_camera.serialNumber, curr_pos);
+                        order_settings.SetDisplayPosition(camera.serialNumber, prev_pos);
+                        LogMessage("[ORDER] Moved camera up: " + camera.serialNumber);
+                    }
+                } else {
+                    ImGui::Dummy(ImVec2(20, 20));
+                }
+
+                ImGui::SameLine();
+
+                // Move down button
+                if (i < display_cameras.size() - 1) {
+                    if (ImGui::SmallButton("↓")) {
+                        // Swap positions
+                        const auto& next_camera = display_cameras[i + 1];
+                        int next_pos = order_settings.GetDisplayPosition(next_camera.serialNumber);
+                        int curr_pos = order_settings.GetDisplayPosition(camera.serialNumber);
+
+                        if (next_pos < 0) next_pos = static_cast<int>(i + 1);
+                        if (curr_pos < 0) curr_pos = static_cast<int>(i);
+
+                        order_settings.SetDisplayPosition(next_camera.serialNumber, curr_pos);
+                        order_settings.SetDisplayPosition(camera.serialNumber, next_pos);
+                        LogMessage("[ORDER] Moved camera down: " + camera.serialNumber);
+                    }
+                } else {
+                    ImGui::Dummy(ImVec2(20, 20));
+                }
+
+                ImGui::PopStyleVar();
+            }
+
+            // Status column
+            ImGui::TableSetColumnIndex(ordering_enabled ? 2 : 0);
             if (camera.isConnected) {
                 ImGui::TextColored(ImVec4(0.12f, 0.75f, 0.35f, 1.0f), "● Online");
             } else {
                 ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "○ Offline");
             }
-            ImGui::TableSetColumnIndex(1);
-            ImGui::Text("%s", camera.id.c_str());
-            ImGui::TableSetColumnIndex(2);
+
+            // Camera Name column
+            ImGui::TableSetColumnIndex(ordering_enabled ? 3 : 1);
+            ImGui::Text("%s", camera.name.c_str());
+
+            // Serial column
+            ImGui::TableSetColumnIndex(ordering_enabled ? 4 : 2);
             ImGui::Text("%s", camera.serialNumber.c_str());
-            ImGui::TableSetColumnIndex(3);
+
+            // Model column
+            ImGui::TableSetColumnIndex(ordering_enabled ? 5 : 3);
             ImGui::Text("%s", camera.modelName.c_str());
+
+            ImGui::PopID();
         }
 
         ImGui::EndTable();
@@ -539,6 +665,16 @@ void HardwarePanel::QuickConnectAll() {
             LogMessage("[QUICK] " + msg);
         });
         std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+
+        // Apply camera ordering after discovery
+        if (settings_manager_) {
+            auto& order_settings = settings_manager_->GetCameraOrderSettings();
+            if (order_settings.use_custom_ordering) {
+                camera_manager_->ApplyCameraOrdering(order_settings);
+                LogMessage("[QUICK] Applied camera ordering from config");
+            }
+        }
+
         auto cameras = camera_manager_->GetDiscoveredCameras();
         if (cameras.empty()) {
             LogMessage("[QUICK] ⚠️ No cameras discovered");

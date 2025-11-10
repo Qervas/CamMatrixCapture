@@ -116,6 +116,7 @@ struct CameraInfo {
     std::string modelName;
     std::string serverName;
     int resourceIndex = 0;
+    int displayPosition = -1;  // User-defined display order (-1 = not set, uses discovery order)
     bool isConnected = false;
     CameraStatus status = CameraStatus::Disconnected;
     CameraType type = CameraType::Industrial;

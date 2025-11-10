@@ -26,10 +26,14 @@ Application::~Application() {
 
 bool Application::Initialize() {
   try {
+    // Suppress Sapera SDK error dialogs - send errors to log instead of popups
+    SapManager::SetDisplayStatusMode(SapManager::StatusLog);
+    std::cout << "[SAPERA] Error display mode set to LOG (no popups)" << std::endl;
+
     InitializeSettings();
     InitializeGUI();
     InitializeBluetooth();
-    
+
     AddGlobalLog("Application initialized successfully", LogLevel::kSuccess);
     return true;
   } catch (const std::exception& e) {
@@ -62,7 +66,7 @@ std::string GetExecutableDirectory() {
 void Application::InitializeSettings() {
   // Get the directory where the executable is located
   std::string exe_dir = GetExecutableDirectory();
-  std::filesystem::path settings_path = std::filesystem::path(exe_dir) / "settings.json";
+  std::filesystem::path settings_path = std::filesystem::path(exe_dir) / "settings.ini";
   std::string settings_path_str = settings_path.string();
   
   std::cout << "[SETTINGS] Executable directory: " << exe_dir << std::endl;
@@ -78,7 +82,7 @@ void Application::InitializeSettings() {
   // Initialize settings manager with absolute path to exe directory
   settings_manager_ = std::make_unique<SettingsManager>(settings_path_str);
   settings_manager_->Load();
-  
+
   // Initialize session manager with absolute path using settings
   std::string dataset_folder = settings_manager_->GetAppSettings().last_output_folder;
   std::filesystem::path dataset_path = std::filesystem::path(exe_dir) / dataset_folder;
@@ -152,7 +156,7 @@ void Application::InitializeBluetooth() {
   files_view_ = std::make_unique<FilesView>(session_manager_.get());
   hardware_view_ = std::make_unique<HardwareView>(bluetooth_manager_, camera_manager_,
                                                    session_manager_.get(), settings_manager_.get());
-  settings_view_ = std::make_unique<SettingsView>(settings_manager_.get());
+  settings_view_ = std::make_unique<SettingsView>(settings_manager_.get(), camera_manager_);
 
   AddGlobalLog("System initialized successfully", LogLevel::kSuccess);
 }
@@ -239,6 +243,14 @@ void Application::RenderMainContent() {
       if (ImGui::MenuItem("Discover Cameras", "F5")) {
         camera_manager_->DiscoverCameras([this](const std::string& msg) {
           AddGlobalLog(msg);
+          // Auto-apply camera ordering after discovery completes
+          if (msg.find("Discovery complete") != std::string::npos) {
+            auto& order_settings = settings_manager_->GetCameraOrderSettings();
+            if (order_settings.use_custom_ordering) {
+              camera_manager_->ApplyCameraOrdering(order_settings);
+              AddGlobalLog("[ORDER] Applied camera ordering from config");
+            }
+          }
         });
       }
       if (ImGui::MenuItem("Connect All", "F6")) {

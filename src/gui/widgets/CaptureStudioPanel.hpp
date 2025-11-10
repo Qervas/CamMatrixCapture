@@ -82,7 +82,7 @@ private:
     // Automated capture state
     int auto_capture_count_ = 36;
     float rotation_angle_ = 10.0f;
-    float capture_delay_ = 2.0f;
+    // Removed capture_delay_ - no longer needed with stagger delays in CameraManager
     bool edit_by_captures_ = true; // true = edit captures, false = edit angle
     float turntable_speed_ = 70.0f; // Speed setting (seconds for 360°)
     bool apply_crop_automated_ = false;  // Apply crop during automated capture
@@ -205,6 +205,7 @@ private:
     void LogMessage(const std::string& message);
     std::string GenerateCaptureFilename() const;
     bool ValidateSystemState() const;
+    void ApplyCameraSettingsFromConfig();  // Apply settings from SettingsManager to CameraManager
 };
 
 } // namespace SaperaCapturePro
