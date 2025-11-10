@@ -4,6 +4,104 @@
 #include <algorithm>
 #include <iostream>
 
+// CameraOrderEntry implementation
+SimpleJSON CameraOrderEntry::ToJson() const {
+    SimpleJSON json;
+    json.set("serial_number", serial_number);
+    json.set("display_position", display_position);
+    return json;
+}
+
+void CameraOrderEntry::FromJson(const SimpleJSON& json) {
+    serial_number = json.get("serial_number", serial_number);
+    display_position = json.getInt("display_position", display_position);
+}
+
+// CameraOrderSettings implementation
+SimpleJSON CameraOrderSettings::ToJson() const {
+    SimpleJSON json;
+    json.set("use_custom_ordering", use_custom_ordering);
+
+    // Serialize order_entries as a delimited string
+    std::string entries_str;
+    for (size_t i = 0; i < order_entries.size(); ++i) {
+        if (i > 0) entries_str += "|";
+        entries_str += order_entries[i].serial_number + ":" + std::to_string(order_entries[i].display_position);
+    }
+    json.set("order_entries", entries_str);
+
+    return json;
+}
+
+void CameraOrderSettings::FromJson(const SimpleJSON& json) {
+    use_custom_ordering = json.getBool("use_custom_ordering", use_custom_ordering);
+
+    // Deserialize order_entries from delimited string
+    order_entries.clear();
+    std::string entries_str = json.get("order_entries", "");
+    if (!entries_str.empty()) {
+        size_t start = 0;
+        size_t end = entries_str.find('|');
+
+        while (start < entries_str.length()) {
+            std::string entry_str = (end == std::string::npos)
+                ? entries_str.substr(start)
+                : entries_str.substr(start, end - start);
+
+            size_t colon_pos = entry_str.find(':');
+            if (colon_pos != std::string::npos) {
+                CameraOrderEntry entry;
+                entry.serial_number = entry_str.substr(0, colon_pos);
+                entry.display_position = std::stoi(entry_str.substr(colon_pos + 1));
+                order_entries.push_back(entry);
+            }
+
+            if (end == std::string::npos) break;
+            start = end + 1;
+            end = entries_str.find('|', start);
+        }
+    }
+}
+
+void CameraOrderSettings::Reset() {
+    use_custom_ordering = false;
+    order_entries.clear();
+}
+
+int CameraOrderSettings::GetDisplayPosition(const std::string& serial_number) const {
+    for (const auto& entry : order_entries) {
+        if (entry.serial_number == serial_number) {
+            return entry.display_position;
+        }
+    }
+    return -1; // Not found
+}
+
+void CameraOrderSettings::SetDisplayPosition(const std::string& serial_number, int position) {
+    // Remove existing entry if present
+    RemoveCamera(serial_number);
+
+    // Add new entry
+    CameraOrderEntry entry;
+    entry.serial_number = serial_number;
+    entry.display_position = position;
+    order_entries.push_back(entry);
+}
+
+void CameraOrderSettings::RemoveCamera(const std::string& serial_number) {
+    order_entries.erase(
+        std::remove_if(order_entries.begin(), order_entries.end(),
+            [&serial_number](const CameraOrderEntry& entry) {
+                return entry.serial_number == serial_number;
+            }),
+        order_entries.end()
+    );
+}
+
+bool CameraOrderSettings::HasCamera(const std::string& serial_number) const {
+    return GetDisplayPosition(serial_number) != -1;
+}
+
 // CameraSettings implementation
 SimpleJSON CameraSettings::ToJson() const {
     SimpleJSON json;
@@ -261,6 +359,10 @@ void SettingsManager::ResetCameraSettings() {
     camera_settings.Reset();
 }
 
+void SettingsManager::ResetCameraOrderSettings() {
+    camera_order_settings.Reset();
+}
+
 // Individual Camera Settings Implementation - NEW
 IndividualCameraSettings& SettingsManager::GetIndividualCameraSettings(const std::string& camera_id) {
     if (individual_camera_settings.find(camera_id) == individual_camera_settings.end()) {
@@ -335,6 +437,7 @@ bool SettingsManager::Load() {
 void SettingsManager::ResetAllSettings() {
     ResetCameraSettings();
     ResetAppSettings();
+    ResetCameraOrderSettings();
 }
 
 void SettingsManager::SetConfigPath(const std::string& path) {
@@ -399,19 +502,25 @@ bool SettingsManager::SaveToFile() const {
 
 SimpleJSON SettingsManager::CreateFullSettings() const {
     SimpleJSON combined;
-    
+
     // Merge camera settings
     auto camera_json = camera_settings.ToJson();
     for (const auto& [key, value] : camera_json.data) {
         combined.data["camera_" + key] = value;
     }
-    
+
     // Merge app settings
     auto app_json = app_settings.ToJson();
     for (const auto& [key, value] : app_json.data) {
         combined.data["app_" + key] = value;
     }
-    
+
+    // Merge camera order settings - NEW
+    auto order_json = camera_order_settings.ToJson();
+    for (const auto& [key, value] : order_json.data) {
+        combined.data["camera_order_" + key] = value;
+    }
+
     // Merge individual camera settings - NEW
     for (const auto& [camera_id, settings] : individual_camera_settings) {
         auto individual_json = settings.ToJson();
@@ -419,16 +528,18 @@ SimpleJSON SettingsManager::CreateFullSettings() const {
             combined.data["individual_" + camera_id + "_" + key] = value;
         }
     }
-    
+
     return combined;
 }
 
 void SettingsManager::LoadFullSettings(const SimpleJSON& json) {
-    SimpleJSON camera_json, app_json;
+    SimpleJSON camera_json, app_json, camera_order_json;
     std::map<std::string, SimpleJSON> individual_jsons;
-    
+
     for (const auto& [key, value] : json.data) {
-        if (key.starts_with("camera_")) {
+        if (key.starts_with("camera_order_")) {
+            camera_order_json.data[key.substr(13)] = value; // Remove "camera_order_" prefix
+        } else if (key.starts_with("camera_")) {
             camera_json.data[key.substr(7)] = value; // Remove "camera_" prefix
         } else if (key.starts_with("app_")) {
             app_json.data[key.substr(4)] = value; // Remove "app_" prefix
@@ -443,10 +554,11 @@ void SettingsManager::LoadFullSettings(const SimpleJSON& json) {
             }
         }
     }
-    
+
     camera_settings.FromJson(camera_json);
     app_settings.FromJson(app_json);
-    
+    camera_order_settings.FromJson(camera_order_json); // NEW
+
     // Load individual camera settings - NEW
     individual_camera_settings.clear();
     for (const auto& [camera_id, json_data] : individual_jsons) {

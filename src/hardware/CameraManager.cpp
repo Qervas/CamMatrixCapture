@@ -1,8 +1,10 @@
 #include "CameraManager.hpp"
+#include "../utils/SettingsManager.hpp"
 #include <chrono>
 #include <filesystem>
 #include <sstream>
 #include <iomanip>
+#include <algorithm>
 
 namespace SaperaCapturePro {
 
@@ -664,6 +666,72 @@ void CameraManager::DetectCameraResolution() {
 
 bool CameraManager::IsConnected(const std::string& camera_id) const {
   return connected_devices_.find(camera_id) != connected_devices_.end();
+}
+
+void CameraManager::ApplyCameraOrdering(const ::CameraOrderSettings& order_settings) {
+  if (!order_settings.use_custom_ordering) {
+    // Reset all display positions to use discovery order
+    for (auto& camera : discovered_cameras_) {
+      camera.displayPosition = -1;
+    }
+    return;
+  }
+
+  // Apply custom ordering from settings
+  for (auto& camera : discovered_cameras_) {
+    int position = order_settings.GetDisplayPosition(camera.serialNumber);
+    camera.displayPosition = position;
+
+    // Update camera name based on position
+    if (position >= 0) {
+      std::string indexStr = std::to_string(position + 1);  // 1-based for display
+      if (indexStr.length() == 1) indexStr = "0" + indexStr;
+      camera.name = "cam_" + indexStr;
+    }
+  }
+
+  Log("[ORDER] Applied custom camera ordering");
+}
+
+std::vector<CameraInfo> CameraManager::GetOrderedCameras() const {
+  std::vector<CameraInfo> ordered = discovered_cameras_;
+
+  // Sort by display position (cameras without position go to end)
+  std::sort(ordered.begin(), ordered.end(), [](const CameraInfo& a, const CameraInfo& b) {
+    // Cameras with position set come first
+    if (a.displayPosition >= 0 && b.displayPosition < 0) return true;
+    if (a.displayPosition < 0 && b.displayPosition >= 0) return false;
+
+    // Both have positions or both don't
+    if (a.displayPosition >= 0 && b.displayPosition >= 0) {
+      return a.displayPosition < b.displayPosition;
+    }
+
+    // Neither has position, maintain discovery order (by id)
+    return std::stoi(a.id) < std::stoi(b.id);
+  });
+
+  return ordered;
+}
+
+std::string CameraManager::GetOrderedCameraName(const std::string& serial_number, int fallback_index) const {
+  // Find camera by serial number
+  for (const auto& camera : discovered_cameras_) {
+    if (camera.serialNumber == serial_number) {
+      if (camera.displayPosition >= 0) {
+        // Use display position
+        std::string indexStr = std::to_string(camera.displayPosition + 1);
+        if (indexStr.length() == 1) indexStr = "0" + indexStr;
+        return "cam_" + indexStr;
+      }
+      break;
+    }
+  }
+
+  // Fallback to provided index
+  std::string indexStr = std::to_string(fallback_index);
+  if (indexStr.length() == 1) indexStr = "0" + indexStr;
+  return "cam_" + indexStr;
 }
 
 void CameraManager::Log(const std::string& message) {

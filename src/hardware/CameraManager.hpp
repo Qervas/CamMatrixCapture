@@ -9,6 +9,9 @@
 #include "CameraTypes.hpp"
 #include "SapClassBasic.h"
 
+// Forward declare settings structs from global namespace
+struct CameraOrderSettings;
+
 namespace SaperaCapturePro {
 
 class CameraManager {
@@ -52,11 +55,16 @@ class CameraManager {
 
   // Getters
   const std::vector<CameraInfo>& GetDiscoveredCameras() const { return discovered_cameras_; }
+  std::vector<CameraInfo> GetOrderedCameras() const;  // Returns cameras sorted by display position
   bool IsConnected(const std::string& camera_id) const;
   int GetConnectedCount() const { return static_cast<int>(connected_devices_.size()); }
   bool IsDiscovering() const { return is_discovering_; }
   bool IsConnecting() const { return is_connecting_; }
   bool IsCapturing() const { return is_capturing_; }
+
+  // Camera ordering
+  void ApplyCameraOrdering(const ::CameraOrderSettings& order_settings);
+  std::string GetOrderedCameraName(const std::string& serial_number, int fallback_index) const;
   
   // Settings
   void SetExposureTime(int exposure_us) { exposure_time_ = exposure_us; }

@@ -10,16 +10,41 @@
 // Settings value type that can hold different types
 using SettingsValue = std::variant<int, float, bool, std::string>;
 
+// Camera Ordering Entry - Maps serial number to display position
+struct CameraOrderEntry {
+    std::string serial_number;  // Hardware serial number (e.g., "S1128470")
+    int display_position = 0;   // Display order (0-based, 0 = first camera)
+
+    SimpleJSON ToJson() const;
+    void FromJson(const SimpleJSON& json);
+};
+
+// Camera Ordering Settings - Maintains user-defined camera order
+struct CameraOrderSettings {
+    std::vector<CameraOrderEntry> order_entries;  // Ordered list of cameras
+    bool use_custom_ordering = false;             // Enable/disable custom ordering
+
+    SimpleJSON ToJson() const;
+    void FromJson(const SimpleJSON& json);
+    void Reset();
+
+    // Helper methods
+    int GetDisplayPosition(const std::string& serial_number) const;
+    void SetDisplayPosition(const std::string& serial_number, int position);
+    void RemoveCamera(const std::string& serial_number);
+    bool HasCamera(const std::string& serial_number) const;
+};
+
 // Individual Camera Settings for per-camera parameter control - NEW
 struct IndividualCameraSettings {
     std::string camera_id;
-    
+
     // Acquisition Control
     int exposure_time = 40000;  // 40k microseconds default
     float gain = 1.0f;
     bool auto_exposure = false;
     bool auto_gain = false;
-    
+
     // Color Control
     float white_balance_red = 1.0f;
     float white_balance_green = 1.0f;
@@ -28,12 +53,12 @@ struct IndividualCameraSettings {
     float saturation = 1.0f;
     float hue = 0.0f;
     float gamma = 1.0f;
-    
+
     // Advanced Features
     std::string acquisition_mode = "Continuous";
     int acquisition_frame_count = 1;
     // Frame rate controls removed for vanilla capture
-    
+
     // Region of Interest (ROI)
     int roi_offset_x = 0;
     int roi_offset_y = 0;
@@ -158,23 +183,29 @@ private:
     std::string config_file_path;
     CameraSettings camera_settings;
     AppSettings app_settings;
+    CameraOrderSettings camera_order_settings; // NEW: Camera ordering
     std::map<std::string, IndividualCameraSettings> individual_camera_settings; // NEW: Per-camera settings
     bool auto_save_enabled;
-    
+
     bool LoadFromFile();
     bool SaveToFile() const;
     SimpleJSON CreateFullSettings() const;
     void LoadFullSettings(const SimpleJSON& json);
-    
+
 public:
     explicit SettingsManager(const std::string& config_path = "settings.json");
     ~SettingsManager();
-    
+
     // Camera Settings
     CameraSettings& GetCameraSettings() { return camera_settings; }
     const CameraSettings& GetCameraSettings() const { return camera_settings; }
     void ResetCameraSettings();
-    
+
+    // Camera Ordering Settings - NEW
+    CameraOrderSettings& GetCameraOrderSettings() { return camera_order_settings; }
+    const CameraOrderSettings& GetCameraOrderSettings() const { return camera_order_settings; }
+    void ResetCameraOrderSettings();
+
     // Individual Camera Settings - NEW
     IndividualCameraSettings& GetIndividualCameraSettings(const std::string& camera_id);
     const IndividualCameraSettings& GetIndividualCameraSettings(const std::string& camera_id) const;
@@ -184,21 +215,21 @@ public:
     void ResetIndividualCameraSettings(const std::string& camera_id);
     void ResetAllIndividualCameraSettings();
     bool HasIndividualCameraSettings(const std::string& camera_id) const;
-    
+
     // App Settings
     AppSettings& GetAppSettings() { return app_settings; }
     const AppSettings& GetAppSettings() const { return app_settings; }
     void ResetAppSettings();
-    
+
     // General Operations
     bool Save();
     bool Load();
     void ResetAllSettings();
-    
+
     // Auto-save
     void SetAutoSave(bool enabled) { auto_save_enabled = enabled; }
     bool IsAutoSaveEnabled() const { return auto_save_enabled; }
-    
+
     // Utility
     std::string GetConfigPath() const { return config_file_path; }
     void SetConfigPath(const std::string& path);
