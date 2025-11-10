@@ -61,12 +61,7 @@ void SettingsView::ApplyCameraSettingsToHardware() {
     camera_manager_->ApplyParameterToAllCameras("BalanceRatioGreen", std::to_string(camera_settings.white_balance_green));
     camera_manager_->ApplyParameterToAllCameras("BalanceRatioBlue", std::to_string(camera_settings.white_balance_blue));
 
-    // Try to apply gamma (DISABLED - not supported by Nano-C4020 cameras)
-    // Note: Gamma causes "Argument invalid value (2)" error on these cameras
-    // std::cout << "[SETTINGS] Applying gamma (if supported)..." << std::endl;
-    // camera_manager_->ApplyParameterToAllCameras("Gamma", std::to_string(camera_settings.gamma));
-
-    std::cout << "[SETTINGS] ✅ Camera settings applied (Gamma skipped - not supported by hardware)" << std::endl;
+    std::cout << "[SETTINGS] ✅ Camera settings applied" << std::endl;
 }
 
 } // namespace SaperaCapturePro

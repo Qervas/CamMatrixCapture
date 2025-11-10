@@ -424,9 +424,7 @@ void BluetoothGui::StartCaptureSequence() {
     if (m_bluetoothManager && !m_connectedDeviceId.empty()) {
         // Return to zero first
         m_bluetoothManager->ReturnToZero(m_connectedDeviceId);
-        
-        // TODO: Integrate with actual camera capture system
-        // For now, just demonstrate the rotation sequence
+
         std::thread([this]() {
             for (int i = 0; i < m_captureSteps; ++i) {
                 // Rotate to next position

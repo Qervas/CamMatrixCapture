@@ -36,6 +36,9 @@ class CameraManager {
   void ApplyParameterToAllCameras(const std::string& feature_name, const std::string& value);
   void ApplyParameterToCamera(const std::string& camera_id, const std::string& feature_name, const std::string& value);
   void DetectCameraResolution();
+
+  // Safe parameter application with type checking
+  bool ApplySafeParameter(SapAcqDevice* device, const std::string& cameraId, const std::string& featureName, const std::string& value);
   
   // Color conversion configuration
   struct ColorConfig {

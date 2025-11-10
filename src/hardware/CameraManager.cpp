@@ -174,12 +174,9 @@ void CameraManager::ConnectAllCameras(std::function<void(const std::string&)> lo
           continue;
         }
         
-        // Apply exposure time setting
-        std::string exposureStr = std::to_string(exposure_time_);
-        if (!acqDevice->SetFeatureValue("ExposureTime", exposureStr.c_str())) {
-          Log("[NET] Warning: Failed to set exposure time for " + camera.name);
-        }
-        
+        // Note: Camera settings will be applied AFTER all cameras are connected
+        // This prevents applying settings to partially connected cameras
+
         // Create buffer for image capture
         SapBuffer* buffer = new SapBufferWithTrash(1, acqDevice);
         if (!buffer->Create()) {
@@ -417,189 +414,402 @@ void CameraManager::CaptureAllCamerasAsync(const std::string& session_path, bool
 }
 
 bool CameraManager::CaptureCamera(const std::string& cameraId, const std::string& sessionPath) {
-  auto deviceIt = connected_devices_.find(cameraId);
-  auto bufferIt = connected_buffers_.find(cameraId);
-  auto transferIt = connected_transfers_.find(cameraId);
-  
-  if (deviceIt == connected_devices_.end() || bufferIt == connected_buffers_.end() || transferIt == connected_transfers_.end()) {
-    Log("[ERR] ❌ Missing components for camera " + cameraId);
+  try {
+    auto deviceIt = connected_devices_.find(cameraId);
+    auto bufferIt = connected_buffers_.find(cameraId);
+    auto transferIt = connected_transfers_.find(cameraId);
+
+    if (deviceIt == connected_devices_.end() || bufferIt == connected_buffers_.end() || transferIt == connected_transfers_.end()) {
+      Log("[ERR] ❌ Missing components for camera " + cameraId);
+      return false;
+    }
+
+    SapAcqDevice* device = deviceIt->second;
+    SapBuffer* buffer = bufferIt->second;
+    SapAcqDeviceToBuf* transfer = transferIt->second;
+
+    // Null checks
+    if (!device || !buffer || !transfer) {
+      Log("[ERR] ❌ Null pointer in camera components for " + cameraId);
+      return false;
+    }
+
+    try {
+      // Find camera name
+      std::string cameraName = "unknown";
+      for (const auto& camera : discovered_cameras_) {
+        if (camera.id == cameraId) {
+          cameraName = camera.name;
+          break;
+        }
+      }
+
+      Log("[REC] 🔄 Triggering capture for " + cameraName + "...");
+
+      // Trigger capture with error handling
+      BOOL snapResult = FALSE;
+      try {
+        snapResult = transfer->Snap();
+      } catch (const std::exception& e) {
+        Log("[ERR] ❌ Exception during Snap() for " + cameraName + ": " + e.what());
+        return false;
+      } catch (...) {
+        Log("[ERR] ❌ Unknown exception during Snap() for " + cameraName);
+        return false;
+      }
+
+      if (!snapResult) {
+        Log("[ERR] ❌ Failed to trigger capture for " + cameraName + " (Snap returned FALSE)");
+        return false;
+      }
+
+      Log("[REC] ⏳ Waiting for capture completion...");
+
+      // Wait for capture completion with error handling
+      BOOL waitResult = FALSE;
+      try {
+        waitResult = transfer->Wait(5000);
+      } catch (const std::exception& e) {
+        Log("[ERR] ❌ Exception during Wait() for " + cameraName + ": " + e.what());
+        return false;
+      } catch (...) {
+        Log("[ERR] ❌ Unknown exception during Wait() for " + cameraName);
+        return false;
+      }
+
+      if (!waitResult) {
+        Log("[ERR] ❌ Capture timeout for " + cameraName + " (Wait returned FALSE)");
+        return false;
+      }
+
+      Log("[REC] 📸 Capture completed, processing image...");
+
+      // Generate filename with timestamp
+      auto now = std::chrono::system_clock::now();
+      auto time_t = std::chrono::system_clock::to_time_t(now);
+      std::stringstream ss;
+      ss << std::put_time(std::localtime(&time_t), "%Y%m%d_%H%M%S");
+
+      std::string extension = capture_format_raw_ ? ".raw" : ".tiff";
+      std::string filename = cameraName + "_" + ss.str() + extension;
+      std::string fullPath = sessionPath + "/" + filename;
+
+      Log("[REC] 💾 Saving image: " + filename);
+
+      // Save image
+      if (capture_format_raw_) {
+        // Save as RAW with error handling
+        BOOL saveResult = FALSE;
+        try {
+          saveResult = buffer->Save(fullPath.c_str(), "-format raw");
+        } catch (const std::exception& e) {
+          Log("[ERR] ❌ Exception saving RAW image: " + std::string(e.what()));
+          return false;
+        } catch (...) {
+          Log("[ERR] ❌ Unknown exception saving RAW image");
+          return false;
+        }
+
+        if (saveResult) {
+          Log("[OK] ✅ RAW image saved: " + filename);
+          return true;
+        } else {
+          Log("[ERR] ❌ Failed to save RAW image: " + filename);
+          return false;
+        }
+      } else {
+        // Perform color conversion before saving
+        SapColorConversion colorConv(buffer);
+
+        try {
+          if (!colorConv.Enable(TRUE, color_config_.use_hardware)) {
+            Log("[ERR] ❌ Failed to enable color conversion");
+            return false;
+          }
+          if (!colorConv.Create()) {
+            Log("[ERR] ❌ Failed to create color converter");
+            return false;
+          }
+
+          // Output format mapping
+          if (color_config_.color_output_format == std::string("RGB888")) {
+            colorConv.SetOutputFormat(SapFormatRGB888);
+          } else if (color_config_.color_output_format == std::string("RGB8888")) {
+            colorConv.SetOutputFormat(SapFormatRGB8888);
+          } else if (color_config_.color_output_format == std::string("RGB101010")) {
+            colorConv.SetOutputFormat(SapFormatRGB101010);
+          } else {
+            colorConv.SetOutputFormat(SapFormatRGB888);
+          }
+
+          // Bayer align
+          SapColorConversion::Align align = SapColorConversion::AlignRGGB;
+          switch (color_config_.bayer_align) {
+            case 0: align = SapColorConversion::AlignGBRG; break;
+            case 1: align = SapColorConversion::AlignBGGR; break;
+            case 2: align = SapColorConversion::AlignRGGB; break;
+            case 3: align = SapColorConversion::AlignGRBG; break;
+            case 4: align = SapColorConversion::AlignRGBG; break;
+            case 5: align = SapColorConversion::AlignBGRG; break;
+          }
+          colorConv.SetAlign(align);
+
+          // Method
+          SapColorConversion::Method method = SapColorConversion::Method1;
+          switch (color_config_.color_method) {
+            case 1: method = SapColorConversion::Method1; break;
+            case 2: method = SapColorConversion::Method2; break;
+            case 3: method = SapColorConversion::Method3; break;
+            case 4: method = SapColorConversion::Method4; break;
+            case 5: method = SapColorConversion::Method5; break;
+            case 6: method = SapColorConversion::Method6; break;
+            case 7: method = SapColorConversion::Method7; break;
+          }
+          colorConv.SetMethod(method);
+
+          // WB gain/offset and gamma
+          SapDataFRGB wbGain(color_config_.wb_gain_r, color_config_.wb_gain_g, color_config_.wb_gain_b);
+          colorConv.SetWBGain(wbGain);
+          SapDataFRGB wbOff(color_config_.wb_offset_r, color_config_.wb_offset_g, color_config_.wb_offset_b);
+          colorConv.SetWBOffset(wbOff);
+          colorConv.SetGamma(color_config_.gamma);
+
+          // Convert
+          if (!colorConv.Convert()) {
+            Log("[ERR] ❌ Color conversion failed");
+            colorConv.Destroy();
+            return false;
+          }
+
+          // Save converted buffer as TIFF
+          SapBuffer* outBuf = colorConv.GetOutputBuffer();
+          if (!outBuf) {
+            Log("[ERR] ❌ No output buffer from color converter");
+            colorConv.Destroy();
+            return false;
+          }
+
+          BOOL saveOk = FALSE;
+          try {
+            saveOk = outBuf->Save(fullPath.c_str(), "-format tiff");
+          } catch (const std::exception& e) {
+            Log("[ERR] ❌ Exception saving TIFF: " + std::string(e.what()));
+            colorConv.Destroy();
+            return false;
+          } catch (...) {
+            Log("[ERR] ❌ Unknown exception saving TIFF");
+            colorConv.Destroy();
+            return false;
+          }
+
+          colorConv.Destroy();
+
+          if (saveOk) {
+            Log("[OK] ✅ TIFF image saved with color conversion: " + filename);
+            return true;
+          } else {
+            Log("[ERR] ❌ Failed to save TIFF image: " + filename);
+            return false;
+          }
+
+        } catch (const std::exception& e) {
+          Log("[ERR] ❌ Exception during color conversion: " + std::string(e.what()));
+          try { colorConv.Destroy(); } catch (...) {}
+          return false;
+        } catch (...) {
+          Log("[ERR] ❌ Unknown exception during color conversion");
+          try { colorConv.Destroy(); } catch (...) {}
+          return false;
+        }
+      }
+
+    } catch (const std::exception& e) {
+      Log("[ERR] ❌ Exception in capture processing for " + cameraId + ": " + std::string(e.what()));
+      return false;
+    } catch (...) {
+      Log("[ERR] ❌ Unknown exception in capture processing for " + cameraId);
+      return false;
+    }
+
+  } catch (const std::exception& e) {
+    Log("[ERR] ❌ Fatal exception capturing " + cameraId + ": " + std::string(e.what()));
+    return false;
+  } catch (...) {
+    Log("[ERR] ❌ Fatal unknown exception capturing " + cameraId);
     return false;
   }
-  
-  SapAcqDevice* device = deviceIt->second;
-  SapBuffer* buffer = bufferIt->second;
-  SapAcqDeviceToBuf* transfer = transferIt->second;
-  
+}
+
+bool CameraManager::ApplySafeParameter(SapAcqDevice* device, const std::string& cameraId, const std::string& featureName, const std::string& value) {
+  // Whitelist of known-good GenICam features with proper type conversion
+  // Only parameters verified to work with Nano-C4020 cameras
+
   try {
-    // Find camera name
-    std::string cameraName = "unknown";
-    for (const auto& camera : discovered_cameras_) {
-      if (camera.id == cameraId) {
-        cameraName = camera.name;
-        break;
-      }
-    }
-    
-    Log("[REC] 🔄 Triggering capture for " + cameraName + "...");
-    
-    // Trigger capture
-    if (!transfer->Snap()) {
-      Log("[ERR] ❌ Failed to trigger capture for " + cameraName);
+    // Null check
+    if (!device) {
+      Log("[PARAM] ✗ Device is null for " + cameraId);
       return false;
     }
-    
-    Log("[REC] ⏳ Waiting for capture completion...");
-    
-    // Wait for capture completion
-    if (!transfer->Wait(5000)) {
-      Log("[ERR] ❌ Capture timeout for " + cameraName);
-      return false;
-    }
-    
-    Log("[REC] 📸 Capture completed, processing image...");
-    
-    // Generate filename with timestamp
-    auto now = std::chrono::system_clock::now();
-    auto time_t = std::chrono::system_clock::to_time_t(now);
-    std::stringstream ss;
-    ss << std::put_time(std::localtime(&time_t), "%Y%m%d_%H%M%S");
-    
-    std::string extension = capture_format_raw_ ? ".raw" : ".tiff";
-    std::string filename = cameraName + "_" + ss.str() + extension;
-    std::string fullPath = sessionPath + "/" + filename;
-    
-    Log("[REC] 💾 Saving image: " + filename);
-    
-    // Save image
-    if (capture_format_raw_) {
-      // Save as RAW
-      if (buffer->Save(fullPath.c_str(), "-format raw")) {
-        Log("[OK] ✅ RAW image saved: " + filename);
-        return true;
-      } else {
-        Log("[ERR] ❌ Failed to save RAW image: " + filename);
+
+    // Check if feature is available first
+    BOOL isAvailable = FALSE;
+    try {
+      if (!device->IsFeatureAvailable(featureName.c_str(), &isAvailable) || !isAvailable) {
+        Log("[PARAM] ⊘ " + featureName + " not available on " + cameraId + ", skipping");
         return false;
       }
+    } catch (const std::exception& e) {
+      Log("[PARAM] ✗ Exception checking availability of " + featureName + " on " + cameraId + ": " + e.what());
+      return false;
+    } catch (...) {
+      Log("[PARAM] ✗ Unknown exception checking availability of " + featureName + " on " + cameraId);
+      return false;
+    }
+
+    BOOL result = FALSE;
+
+    try {
+      // Integer parameters (using INT64 for GenICam standard)
+      if (featureName == "ExposureTime" || featureName == "ExposureTimeAbs") {
+        INT64 intValue = std::stoll(value);
+        result = device->SetFeatureValue(featureName.c_str(), intValue);
+      }
+      // Float/Double parameters
+      else if (featureName == "Gain" || featureName == "GainRaw") {
+        double doubleValue = std::stod(value);
+        result = device->SetFeatureValue(featureName.c_str(), doubleValue);
+      }
+      // White balance parameters - SKIP these as they cause crashes
+      else if (featureName == "BalanceRatioRed" ||
+               featureName == "BalanceRatioGreen" ||
+               featureName == "BalanceRatioBlue" ||
+               featureName == "BalanceWhiteAuto" ||
+               featureName == "WhiteBalanceRed" ||
+               featureName == "WhiteBalanceGreen" ||
+               featureName == "WhiteBalanceBlue") {
+        Log("[PARAM] ⊘ White balance parameters not supported by Nano-C4020, skipping " + featureName);
+        return false;
+      }
+      // Gamma - known to not be supported
+      else if (featureName == "Gamma") {
+        Log("[PARAM] ⊘ Gamma not supported by Nano-C4020, skipping");
+        return false;
+      }
+      // Packet size/delay (integer)
+      else if (featureName == "GevSCPSPacketSize" || featureName == "PacketSize") {
+        INT64 intValue = std::stoll(value);
+        result = device->SetFeatureValue(featureName.c_str(), intValue);
+      }
+      else if (featureName == "GevSCPD" || featureName == "PacketDelay") {
+        INT64 intValue = std::stoll(value);
+        result = device->SetFeatureValue(featureName.c_str(), intValue);
+      }
+      // Unknown parameter - DO NOT try, just skip
+      else {
+        Log("[PARAM] ⊘ Unknown parameter " + featureName + ", skipping for safety");
+        return false;
+      }
+    } catch (const std::invalid_argument& e) {
+      Log("[PARAM] ✗ Invalid value format for " + featureName + " = " + value + ": " + e.what());
+      return false;
+    } catch (const std::out_of_range& e) {
+      Log("[PARAM] ✗ Value out of range for " + featureName + " = " + value + ": " + e.what());
+      return false;
+    } catch (const std::exception& e) {
+      Log("[PARAM] ✗ Exception setting " + featureName + " = " + value + " on " + cameraId + ": " + e.what());
+      return false;
+    } catch (...) {
+      Log("[PARAM] ✗ Unknown exception setting " + featureName + " = " + value + " on " + cameraId);
+      return false;
+    }
+
+    if (result) {
+      Log("[PARAM] ✓ " + featureName + " = " + value + " applied to " + cameraId);
+      return true;
     } else {
-      // Perform color conversion before saving
-      SapColorConversion colorConv(buffer);
-      if (!colorConv.Enable(TRUE, color_config_.use_hardware)) {
-        Log("[ERR] ❌ Failed to enable color conversion");
-        return false;
-      }
-      if (!colorConv.Create()) {
-        Log("[ERR] ❌ Failed to create color converter");
-        return false;
-      }
-
-      // Output format mapping
-      if (color_config_.color_output_format == std::string("RGB888")) {
-        colorConv.SetOutputFormat(SapFormatRGB888);
-      } else if (color_config_.color_output_format == std::string("RGB8888")) {
-        colorConv.SetOutputFormat(SapFormatRGB8888);
-      } else if (color_config_.color_output_format == std::string("RGB101010")) {
-        colorConv.SetOutputFormat(SapFormatRGB101010);
-      } else {
-        colorConv.SetOutputFormat(SapFormatRGB888);
-      }
-
-      // Bayer align
-      SapColorConversion::Align align = SapColorConversion::AlignRGGB;
-      switch (color_config_.bayer_align) {
-        case 0: align = SapColorConversion::AlignGBRG; break;
-        case 1: align = SapColorConversion::AlignBGGR; break;
-        case 2: align = SapColorConversion::AlignRGGB; break;
-        case 3: align = SapColorConversion::AlignGRBG; break;
-        case 4: align = SapColorConversion::AlignRGBG; break;
-        case 5: align = SapColorConversion::AlignBGRG; break;
-      }
-      colorConv.SetAlign(align);
-
-      // Method
-      SapColorConversion::Method method = SapColorConversion::Method1;
-      switch (color_config_.color_method) {
-        case 1: method = SapColorConversion::Method1; break;
-        case 2: method = SapColorConversion::Method2; break;
-        case 3: method = SapColorConversion::Method3; break;
-        case 4: method = SapColorConversion::Method4; break;
-        case 5: method = SapColorConversion::Method5; break;
-        case 6: method = SapColorConversion::Method6; break;
-        case 7: method = SapColorConversion::Method7; break;
-      }
-      colorConv.SetMethod(method);
-
-      // WB gain/offset and gamma
-      SapDataFRGB wbGain(color_config_.wb_gain_r, color_config_.wb_gain_g, color_config_.wb_gain_b);
-      colorConv.SetWBGain(wbGain);
-      SapDataFRGB wbOff(color_config_.wb_offset_r, color_config_.wb_offset_g, color_config_.wb_offset_b);
-      colorConv.SetWBOffset(wbOff);
-      colorConv.SetGamma(color_config_.gamma);
-
-      // Convert
-      if (!colorConv.Convert()) {
-        Log("[ERR] ❌ Color conversion failed");
-        colorConv.Destroy();
-        return false;
-      }
-
-      // Save converted buffer as TIFF
-      SapBuffer* outBuf = colorConv.GetOutputBuffer();
-      if (!outBuf) {
-        Log("[ERR] ❌ No output buffer from color converter");
-        colorConv.Destroy();
-        return false;
-      }
-      bool saveOk = outBuf->Save(fullPath.c_str(), "-format tiff");
-      colorConv.Destroy();
-      if (saveOk) {
-        Log("[OK] ✅ TIFF image saved with color conversion: " + filename);
-        return true;
-      } else {
-        Log("[ERR] ❌ Failed to save TIFF image: " + filename);
-        return false;
-      }
+      Log("[PARAM] ✗ Failed to apply " + featureName + " = " + value + " to " + cameraId + " (returned FALSE)");
+      return false;
     }
-    
+
   } catch (const std::exception& e) {
-    Log("[ERR] ❌ Exception capturing " + cameraId + ": " + std::string(e.what()));
+    Log("[PARAM] ✗ Fatal exception in ApplySafeParameter for " + featureName + " on " + cameraId + ": " + e.what());
+    return false;
+  } catch (...) {
+    Log("[PARAM] ✗ Fatal unknown exception in ApplySafeParameter for " + featureName + " on " + cameraId);
     return false;
   }
 }
 
 void CameraManager::ApplyParameterToAllCameras(const std::string& featureName, const std::string& value) {
-  int successCount = 0;
-  int totalCount = static_cast<int>(connected_devices_.size());
-  
-  for (auto& [cameraId, device] : connected_devices_) {
-    if (device) {
-      BOOL result = device->SetFeatureValue(featureName.c_str(), value.c_str());
-      if (result) {
-        successCount++;
-        Log("[PARAM] ✓ " + featureName + " = " + value + " applied to " + cameraId);
-      } else {
-        Log("[PARAM] ✗ Failed to apply " + featureName + " = " + value + " to " + cameraId);
+  try {
+    if (connected_devices_.empty()) {
+      Log("[PARAM] ⚠ No cameras connected, cannot apply " + featureName);
+      return;
+    }
+
+    int successCount = 0;
+    int totalCount = static_cast<int>(connected_devices_.size());
+    int skippedCount = 0;
+
+    for (auto& [cameraId, device] : connected_devices_) {
+      try {
+        if (device) {
+          if (ApplySafeParameter(device, cameraId, featureName, value)) {
+            successCount++;
+          } else {
+            skippedCount++;
+          }
+        } else {
+          Log("[PARAM] ⚠ Null device pointer for camera " + cameraId);
+          skippedCount++;
+        }
+      } catch (const std::exception& e) {
+        Log("[PARAM] ✗ Exception applying " + featureName + " to " + cameraId + ": " + e.what());
+        skippedCount++;
+      } catch (...) {
+        Log("[PARAM] ✗ Unknown exception applying " + featureName + " to " + cameraId);
+        skippedCount++;
       }
     }
-  }
-  
-  if (successCount == totalCount) {
-    Log("[PARAM] ✓ " + featureName + " = " + value + " applied to all " + std::to_string(totalCount) + " cameras");
-  } else {
-    Log("[PARAM] ⚠ " + featureName + " applied to " + std::to_string(successCount) + "/" + std::to_string(totalCount) + " cameras");
+
+    if (successCount == totalCount) {
+      Log("[PARAM] ✓ " + featureName + " = " + value + " applied to all " + std::to_string(totalCount) + " cameras");
+    } else if (skippedCount == totalCount) {
+      Log("[PARAM] ⚠ " + featureName + " skipped for all cameras (not supported or error)");
+    } else {
+      Log("[PARAM] ⚠ " + featureName + " applied to " + std::to_string(successCount) + "/" + std::to_string(totalCount) + " cameras (" + std::to_string(skippedCount) + " skipped)");
+    }
+
+  } catch (const std::exception& e) {
+    Log("[PARAM] ✗ Fatal exception in ApplyParameterToAllCameras for " + featureName + ": " + e.what());
+  } catch (...) {
+    Log("[PARAM] ✗ Fatal unknown exception in ApplyParameterToAllCameras for " + featureName);
   }
 }
 
 void CameraManager::ApplyParameterToCamera(const std::string& cameraId, const std::string& featureName, const std::string& value) {
-  auto deviceIt = connected_devices_.find(cameraId);
-  if (deviceIt != connected_devices_.end()) {
-    SapAcqDevice* device = deviceIt->second;
-    if (device && device->SetFeatureValue(featureName.c_str(), value.c_str())) {
-      Log("[PARAM] " + featureName + " = " + value + " applied to " + cameraId);
+  try {
+    auto deviceIt = connected_devices_.find(cameraId);
+    if (deviceIt != connected_devices_.end()) {
+      SapAcqDevice* device = deviceIt->second;
+      if (device) {
+        try {
+          ApplySafeParameter(device, cameraId, featureName, value);
+        } catch (const std::exception& e) {
+          Log("[PARAM] ✗ Exception in ApplyParameterToCamera for " + cameraId + ": " + e.what());
+        } catch (...) {
+          Log("[PARAM] ✗ Unknown exception in ApplyParameterToCamera for " + cameraId);
+        }
+      } else {
+        Log("[PARAM] ✗ Null device pointer for camera " + cameraId);
+      }
     } else {
-      Log("[PARAM] Failed to apply " + featureName + " to " + cameraId);
+      Log("[PARAM] ⚠ Camera " + cameraId + " not found");
     }
-  } else {
-    Log("[PARAM] Camera " + cameraId + " not found");
+  } catch (const std::exception& e) {
+    Log("[PARAM] ✗ Fatal exception in ApplyParameterToCamera: " + std::string(e.what()));
+  } catch (...) {
+    Log("[PARAM] ✗ Fatal unknown exception in ApplyParameterToCamera");
   }
 }
 
