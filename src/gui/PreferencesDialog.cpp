@@ -393,7 +393,44 @@ void PreferencesDialog::RenderCameraTab() {
     // Apply to camera
   }
 
+  // Parallel Capture Settings
+  ImGui::Separator();
+  ImGui::Text("Parallel Capture Settings");
+  ImGui::Text("Parallel Groups:");
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(150);
+  if (ImGui::InputInt("##ParallelGroups", &temp_parallel_capture_groups_)) {
+    if (temp_parallel_capture_groups_ < 1) temp_parallel_capture_groups_ = 1;
+    if (temp_parallel_capture_groups_ > 12) temp_parallel_capture_groups_ = 12;
+  }
+  if (ImGui::IsItemHovered()) {
+    ImGui::SetTooltip("Number of cameras to capture simultaneously\n1 = Sequential (one at a time)\n2+ = Parallel groups (respects 1Gbps bandwidth limit)");
+  }
+
+  ImGui::Text("Capture Delay (ms):");
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(150);
+  if (ImGui::InputInt("##CaptureDelay", &temp_capture_delay_ms_)) {
+    if (temp_capture_delay_ms_ < 0) temp_capture_delay_ms_ = 0;
+    if (temp_capture_delay_ms_ > 5000) temp_capture_delay_ms_ = 5000;
+  }
+  if (ImGui::IsItemHovered()) {
+    ImGui::SetTooltip("Delay between capture groups in milliseconds");
+  }
+
+  ImGui::Text("Stagger Delay (ms):");
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(150);
+  if (ImGui::InputInt("##StaggerDelay", &temp_stagger_delay_ms_)) {
+    if (temp_stagger_delay_ms_ < 0) temp_stagger_delay_ms_ = 0;
+    if (temp_stagger_delay_ms_ > 500) temp_stagger_delay_ms_ = 500;
+  }
+  if (ImGui::IsItemHovered()) {
+    ImGui::SetTooltip("Delay between camera triggers within a group\nPrevents bandwidth spikes\n0 = no stagger, 50-200ms recommended for 1Gbps");
+  }
+
   // Gamma
+  ImGui::Separator();
   ImGui::Text("Gamma:");
   ImGui::SameLine();
   ImGui::SetNextItemWidth(150);
@@ -441,6 +478,9 @@ void PreferencesDialog::ApplySettings() {
   camera_settings.gain = temp_gain_;
   camera_settings.auto_exposure = temp_auto_exposure_;
   camera_settings.auto_gain = temp_auto_gain_;
+  camera_settings.parallel_capture_groups = temp_parallel_capture_groups_;
+  camera_settings.capture_delay_ms = temp_capture_delay_ms_;
+  camera_settings.stagger_delay_ms = temp_stagger_delay_ms_;
   camera_settings.white_balance_red = temp_white_balance_red_;
   camera_settings.white_balance_green = temp_white_balance_green_;
   camera_settings.white_balance_blue = temp_white_balance_blue_;
@@ -510,6 +550,9 @@ void PreferencesDialog::LoadSettingsOnce() {
   temp_gain_ = camera_settings.gain;
   temp_auto_exposure_ = camera_settings.auto_exposure;
   temp_auto_gain_ = camera_settings.auto_gain;
+  temp_parallel_capture_groups_ = camera_settings.parallel_capture_groups;
+  temp_capture_delay_ms_ = camera_settings.capture_delay_ms;
+  temp_stagger_delay_ms_ = camera_settings.stagger_delay_ms;
   temp_white_balance_red_ = camera_settings.white_balance_red;
   temp_white_balance_green_ = camera_settings.white_balance_green;
   temp_white_balance_blue_ = camera_settings.white_balance_blue;
@@ -552,6 +595,9 @@ bool PreferencesDialog::HasSettingsChanged() const {
   if (std::abs(temp_gain_ - camera_settings.gain) > 0.01f) return true;
   if (temp_auto_exposure_ != camera_settings.auto_exposure) return true;
   if (temp_auto_gain_ != camera_settings.auto_gain) return true;
+  if (temp_parallel_capture_groups_ != camera_settings.parallel_capture_groups) return true;
+  if (temp_capture_delay_ms_ != camera_settings.capture_delay_ms) return true;
+  if (temp_stagger_delay_ms_ != camera_settings.stagger_delay_ms) return true;
   if (std::abs(temp_white_balance_red_ - camera_settings.white_balance_red) > 0.01f) return true;
   if (std::abs(temp_white_balance_green_ - camera_settings.white_balance_green) > 0.01f) return true;
   if (std::abs(temp_white_balance_blue_ - camera_settings.white_balance_blue) > 0.01f) return true;

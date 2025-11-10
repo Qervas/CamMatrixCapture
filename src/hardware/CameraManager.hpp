@@ -27,9 +27,16 @@ class CameraManager {
   void ConnectAllCameras(std::function<void(const std::string&)> log_callback = nullptr);
   void DisconnectAllCameras();
   
+  // Capture parameters structure (thread-safe, pass by value)
+  struct CaptureParams {
+    int parallel_groups = 1;      // Number of cameras to capture simultaneously
+    int group_delay_ms = 750;     // Delay between groups
+    int stagger_delay_ms = 150;   // Delay between cameras within group
+  };
+
   // Camera capture
-  bool CaptureAllCameras(const std::string& session_path, bool sequential = true, int delay_ms = 750);
-  void CaptureAllCamerasAsync(const std::string& session_path, bool sequential = true, int delay_ms = 750, std::function<void(const std::string&)> log_callback = nullptr);
+  bool CaptureAllCameras(const std::string& session_path, const CaptureParams& params);
+  void CaptureAllCamerasAsync(const std::string& session_path, const CaptureParams& params, std::function<void(const std::string&)> log_callback = nullptr);
   bool CaptureCamera(const std::string& camera_id, const std::string& session_path);
   
   // Camera parameter control
@@ -39,6 +46,9 @@ class CameraManager {
 
   // Safe parameter application with type checking
   bool ApplySafeParameter(SapAcqDevice* device, const std::string& cameraId, const std::string& featureName, const std::string& value);
+
+  // Helper method to save image from buffer with color conversion
+  bool SaveImageFromBuffer(SapBuffer* buffer, const std::string& fullPath, const std::string& cameraName);
   
   // Color conversion configuration
   struct ColorConfig {

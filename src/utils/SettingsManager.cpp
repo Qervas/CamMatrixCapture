@@ -141,12 +141,17 @@ SimpleJSON CameraSettings::ToJson() const {
     json.set("white_balance_offset_red", white_balance_offset_red);
     json.set("white_balance_offset_green", white_balance_offset_green);
     json.set("white_balance_offset_blue", white_balance_offset_blue);
-    
+
     // Advanced Features
     json.set("acquisition_mode", acquisition_mode);
     json.set("acquisition_frame_count", acquisition_frame_count);
     // Frame rate settings removed
-    
+
+    // Parallel Capture Settings
+    json.set("parallel_capture_groups", parallel_capture_groups);
+    json.set("capture_delay_ms", capture_delay_ms);
+    json.set("stagger_delay_ms", stagger_delay_ms);
+
     // Region of Interest (ROI)
     json.set("roi_offset_x", roi_offset_x);
     json.set("roi_offset_y", roi_offset_y);
@@ -197,12 +202,17 @@ void CameraSettings::FromJson(const SimpleJSON& json) {
     white_balance_offset_red = json.getFloat("white_balance_offset_red", white_balance_offset_red);
     white_balance_offset_green = json.getFloat("white_balance_offset_green", white_balance_offset_green);
     white_balance_offset_blue = json.getFloat("white_balance_offset_blue", white_balance_offset_blue);
-    
+
     // Advanced Features
     acquisition_mode = json.get("acquisition_mode", acquisition_mode);
     acquisition_frame_count = json.getInt("acquisition_frame_count", acquisition_frame_count);
     // Frame rate settings removed
-    
+
+    // Parallel Capture Settings
+    parallel_capture_groups = json.getInt("parallel_capture_groups", parallel_capture_groups);
+    capture_delay_ms = json.getInt("capture_delay_ms", capture_delay_ms);
+    stagger_delay_ms = json.getInt("stagger_delay_ms", stagger_delay_ms);
+
     // Region of Interest (ROI)
     roi_offset_x = json.getInt("roi_offset_x", roi_offset_x);
     roi_offset_y = json.getInt("roi_offset_y", roi_offset_y);

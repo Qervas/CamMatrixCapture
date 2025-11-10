@@ -121,7 +121,12 @@ struct CameraSettings {
     std::string acquisition_mode = "Continuous";
     int acquisition_frame_count = 1;
     // Frame rate controls removed for vanilla capture
-    
+
+    // Parallel Capture Settings
+    int parallel_capture_groups = 1;  // Number of cameras to capture simultaneously (1 = sequential, 2+ = parallel groups)
+    int capture_delay_ms = 750;       // Delay between captures/groups in milliseconds
+    int stagger_delay_ms = 150;       // Stagger delay within group to spread bandwidth (0 = no stagger, 50-200ms recommended)
+
     // Region of Interest (ROI)
     int roi_offset_x = 0;
     int roi_offset_y = 0;

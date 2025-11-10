@@ -486,26 +486,18 @@ void CaptureStudioPanel::RenderAutomatedCapture() {
             turntable_speed_ = std::clamp(turntable_speed_, 35.64f, 131.0f);
         }
 
-        ImGui::Text("Delay");
-        ImGui::SameLine(label_w);
-        ImGui::SetNextItemWidth(slider_w);
-        ImGui::SliderFloat("##CD", &capture_delay_, 0.5f, 10.0f, "%.1f s");
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(input_w);
-        if (ImGui::InputFloat("##CDI", &capture_delay_, 0.1f, 1.0f, "%.1f")) {
-            capture_delay_ = std::clamp(capture_delay_, 0.5f, 10.0f);
-        }
-
         ImGui::NextColumn();
 
         // === RIGHT COLUMN: Summary & Start ===
 
         float rotation_time = (rotation_angle_ * turntable_speed_) / 360.0f;
-        float total_time = auto_capture_count_ * (capture_delay_ + rotation_time);
+        // Estimate capture time: ~1-2 seconds per camera with stagger delays
+        float estimated_capture_time = 2.0f; // Conservative estimate
+        float total_time = auto_capture_count_ * (estimated_capture_time + rotation_time);
 
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.8f, 1.0f, 1.0f));
-        ImGui::Text("%.1f min", total_time / 60.0f);
-        ImGui::Text("%.1fs/step", rotation_time + capture_delay_);
+        ImGui::Text("~%.1f min", total_time / 60.0f);
+        ImGui::Text("%.1fs/step", rotation_time + estimated_capture_time);
         ImGui::Text("%d pos", auto_capture_count_);
         ImGui::PopStyleColor();
 
@@ -727,8 +719,9 @@ void CaptureStudioPanel::UpdateAutomatedSequence() {
                     // Sequence complete
                     SetCurrentStep(SequenceStep::Completing, "Finalizing capture sequence...", 1.0f);
                 } else {
-                    // More captures to go - start delay for next one
-                    SetCurrentStep(SequenceStep::WaitingForNext, "Waiting before next capture... (" + std::to_string(capture_delay_) + "s)", capture_delay_);
+                    // More captures to go - rotate immediately (no delay needed)
+                    SetCurrentStep(SequenceStep::RotatingAndWaiting, "Rotating turntable " + std::to_string(rotation_angle_) + "° and waiting for completion...", 60.0f);
+                    RotateTurntableAndWait(rotation_angle_);
                 }
             }
             break;
@@ -781,8 +774,15 @@ void CaptureStudioPanel::PerformSingleCapture(const std::string& capture_name) {
         std::string session_path = session->GetNextCapturePath();
         LogMessage("[STUDIO] 📸 Starting async capture to: " + session_path);
 
+        // Get parallel capture settings - SINGLE INSTANCE READ
+        const auto& camera_settings = settings_manager_->GetCameraSettings();
+        CameraManager::CaptureParams capture_params;
+        capture_params.parallel_groups = camera_settings.parallel_capture_groups;
+        capture_params.group_delay_ms = camera_settings.capture_delay_ms;
+        capture_params.stagger_delay_ms = camera_settings.stagger_delay_ms;
+
         // Use async camera manager to perform capture without blocking UI
-        camera_manager_->CaptureAllCamerasAsync(session_path, true, 750,
+        camera_manager_->CaptureAllCamerasAsync(session_path, capture_params,
             [this, session_path](const std::string& message) {
                 // This callback runs on the capture thread, so we just log
                 LogMessage(message);
@@ -826,8 +826,15 @@ void CaptureStudioPanel::PerformSyncCapture(const std::string& capture_name) {
         std::string session_path = session->GetNextCapturePath();
         LogMessage("[STUDIO] Capturing to: " + session_path);
 
+        // Get parallel capture settings - SINGLE INSTANCE READ
+        const auto& camera_settings = settings_manager_->GetCameraSettings();
+        CameraManager::CaptureParams capture_params;
+        capture_params.parallel_groups = camera_settings.parallel_capture_groups;
+        capture_params.group_delay_ms = camera_settings.capture_delay_ms;
+        capture_params.stagger_delay_ms = camera_settings.stagger_delay_ms;
+
         // Use synchronous camera manager for automated sequences
-        if (camera_manager_->CaptureAllCameras(session_path, true, 750)) {
+        if (camera_manager_->CaptureAllCameras(session_path, capture_params)) {
             LogMessage("[STUDIO] ✅ Sync capture successful: " + session_path);
 
             // Record with session manager
@@ -956,7 +963,9 @@ void CaptureStudioPanel::AdvanceToNextStep() {
             if (current_capture_index_ >= auto_capture_count_) {
                 SetCurrentStep(SequenceStep::Completing, "Finalizing capture sequence...", 1.0f);
             } else {
-                SetCurrentStep(SequenceStep::WaitingForNext, "Waiting before next capture...", capture_delay_);
+                // Rotate immediately (no delay needed)
+                SetCurrentStep(SequenceStep::RotatingAndWaiting, "Rotating turntable " + std::to_string(rotation_angle_) + "° and waiting for completion...", 60.0f);
+                RotateTurntableAndWait(rotation_angle_);
             }
             break;
         case SequenceStep::WaitingForNext:
@@ -1163,8 +1172,15 @@ void CaptureStudioPanel::RunAutomatedSequenceInBackground() {
             // Get next capture path for this capture
             std::string capture_path = session->GetNextCapturePath();
 
+            // Get parallel capture settings - SINGLE INSTANCE READ
+            const auto& camera_settings = settings_manager_->GetCameraSettings();
+            CameraManager::CaptureParams capture_params;
+            capture_params.parallel_groups = camera_settings.parallel_capture_groups;
+            capture_params.group_delay_ms = camera_settings.capture_delay_ms;
+            capture_params.stagger_delay_ms = camera_settings.stagger_delay_ms;
+
             // Perform synchronous capture (blocks this background thread, not UI)
-            if (camera_manager_->CaptureAllCameras(capture_path, true, 750)) {
+            if (camera_manager_->CaptureAllCameras(capture_path, capture_params)) {
                 session_manager_->RecordCapture(capture_path);
                 LogMessage("[THREAD] Capture " + std::to_string(i + 1) + " completed successfully");
             } else {
@@ -1187,19 +1203,7 @@ void CaptureStudioPanel::RunAutomatedSequenceInBackground() {
                 LogMessage("[THREAD] Rotating turntable " + std::to_string(rotation_angle_) + " degrees");
                 RotateTurntableAndWait(rotation_angle_);
 
-                // Wait for capture delay
-                if (capture_delay_ > 0 && !sequence_stop_requested_) {
-                    {
-                        std::lock_guard<std::mutex> lock(step_description_mutex_);
-                        thread_safe_current_step_description_ = "Waiting " + std::to_string(capture_delay_) + "s before next capture...";
-                    }
-
-                    auto delay_start = std::chrono::steady_clock::now();
-                    while (std::chrono::duration<float>(std::chrono::steady_clock::now() - delay_start).count() < capture_delay_) {
-                        if (sequence_stop_requested_) break;
-                        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                    }
-                }
+                // No manual delay needed - stagger delays in CameraManager handle bandwidth
             }
         }
 

@@ -76,6 +76,11 @@ class PreferencesDialog {
   float temp_wb_offset_g_ = 0.0f;
   float temp_wb_offset_b_ = 0.0f;
 
+  // Parallel capture settings temporary values
+  int temp_parallel_capture_groups_ = 1;
+  int temp_capture_delay_ms_ = 750;
+  int temp_stagger_delay_ms_ = 150;
+
   // Log settings temporary values
   bool temp_log_auto_delete_ = false;
   int temp_log_max_messages_ = 0;  // 0 = unlimited

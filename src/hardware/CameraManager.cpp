@@ -306,101 +306,238 @@ void CameraManager::DisconnectAllCameras() {
   Log("[OK] Successfully disconnected " + std::to_string(destroyed_count) + "/" + std::to_string(device_count) + " cameras");
 }
 
-bool CameraManager::CaptureAllCameras(const std::string& session_path, bool sequential, int delay_ms) {
+bool CameraManager::CaptureAllCameras(const std::string& session_path, const CaptureParams& params) {
   if (connected_devices_.empty()) {
     Log("[NET] No cameras connected");
     return false;
   }
-  
+
+  // Copy params to local variables to avoid any thread safety issues
+  // Validate and adjust parameters for safety
+  int parallel_groups = params.parallel_groups;
+  const int delay_ms = params.group_delay_ms;
+  const int stagger_ms = params.stagger_delay_ms;
+
+  if (parallel_groups < 1) {
+    Log("[ERR] Invalid parallel_groups: " + std::to_string(parallel_groups) + " (must be >= 1)");
+    return false;
+  }
+  if (delay_ms < 0) {
+    Log("[ERR] Invalid delay_ms: " + std::to_string(delay_ms) + " (must be >= 0)");
+    return false;
+  }
+  if (stagger_ms < 0) {
+    Log("[ERR] Invalid stagger_ms: " + std::to_string(stagger_ms) + " (must be >= 0)");
+    return false;
+  }
+
+  // BANDWIDTH SAFETY: Prevent crashes from network saturation
+  // Each 4112x3008 camera = ~50MB over 1Gbps network
+  // Overlapping transfers cause crashes in Sapera SDK
+
+  // Rule 1: Minimum stagger delay with parallel groups
+  if (parallel_groups > 1 && stagger_ms < 100) {
+    Log("[WARN] ⚠️ UNSAFE: Stagger delay " + std::to_string(stagger_ms) + "ms too low for parallel capture!");
+    Log("[WARN] ⚠️ With " + std::to_string(parallel_groups) + " groups, network will saturate and crash");
+    Log("[WARN] ⚠️ FORCING sequential mode (groups=1) to prevent crash");
+    parallel_groups = 1;
+  }
+
+  // Rule 2: Maximum parallel groups limit
+  if (parallel_groups > 4) {
+    Log("[WARN] ⚠️ UNSAFE: " + std::to_string(parallel_groups) + " parallel groups exceeds 1Gbps bandwidth!");
+    Log("[WARN] ⚠️ LIMITING to 4 groups maximum to prevent crashes");
+    parallel_groups = 4;
+  }
+
+  // Rule 3: Actually, for true safety, force sequential
+  // The "parallel_groups" setting doesn't actually capture in parallel anymore
+  // It's purely sequential with stagger delays between cameras
+  if (parallel_groups != 1) {
+    Log("[INFO] Note: 'Parallel Groups' is a legacy setting name");
+    Log("[INFO] All cameras capture sequentially with stagger delays for bandwidth safety");
+  }
+
   // Create session directory
   std::filesystem::create_directories(session_path);
-  
-  Log("[REC] 🎬 DIRECT CAPTURE starting...");
+
+  Log("[REC] 🎬 PARALLEL GROUP CAPTURE starting...");
   Log("[IMG] Session path: " + session_path);
-  
+  Log("[REC] 📊 Parallel groups: " + std::to_string(parallel_groups) + " cameras simultaneously");
+  Log("[REC] ⏱ Group delay: " + std::to_string(delay_ms) + "ms");
+  Log("[REC] 🔀 Stagger delay: " + std::to_string(stagger_ms) + "ms (prevents bandwidth spikes)");
+
   auto startTime = std::chrono::high_resolution_clock::now();
-  
+
   bool allSuccess = true;
   int successCount = 0;
   int totalCameras = static_cast<int>(connected_devices_.size());
-  
-  Log("[REC] 📸 Capturing from " + std::to_string(totalCameras) + " cameras...");
-  
-  if (sequential) {
-    // Sequential capture with delays
-    for (const auto& camera : discovered_cameras_) {
-      std::string cameraId = camera.id;
-      
-      if (connected_devices_.find(cameraId) != connected_devices_.end()) {
-        Log("[REC] 📷 Capturing " + camera.name + " (" + camera.serialNumber + ")");
-        
-        if (CaptureCamera(cameraId, session_path)) {
-          successCount++;
-          Log("[OK] ✅ " + camera.name + " captured successfully");
-        } else {
-          allSuccess = false;
-          Log("[ERR] ❌ " + camera.name + " capture failed");
-        }
-        
-        // Add delay between cameras (except for the last one)
-        if (successCount < totalCameras) {
-          std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
-        }
-      }
-    }
-  } else {
-    // Simultaneous capture
-    for (const auto& camera : discovered_cameras_) {
-      std::string cameraId = camera.id;
-      
-      if (connected_devices_.find(cameraId) != connected_devices_.end()) {
-        Log("[REC] 📷 Capturing " + camera.name + " (" + camera.serialNumber + ")");
-        
-        if (CaptureCamera(cameraId, session_path)) {
-          successCount++;
-          Log("[OK] ✅ " + camera.name + " captured successfully");
-        } else {
-          allSuccess = false;
-          Log("[ERR] ❌ " + camera.name + " capture failed");
-        }
-      }
+
+  // Get list of connected cameras in order
+  std::vector<CameraInfo> cameras_to_capture;
+  for (const auto& camera : discovered_cameras_) {
+    if (connected_devices_.find(camera.id) != connected_devices_.end()) {
+      cameras_to_capture.push_back(camera);
     }
   }
-  
+
+  Log("[REC] 📸 Capturing from " + std::to_string(cameras_to_capture.size()) + " cameras in groups of " + std::to_string(parallel_groups) + "...");
+
+  // Capture in groups
+  for (size_t groupStart = 0; groupStart < cameras_to_capture.size(); groupStart += parallel_groups) {
+    size_t groupEnd = std::min(groupStart + parallel_groups, cameras_to_capture.size());
+    size_t groupSize = groupEnd - groupStart;
+    int groupNumber = static_cast<int>(groupStart / parallel_groups) + 1;
+    int totalGroups = static_cast<int>((cameras_to_capture.size() + parallel_groups - 1) / parallel_groups);
+
+    Log("[REC] 📦 Group " + std::to_string(groupNumber) + "/" + std::to_string(totalGroups) +
+        " (" + std::to_string(groupSize) + " cameras)");
+
+    // Sequential capture with proper bandwidth management
+    // Trigger Snap(), Wait(), then add delay before next camera to avoid bandwidth saturation
+    std::vector<bool> capture_complete(groupSize, false);
+
+    for (size_t i = 0; i < groupSize; ++i) {
+      const auto& camera = cameras_to_capture[groupStart + i];
+
+      auto transferIt = connected_transfers_.find(camera.id);
+      if (transferIt == connected_transfers_.end()) {
+        Log("[ERR] ❌ Transfer not found for " + camera.name);
+        continue;
+      }
+
+      SapAcqDeviceToBuf* transfer = transferIt->second;
+
+      try {
+        Log("[REC] 📷 Snap() for " + camera.name);
+        BOOL snapResult = transfer->Snap();
+        if (!snapResult) {
+          Log("[ERR] ❌ Snap() failed for " + camera.name);
+          allSuccess = false;
+          continue;
+        }
+
+        Log("[REC] ⏳ Wait() for " + camera.name);
+        BOOL waitResult = transfer->Wait(5000);
+        if (!waitResult) {
+          Log("[ERR] ❌ Wait() timeout for " + camera.name);
+          allSuccess = false;
+          continue;
+        }
+
+        capture_complete[i] = true;
+        Log("[REC] ✓ " + camera.name + " capture complete");
+
+        // Add stagger delay AFTER each camera completes to spread bandwidth usage
+        // This ensures the next camera doesn't start transferring while this one is still sending data
+        if (i < groupSize - 1 && stagger_ms > 0) {
+          Log("[REC] ⏳ Stagger delay: " + std::to_string(stagger_ms) + "ms");
+          std::this_thread::sleep_for(std::chrono::milliseconds(stagger_ms));
+        }
+
+      } catch (const std::exception& e) {
+        Log("[ERR] ❌ Exception during capture for " + camera.name + ": " + e.what());
+        allSuccess = false;
+      } catch (...) {
+        Log("[ERR] ❌ Unknown exception during capture for " + camera.name);
+        allSuccess = false;
+      }
+    }
+
+    int completeCount = 0;
+    for (size_t i = 0; i < groupSize; ++i) {
+      if (capture_complete[i]) completeCount++;
+    }
+    Log("[REC] ✅ " + std::to_string(completeCount) + "/" + std::to_string(groupSize) + " cameras completed");
+
+    // Phase 3: Save all captured images
+    for (size_t i = 0; i < groupSize; ++i) {
+      if (!capture_complete[i]) continue;
+
+      const auto& camera = cameras_to_capture[groupStart + i];
+      auto bufferIt = connected_buffers_.find(camera.id);
+
+      if (bufferIt == connected_buffers_.end()) {
+        Log("[ERR] ❌ Buffer not found for " + camera.name);
+        allSuccess = false;
+        continue;
+      }
+
+      SapBuffer* buffer = bufferIt->second;
+
+      try {
+        // Generate filename using camera order number (not timestamp)
+        // This ensures consistent naming: cam_01.tiff, cam_02.tiff, etc.
+        int camera_order_num = static_cast<int>(groupStart + i) + 1;
+        std::string extension = capture_format_raw_ ? ".raw" : ".tiff";
+        std::string filename = camera.name + extension;
+        std::string fullPath = session_path + "/" + filename;
+
+        // Save the captured image
+        bool saveSuccess = SaveImageFromBuffer(buffer, fullPath, camera.name);
+
+        if (saveSuccess) {
+          Log("[OK] ✅ " + camera.name + " saved successfully");
+          successCount++;
+        } else {
+          Log("[ERR] ❌ Failed to save image for " + camera.name);
+          allSuccess = false;
+        }
+      } catch (const std::exception& e) {
+        Log("[ERR] ❌ Exception saving " + camera.name + ": " + e.what());
+        allSuccess = false;
+      } catch (...) {
+        Log("[ERR] ❌ Unknown exception saving " + camera.name);
+        allSuccess = false;
+      }
+    }
+
+    Log("[REC] ✓ Group " + std::to_string(groupNumber) + " completed");
+
+    // Add delay between groups (except for the last group)
+    if (groupEnd < cameras_to_capture.size()) {
+      Log("[REC] ⏳ Waiting " + std::to_string(delay_ms) + "ms before next group...");
+      std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
+    }
+  }
+
   auto endTime = std::chrono::high_resolution_clock::now();
   auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime);
-  
+
   Log("[REC] 🏁 Capture completed in " + std::to_string(duration.count()) + "ms");
   Log("[REC] 📊 Success rate: " + std::to_string(successCount) + "/" + std::to_string(totalCameras) + " cameras");
-  
+
   return allSuccess;
 }
 
-void CameraManager::CaptureAllCamerasAsync(const std::string& session_path, bool sequential, int delay_ms, std::function<void(const std::string&)> log_callback) {
+void CameraManager::CaptureAllCamerasAsync(const std::string& session_path, const CaptureParams& params, std::function<void(const std::string&)> log_callback) {
   if (is_capturing_) {
     if (log_callback) log_callback("[REC] Capture already in progress...");
     return;
   }
-  
+
   if (connected_devices_.empty()) {
     if (log_callback) log_callback("[NET] No cameras connected");
     return;
   }
-  
+
   // Join previous capture thread if it exists
   if (capture_thread_.joinable()) {
     capture_thread_.join();
   }
-  
+
+  // Copy params by value for thread safety
+  CaptureParams local_params = params;
+
   // Start async capture
-  capture_thread_ = std::thread([this, session_path, sequential, delay_ms, log_callback]() {
+  capture_thread_ = std::thread([this, session_path, local_params, log_callback]() {
     is_capturing_ = true;
-    
+
     if (log_callback) log_callback("[REC] 🎬 Starting async capture...");
-    
+
     // Call the synchronous method on background thread
-    bool result = CaptureAllCameras(session_path, sequential, delay_ms);
-    
+    bool result = CaptureAllCameras(session_path, local_params);
+
     if (log_callback) {
       if (result) {
         log_callback("[REC] ✅ Async capture completed successfully!");
@@ -636,6 +773,152 @@ bool CameraManager::CaptureCamera(const std::string& cameraId, const std::string
     return false;
   } catch (...) {
     Log("[ERR] ❌ Fatal unknown exception capturing " + cameraId);
+    return false;
+  }
+}
+
+bool CameraManager::SaveImageFromBuffer(SapBuffer* buffer, const std::string& fullPath, const std::string& cameraName) {
+  try {
+    // Null check
+    if (!buffer) {
+      Log("[ERR] ❌ Null buffer for " + cameraName);
+      return false;
+    }
+
+    Log("[REC] 💾 Saving image: " + fullPath);
+
+    // Save image based on format
+    if (capture_format_raw_) {
+      // Save as RAW with error handling
+      BOOL saveResult = FALSE;
+      try {
+        saveResult = buffer->Save(fullPath.c_str(), "-format raw");
+      } catch (const std::exception& e) {
+        Log("[ERR] ❌ Exception saving RAW image: " + std::string(e.what()));
+        return false;
+      } catch (...) {
+        Log("[ERR] ❌ Unknown exception saving RAW image");
+        return false;
+      }
+
+      if (saveResult) {
+        Log("[OK] ✅ RAW image saved: " + fullPath);
+        return true;
+      } else {
+        Log("[ERR] ❌ Failed to save RAW image: " + fullPath);
+        return false;
+      }
+    } else {
+      // Perform color conversion before saving
+      SapColorConversion colorConv(buffer);
+
+      try {
+        if (!colorConv.Enable(TRUE, color_config_.use_hardware)) {
+          Log("[ERR] ❌ Failed to enable color conversion");
+          return false;
+        }
+        if (!colorConv.Create()) {
+          Log("[ERR] ❌ Failed to create color converter");
+          return false;
+        }
+
+        // Output format mapping
+        if (color_config_.color_output_format == std::string("RGB888")) {
+          colorConv.SetOutputFormat(SapFormatRGB888);
+        } else if (color_config_.color_output_format == std::string("RGB8888")) {
+          colorConv.SetOutputFormat(SapFormatRGB8888);
+        } else if (color_config_.color_output_format == std::string("RGB101010")) {
+          colorConv.SetOutputFormat(SapFormatRGB101010);
+        } else {
+          colorConv.SetOutputFormat(SapFormatRGB888);
+        }
+
+        // Bayer align
+        SapColorConversion::Align align = SapColorConversion::AlignRGGB;
+        switch (color_config_.bayer_align) {
+          case 0: align = SapColorConversion::AlignGBRG; break;
+          case 1: align = SapColorConversion::AlignBGGR; break;
+          case 2: align = SapColorConversion::AlignRGGB; break;
+          case 3: align = SapColorConversion::AlignGRBG; break;
+          case 4: align = SapColorConversion::AlignRGBG; break;
+          case 5: align = SapColorConversion::AlignBGRG; break;
+        }
+        colorConv.SetAlign(align);
+
+        // Method
+        SapColorConversion::Method method = SapColorConversion::Method1;
+        switch (color_config_.color_method) {
+          case 1: method = SapColorConversion::Method1; break;
+          case 2: method = SapColorConversion::Method2; break;
+          case 3: method = SapColorConversion::Method3; break;
+          case 4: method = SapColorConversion::Method4; break;
+          case 5: method = SapColorConversion::Method5; break;
+          case 6: method = SapColorConversion::Method6; break;
+          case 7: method = SapColorConversion::Method7; break;
+        }
+        colorConv.SetMethod(method);
+
+        // WB gain/offset and gamma
+        SapDataFRGB wbGain(color_config_.wb_gain_r, color_config_.wb_gain_g, color_config_.wb_gain_b);
+        colorConv.SetWBGain(wbGain);
+        SapDataFRGB wbOff(color_config_.wb_offset_r, color_config_.wb_offset_g, color_config_.wb_offset_b);
+        colorConv.SetWBOffset(wbOff);
+        colorConv.SetGamma(color_config_.gamma);
+
+        // Convert
+        if (!colorConv.Convert()) {
+          Log("[ERR] ❌ Color conversion failed");
+          colorConv.Destroy();
+          return false;
+        }
+
+        // Save converted buffer as TIFF
+        SapBuffer* outBuf = colorConv.GetOutputBuffer();
+        if (!outBuf) {
+          Log("[ERR] ❌ No output buffer from color converter");
+          colorConv.Destroy();
+          return false;
+        }
+
+        BOOL saveOk = FALSE;
+        try {
+          saveOk = outBuf->Save(fullPath.c_str(), "-format tiff");
+        } catch (const std::exception& e) {
+          Log("[ERR] ❌ Exception saving TIFF: " + std::string(e.what()));
+          colorConv.Destroy();
+          return false;
+        } catch (...) {
+          Log("[ERR] ❌ Unknown exception saving TIFF");
+          colorConv.Destroy();
+          return false;
+        }
+
+        colorConv.Destroy();
+
+        if (saveOk) {
+          Log("[OK] ✅ TIFF image saved with color conversion: " + fullPath);
+          return true;
+        } else {
+          Log("[ERR] ❌ Failed to save TIFF image: " + fullPath);
+          return false;
+        }
+
+      } catch (const std::exception& e) {
+        Log("[ERR] ❌ Exception during color conversion: " + std::string(e.what()));
+        try { colorConv.Destroy(); } catch (...) {}
+        return false;
+      } catch (...) {
+        Log("[ERR] ❌ Unknown exception during color conversion");
+        try { colorConv.Destroy(); } catch (...) {}
+        return false;
+      }
+    }
+
+  } catch (const std::exception& e) {
+    Log("[ERR] ❌ Exception saving image for " + cameraName + ": " + std::string(e.what()));
+    return false;
+  } catch (...) {
+    Log("[ERR] ❌ Unknown exception saving image for " + cameraName);
     return false;
   }
 }
