@@ -6,6 +6,8 @@
 #include <memory>
 #include <functional>
 #include <thread>
+#include <mutex>
+#include <atomic>
 #include "CameraTypes.hpp"
 #include "SapClassBasic.h"
 
@@ -113,21 +115,24 @@ class CameraManager {
   std::map<std::string, SapAcqDevice*> connected_devices_;
   std::map<std::string, SapBuffer*> connected_buffers_;
   std::map<std::string, SapAcqDeviceToBuf*> connected_transfers_;
-  
-  bool is_discovering_ = false;
-  bool is_connecting_ = false;
-  bool is_capturing_ = false;
+
+  // Thread safety
+  mutable std::mutex camera_mutex_;  // Protects camera maps and state
+  std::atomic<bool> is_discovering_{false};
+  std::atomic<bool> is_connecting_{false};
+  std::atomic<bool> is_capturing_{false};
+
   std::thread discovery_thread_;
   std::thread connection_thread_;
   std::thread capture_thread_;
-  
+
   int exposure_time_ = 40000;
   bool capture_format_raw_ = false;
   Parameters params_;
   ColorConfig color_config_;
-  
+
   std::function<void(const std::string&)> log_callback_;
-  
+
   void Log(const std::string& message);
 };
 

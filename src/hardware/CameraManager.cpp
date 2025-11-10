@@ -73,56 +73,34 @@ void CameraManager::DiscoverCameras(std::function<void(const std::string&)> log_
       int resourceCount = SapManager::GetResourceCount(serverName, SapManager::ResourceAcqDevice);
       Log("[NET] Acquisition devices: " + std::to_string(resourceCount));
       
-      // Enumerate acquisition devices
+      // Fast enumerate: Just get resource names without creating full devices
+      // We'll get detailed info (serial, model) later during connection
       for (int resourceIndex = 0; resourceIndex < resourceCount; resourceIndex++) {
         try {
-          // Create acquisition device temporarily for discovery
-          auto acqDevice = new SapAcqDevice(serverName, resourceIndex);
-          if (!acqDevice->Create()) {
-            Log("[NET] Failed to create device " + std::to_string(resourceIndex));
-            delete acqDevice;
-            continue;
+          char resourceName[256];
+          if (SapManager::GetResourceName(serverName, SapManager::ResourceAcqDevice, resourceIndex, resourceName, sizeof(resourceName))) {
+
+            CameraInfo camera;
+            camera.id = std::to_string(cameraIndex);
+            camera.serverName = serverName;
+            camera.resourceIndex = resourceIndex;
+            camera.serialNumber = std::string(resourceName); // Use resource name as temp ID
+            camera.modelName = "Nano-C4020"; // Default model (will update on connect)
+
+            // Create camera name for neural rendering
+            std::string indexStr = std::to_string(cameraIndex);
+            if (indexStr.length() == 1) indexStr = "0" + indexStr;
+            camera.name = "cam_" + indexStr;
+            camera.isConnected = false;
+            camera.status = CameraStatus::Disconnected;
+            camera.type = CameraType::Industrial;
+
+            temp_cameras.push_back(camera);
+            Log("[OK] Found: " + camera.name + " at " + std::string(serverName) + "[" + std::to_string(resourceIndex) + "]");
+
+            cameraIndex++;
           }
-          
-          // Get device information
-          char buffer[512];
-          
-          CameraInfo camera;
-          camera.id = std::to_string(cameraIndex);
-          camera.serverName = serverName;
-          camera.resourceIndex = resourceIndex;
-          
-          // Get serial number
-          if (acqDevice->GetFeatureValue("DeviceSerialNumber", buffer, sizeof(buffer))) {
-            camera.serialNumber = std::string(buffer);
-          } else {
-            camera.serialNumber = "Unknown_" + std::to_string(cameraIndex);
-          }
-          
-          // Get model name
-          if (acqDevice->GetFeatureValue("DeviceModelName", buffer, sizeof(buffer))) {
-            camera.modelName = std::string(buffer);
-          } else {
-            camera.modelName = "Unknown_Model";
-          }
-          
-          // Create camera name for neural rendering
-          std::string indexStr = std::to_string(cameraIndex);
-          if (indexStr.length() == 1) indexStr = "0" + indexStr;
-          camera.name = "cam_" + indexStr;
-          camera.isConnected = false;
-          camera.status = CameraStatus::Disconnected;
-          camera.type = CameraType::Industrial;
-          
-          temp_cameras.push_back(camera);
-          Log("[OK] " + camera.name + ": " + camera.serialNumber + " (" + camera.modelName + ")");
-          
-          // Cleanup discovery device
-          acqDevice->Destroy();
-          delete acqDevice;
-          
-          cameraIndex++;
-          
+
         } catch (const std::exception& e) {
           Log("[NET] Exception: " + std::string(e.what()));
         }
@@ -173,7 +151,27 @@ void CameraManager::ConnectAllCameras(std::function<void(const std::string&)> lo
           delete acqDevice;
           continue;
         }
-        
+
+        // Now that device is connected, get real serial number and model
+        char infoBuffer[512];
+        if (acqDevice->GetFeatureValue("DeviceSerialNumber", infoBuffer, sizeof(infoBuffer))) {
+          // Update the camera info with real serial number
+          for (auto& cam : discovered_cameras_) {
+            if (cam.id == camera.id) {
+              cam.serialNumber = std::string(infoBuffer);
+              break;
+            }
+          }
+        }
+        if (acqDevice->GetFeatureValue("DeviceModelName", infoBuffer, sizeof(infoBuffer))) {
+          for (auto& cam : discovered_cameras_) {
+            if (cam.id == camera.id) {
+              cam.modelName = std::string(infoBuffer);
+              break;
+            }
+          }
+        }
+
         // Note: Camera settings will be applied AFTER all cameras are connected
         // This prevents applying settings to partially connected cameras
 
@@ -397,49 +395,55 @@ bool CameraManager::CaptureAllCameras(const std::string& session_path, const Cap
     // Trigger Snap(), Wait(), then add delay before next camera to avoid bandwidth saturation
     std::vector<bool> capture_complete(groupSize, false);
 
+    // SAPERA-SAFE SEQUENTIAL CAPTURE
+    // Use simple Snap+Wait pattern - Sapera SDK handles threading internally
     for (size_t i = 0; i < groupSize; ++i) {
       const auto& camera = cameras_to_capture[groupStart + i];
 
-      auto transferIt = connected_transfers_.find(camera.id);
-      if (transferIt == connected_transfers_.end()) {
-        Log("[ERR] ❌ Transfer not found for " + camera.name);
+      // Thread-safe access to transfer object
+      SapAcqDeviceToBuf* transfer = nullptr;
+      {
+        std::lock_guard<std::mutex> lock(camera_mutex_);
+        auto transferIt = connected_transfers_.find(camera.id);
+        if (transferIt == connected_transfers_.end()) {
+          Log("[ERR] ❌ Transfer not found for " + camera.name);
+          continue;
+        }
+        transfer = transferIt->second;
+      }
+
+      if (!transfer) {
+        Log("[ERR] ❌ Null transfer for " + camera.name);
         continue;
       }
 
-      SapAcqDeviceToBuf* transfer = transferIt->second;
-
       try {
-        Log("[REC] 📷 Snap() for " + camera.name);
-        BOOL snapResult = transfer->Snap();
-        if (!snapResult) {
-          Log("[ERR] ❌ Snap() failed for " + camera.name);
+        Log("[REC] 📷 Capturing " + camera.name);
+
+        // Simple Snap+Wait - no retries, no complex logic
+        // Sapera SDK is designed to handle this reliably
+        if (!transfer->Snap()) {
+          Log("[ERR] ❌ Snap failed for " + camera.name);
           allSuccess = false;
           continue;
         }
 
-        Log("[REC] ⏳ Wait() for " + camera.name);
-        BOOL waitResult = transfer->Wait(5000);
-        if (!waitResult) {
-          Log("[ERR] ❌ Wait() timeout for " + camera.name);
+        if (!transfer->Wait(5000)) {
+          Log("[ERR] ❌ Wait timeout for " + camera.name);
           allSuccess = false;
           continue;
         }
 
         capture_complete[i] = true;
-        Log("[REC] ✓ " + camera.name + " capture complete");
+        Log("[REC] ✓ " + camera.name + " complete");
 
-        // Add stagger delay AFTER each camera completes to spread bandwidth usage
-        // This ensures the next camera doesn't start transferring while this one is still sending data
+        // Stagger delay to prevent bandwidth spikes
         if (i < groupSize - 1 && stagger_ms > 0) {
-          Log("[REC] ⏳ Stagger delay: " + std::to_string(stagger_ms) + "ms");
           std::this_thread::sleep_for(std::chrono::milliseconds(stagger_ms));
         }
 
-      } catch (const std::exception& e) {
-        Log("[ERR] ❌ Exception during capture for " + camera.name + ": " + e.what());
-        allSuccess = false;
       } catch (...) {
-        Log("[ERR] ❌ Unknown exception during capture for " + camera.name);
+        Log("[ERR] ❌ Exception capturing " + camera.name);
         allSuccess = false;
       }
     }
@@ -455,39 +459,43 @@ bool CameraManager::CaptureAllCameras(const std::string& session_path, const Cap
       if (!capture_complete[i]) continue;
 
       const auto& camera = cameras_to_capture[groupStart + i];
-      auto bufferIt = connected_buffers_.find(camera.id);
 
-      if (bufferIt == connected_buffers_.end()) {
-        Log("[ERR] ❌ Buffer not found for " + camera.name);
+      // Thread-safe access to buffer
+      SapBuffer* buffer = nullptr;
+      {
+        std::lock_guard<std::mutex> lock(camera_mutex_);
+        auto bufferIt = connected_buffers_.find(camera.id);
+        if (bufferIt == connected_buffers_.end()) {
+          Log("[ERR] ❌ Buffer not found for " + camera.name);
+          allSuccess = false;
+          continue;
+        }
+        buffer = bufferIt->second;
+      }
+
+      if (!buffer) {
+        Log("[ERR] ❌ Null buffer for " + camera.name);
         allSuccess = false;
         continue;
       }
 
-      SapBuffer* buffer = bufferIt->second;
-
       try {
-        // Generate filename using camera order number (not timestamp)
-        // This ensures consistent naming: cam_01.tiff, cam_02.tiff, etc.
-        int camera_order_num = static_cast<int>(groupStart + i) + 1;
+        // Generate filename using camera name (consistent ordering)
         std::string extension = capture_format_raw_ ? ".raw" : ".tiff";
         std::string filename = camera.name + extension;
         std::string fullPath = session_path + "/" + filename;
 
         // Save the captured image
-        bool saveSuccess = SaveImageFromBuffer(buffer, fullPath, camera.name);
-
-        if (saveSuccess) {
-          Log("[OK] ✅ " + camera.name + " saved successfully");
+        if (SaveImageFromBuffer(buffer, fullPath, camera.name)) {
+          Log("[OK] ✅ " + camera.name + " saved");
           successCount++;
         } else {
-          Log("[ERR] ❌ Failed to save image for " + camera.name);
+          Log("[ERR] ❌ Save failed: " + camera.name);
           allSuccess = false;
         }
-      } catch (const std::exception& e) {
-        Log("[ERR] ❌ Exception saving " + camera.name + ": " + e.what());
-        allSuccess = false;
+
       } catch (...) {
-        Log("[ERR] ❌ Unknown exception saving " + camera.name);
+        Log("[ERR] ❌ Exception saving " + camera.name);
         allSuccess = false;
       }
     }
