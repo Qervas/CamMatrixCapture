@@ -79,7 +79,7 @@ neural_dataset/
         └── ...
 
 config/
-└── settings.json              # Camera parameters, UI state
+└── settings.ini               # Camera parameters, UI state (INI format)
 ```
 
 ## Dependencies

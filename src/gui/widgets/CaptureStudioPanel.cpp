@@ -1279,11 +1279,11 @@ void CaptureStudioPanel::ApplyCameraSettingsFromConfig() {
                " G=" + std::to_string(camera_settings.white_balance_green) +
                " B=" + std::to_string(camera_settings.white_balance_blue));
 
-    // Apply gamma
-    camera_manager_->ApplyParameterToAllCameras("Gamma", std::to_string(camera_settings.gamma));
-    LogMessage("[STUDIO] Applied Gamma: " + std::to_string(camera_settings.gamma));
+    // Apply gamma (commented out - not supported by Nano-C4020 cameras)
+    // camera_manager_->ApplyParameterToAllCameras("Gamma", std::to_string(camera_settings.gamma));
+    // LogMessage("[STUDIO] Applied Gamma: " + std::to_string(camera_settings.gamma));
 
-    LogMessage("[STUDIO] ✅ All camera settings applied from config");
+    LogMessage("[STUDIO] ✅ All camera settings applied from config (Gamma skipped - not supported)");
 }
 
 

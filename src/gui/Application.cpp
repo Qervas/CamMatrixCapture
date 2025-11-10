@@ -26,10 +26,14 @@ Application::~Application() {
 
 bool Application::Initialize() {
   try {
+    // Suppress Sapera SDK error dialogs - send errors to log instead of popups
+    SapManager::SetDisplayStatusMode(SapManager::StatusLog);
+    std::cout << "[SAPERA] Error display mode set to LOG (no popups)" << std::endl;
+
     InitializeSettings();
     InitializeGUI();
     InitializeBluetooth();
-    
+
     AddGlobalLog("Application initialized successfully", LogLevel::kSuccess);
     return true;
   } catch (const std::exception& e) {
@@ -62,7 +66,7 @@ std::string GetExecutableDirectory() {
 void Application::InitializeSettings() {
   // Get the directory where the executable is located
   std::string exe_dir = GetExecutableDirectory();
-  std::filesystem::path settings_path = std::filesystem::path(exe_dir) / "settings.json";
+  std::filesystem::path settings_path = std::filesystem::path(exe_dir) / "settings.ini";
   std::string settings_path_str = settings_path.string();
   
   std::cout << "[SETTINGS] Executable directory: " << exe_dir << std::endl;
@@ -78,17 +82,6 @@ void Application::InitializeSettings() {
   // Initialize settings manager with absolute path to exe directory
   settings_manager_ = std::make_unique<SettingsManager>(settings_path_str);
   settings_manager_->Load();
-
-  // Load camera ordering from camera_config.json if it exists
-  std::filesystem::path camera_config_path = std::filesystem::path(exe_dir) / "config" / "camera_config.json";
-  std::string camera_config_str = camera_config_path.string();
-  std::cout << "[DEBUG] Attempting to load camera config: " << camera_config_str << std::endl;
-  if (settings_manager_->LoadCameraConfigJson(camera_config_str)) {
-    std::cout << "[SETTINGS] Camera ordering initialized from camera_config.json" << std::endl;
-    // Save to persist the ordering to settings.json
-    settings_manager_->Save();
-    std::cout << "[SETTINGS] Camera ordering saved to settings.json" << std::endl;
-  }
 
   // Initialize session manager with absolute path using settings
   std::string dataset_folder = settings_manager_->GetAppSettings().last_output_folder;
@@ -163,7 +156,7 @@ void Application::InitializeBluetooth() {
   files_view_ = std::make_unique<FilesView>(session_manager_.get());
   hardware_view_ = std::make_unique<HardwareView>(bluetooth_manager_, camera_manager_,
                                                    session_manager_.get(), settings_manager_.get());
-  settings_view_ = std::make_unique<SettingsView>(settings_manager_.get());
+  settings_view_ = std::make_unique<SettingsView>(settings_manager_.get(), camera_manager_);
 
   AddGlobalLog("System initialized successfully", LogLevel::kSuccess);
 }

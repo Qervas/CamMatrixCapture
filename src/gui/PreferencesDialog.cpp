@@ -20,41 +20,12 @@ void PreferencesDialog::Show(bool* p_open) {
 }
 
 void PreferencesDialog::RenderContent() {
-  // Load current settings every time dialog is shown
-  if (settings_manager_) {
-    const auto& app_settings = settings_manager_->GetAppSettings();
-    temp_ui_scale_ = app_settings.ui_scale;
-    temp_dark_theme_ = app_settings.dark_theme;
-    temp_vsync_ = app_settings.vsync;
-    temp_auto_save_settings_ = app_settings.auto_save_settings;
-    temp_window_width_ = app_settings.window_width;
-    temp_window_height_ = app_settings.window_height;
-    temp_window_x_ = app_settings.window_x;
-    temp_window_y_ = app_settings.window_y;
+  // Load settings only once when dialog first opens (not every frame!)
+  LoadSettingsOnce();
 
-    // Load camera settings
-    const auto& camera_settings = settings_manager_->GetCameraSettings();
-    temp_exposure_time_ = camera_settings.exposure_time;
-    temp_gain_ = camera_settings.gain;
-    temp_auto_exposure_ = camera_settings.auto_exposure;
-    temp_auto_gain_ = camera_settings.auto_gain;
-    temp_white_balance_red_ = camera_settings.white_balance_red;
-    temp_white_balance_green_ = camera_settings.white_balance_green;
-    temp_white_balance_blue_ = camera_settings.white_balance_blue;
-    temp_auto_white_balance_ = camera_settings.auto_white_balance;
-    temp_gamma_ = camera_settings.gamma;
-
-    // Load log settings
-    if (auto* log_panel = GetGlobalLogPanel()) {
-      temp_log_auto_delete_ = log_panel->GetAutoDeleteEnabled();
-      temp_log_max_messages_ = static_cast<int>(log_panel->GetMaxMessages());
-    }
-
-    // Load sound settings
-    auto& sound_system = NotificationSounds::Instance();
-    temp_completion_sound_enabled_ = sound_system.IsCompletionSoundEnabled();
-    temp_completion_sound_type_ = static_cast<int>(sound_system.GetCompletionSoundType());
-    strncpy_s(temp_custom_sound_path_, sound_system.GetCustomSoundPath().c_str(), sizeof(temp_custom_sound_path_) - 1);
+  // Update timer for "Applied!" message
+  if (settings_applied_timer_ > 0.0f) {
+    settings_applied_timer_ -= ImGui::GetIO().DeltaTime;
   }
 
   // Left side - category list
@@ -72,30 +43,75 @@ void PreferencesDialog::RenderContent() {
   ImGui::SameLine();
 
   // Right side - settings for selected category
-  ImGui::BeginChild("right_pane", ImVec2(0, -ImGui::GetFrameHeightWithSpacing()));
+  // Use a table layout to make buttons stick to bottom without hardcoding space
+  ImGui::BeginGroup();
+  {
+    // Content area with scrolling
+    float button_height = ImGui::GetFrameHeightWithSpacing() * 2.0f + ImGui::GetStyle().ItemSpacing.y;
+    ImGui::BeginChild("right_pane", ImVec2(0, -button_height), false);
 
-  switch (selected_tab) {
-    case 0: RenderGeneralTab(); break;
-    case 1: RenderAppearanceTab(); break;
-    case 2: RenderPerformanceTab(); break;
-    case 3: RenderCameraTab(); break;
-    case 4: RenderAboutTab(); break;
+    switch (selected_tab) {
+      case 0: RenderGeneralTab(); break;
+      case 1: RenderAppearanceTab(); break;
+      case 2: RenderPerformanceTab(); break;
+      case 3: RenderCameraTab(); break;
+      case 4: RenderAboutTab(); break;
+    }
+
+    ImGui::EndChild();
+
+    // Bottom buttons section (separator + indicators + buttons)
+    ImGui::Separator();
+
+  // Check if settings have changed
+  bool has_changes = HasSettingsChanged();
+
+  // Visual indicator for unsaved changes
+  if (has_changes) {
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.7f, 0.2f, 1.0f));
+    ImGui::Text("● Unsaved changes");
+    ImGui::PopStyleColor();
+    ImGui::SameLine();
   }
 
-  ImGui::EndChild();
+  // Visual feedback when settings are applied
+  if (settings_applied_timer_ > 0.0f) {
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.2f, 0.9f, 0.3f, 1.0f));
+    ImGui::Text("✓ Settings applied to hardware!");
+    ImGui::PopStyleColor();
+    ImGui::SameLine();
+  }
 
-  // Bottom buttons
-  ImGui::Separator();
+  // Save button - highlighted when there are changes
+  if (has_changes) {
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.6f, 0.9f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.7f, 1.0f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.1f, 0.5f, 0.8f, 1.0f));
+  }
 
-  if (ImGui::Button("Save")) {
+  if (ImGui::Button("Save & Apply")) {
     SaveSettings();
     ApplySettings();
+    settings_loaded_ = false;  // Force reload next time
+    settings_applied_timer_ = 3.0f;  // Show "Applied!" message for 3 seconds
+  }
+
+  if (has_changes) {
+    ImGui::PopStyleColor(3);
   }
 
   ImGui::SameLine();
   if (ImGui::Button("Reset to Defaults")) {
     ResetSettings();
+    settings_loaded_ = false;  // Force reload to show defaults
   }
+
+  ImGui::SameLine();
+  if (ImGui::Button("Discard Changes")) {
+    settings_loaded_ = false;  // Force reload from saved settings
+  }
+  }
+  ImGui::EndGroup();
 }
 
 void PreferencesDialog::RenderGeneralTab() {
@@ -472,6 +488,77 @@ void PreferencesDialog::ResetSettings() {
   temp_completion_sound_enabled_ = true;
   temp_completion_sound_type_ = 0;
   strcpy_s(temp_custom_sound_path_, "");
+}
+
+void PreferencesDialog::LoadSettingsOnce() {
+  // Only load once when dialog opens, not every frame
+  if (settings_loaded_ || !settings_manager_) return;
+
+  const auto& app_settings = settings_manager_->GetAppSettings();
+  temp_ui_scale_ = app_settings.ui_scale;
+  temp_dark_theme_ = app_settings.dark_theme;
+  temp_vsync_ = app_settings.vsync;
+  temp_auto_save_settings_ = app_settings.auto_save_settings;
+  temp_window_width_ = app_settings.window_width;
+  temp_window_height_ = app_settings.window_height;
+  temp_window_x_ = app_settings.window_x;
+  temp_window_y_ = app_settings.window_y;
+
+  // Load camera settings
+  const auto& camera_settings = settings_manager_->GetCameraSettings();
+  temp_exposure_time_ = camera_settings.exposure_time;
+  temp_gain_ = camera_settings.gain;
+  temp_auto_exposure_ = camera_settings.auto_exposure;
+  temp_auto_gain_ = camera_settings.auto_gain;
+  temp_white_balance_red_ = camera_settings.white_balance_red;
+  temp_white_balance_green_ = camera_settings.white_balance_green;
+  temp_white_balance_blue_ = camera_settings.white_balance_blue;
+  temp_auto_white_balance_ = camera_settings.auto_white_balance;
+  temp_gamma_ = camera_settings.gamma;
+
+  // Load log settings
+  if (auto* log_panel = GetGlobalLogPanel()) {
+    temp_log_auto_delete_ = log_panel->GetAutoDeleteEnabled();
+    temp_log_max_messages_ = static_cast<int>(log_panel->GetMaxMessages());
+  }
+
+  // Load sound settings
+  auto& sound_system = NotificationSounds::Instance();
+  temp_completion_sound_enabled_ = sound_system.IsCompletionSoundEnabled();
+  temp_completion_sound_type_ = static_cast<int>(sound_system.GetCompletionSoundType());
+  strncpy_s(temp_custom_sound_path_, sound_system.GetCustomSoundPath().c_str(), sizeof(temp_custom_sound_path_) - 1);
+
+  settings_loaded_ = true;
+}
+
+bool PreferencesDialog::HasSettingsChanged() const {
+  if (!settings_manager_) return false;
+
+  const auto& app_settings = settings_manager_->GetAppSettings();
+  const auto& camera_settings = settings_manager_->GetCameraSettings();
+
+  // Check app settings
+  if (temp_ui_scale_ != app_settings.ui_scale) return true;
+  if (temp_dark_theme_ != app_settings.dark_theme) return true;
+  if (temp_vsync_ != app_settings.vsync) return true;
+  if (temp_auto_save_settings_ != app_settings.auto_save_settings) return true;
+  if (temp_window_width_ != app_settings.window_width) return true;
+  if (temp_window_height_ != app_settings.window_height) return true;
+  if (temp_window_x_ != app_settings.window_x) return true;
+  if (temp_window_y_ != app_settings.window_y) return true;
+
+  // Check camera settings (these are most important)
+  if (temp_exposure_time_ != camera_settings.exposure_time) return true;
+  if (std::abs(temp_gain_ - camera_settings.gain) > 0.01f) return true;
+  if (temp_auto_exposure_ != camera_settings.auto_exposure) return true;
+  if (temp_auto_gain_ != camera_settings.auto_gain) return true;
+  if (std::abs(temp_white_balance_red_ - camera_settings.white_balance_red) > 0.01f) return true;
+  if (std::abs(temp_white_balance_green_ - camera_settings.white_balance_green) > 0.01f) return true;
+  if (std::abs(temp_white_balance_blue_ - camera_settings.white_balance_blue) > 0.01f) return true;
+  if (temp_auto_white_balance_ != camera_settings.auto_white_balance) return true;
+  if (std::abs(temp_gamma_ - camera_settings.gamma) > 0.01f) return true;
+
+  return false;
 }
 
 } // namespace SaperaCapturePro

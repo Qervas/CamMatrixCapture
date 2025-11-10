@@ -42,6 +42,11 @@ class PreferencesDialog {
  private:
   SettingsManager* settings_manager_ = nullptr;
 
+  // State tracking
+  bool settings_loaded_ = false;
+  bool settings_changed_ = false;
+  float settings_applied_timer_ = 0.0f;  // For showing "Applied!" message
+
   // Temporary values for editing
   float temp_ui_scale_ = 1.0f;
   bool temp_dark_theme_ = true;
@@ -99,6 +104,8 @@ class PreferencesDialog {
   void ApplySettings();
   void SaveSettings();
   void ResetSettings();
+  void LoadSettingsOnce();  // Load settings only when dialog first opens
+  bool HasSettingsChanged() const;  // Check if any settings differ from saved
 };
 
 }  // namespace SaperaCapturePro

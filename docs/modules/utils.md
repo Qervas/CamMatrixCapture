@@ -129,28 +129,29 @@ void SaveSettings();
 void LoadSettings();
 ```
 
-**Settings file (config/settings.json):**
-```json
-{
-    "ui_scale": "1.2",
-    "output_directory": "neural_dataset/images",
-    "capture_format_raw": "false",
-    "sequential_delay_ms": "750",
-    "cameras": {
-        "camera_12345678": {
-            "exposure_time": "40000",
-            "gain": "1.5",
-            "wb_red": "1.2",
-            "wb_green": "1.0",
-            "wb_blue": "0.9",
-            "pixel_format": "RGB8"
-        }
-    },
-    "bluetooth_devices": {
-        "BluetoothLE#BluetoothLE00:0f:f0:02:d5:b9": "Turntable_1"
-    }
-}
+**Settings file (settings.ini in executable directory):**
+```ini
+# Application settings
+app_ui_scale=1.2
+app_last_output_folder=neural_dataset
+app_dark_theme=true
+app_window_width=1200
+app_window_height=800
+
+# Camera settings
+camera_exposure_time=40000
+camera_gain=1.5
+camera_white_balance_red=1.2
+camera_white_balance_green=1.0
+camera_white_balance_blue=0.9
+camera_pixel_format=RGB8
+
+# Camera ordering
+camera_order_use_custom_ordering=true
+camera_order_order_entries=S1128470:0|S1128520:1|S1128522:2
 ```
+
+**Note:** The settings.ini file is created in the same directory as the executable (e.g., `build/Debug/settings.ini` or `build/Release/settings.ini`), not in a config subfolder.
 
 **Usage example:**
 ```cpp

@@ -240,7 +240,8 @@ If capture timeouts occur:
 
 **Default paths:**
 - Output: `neural_dataset/images/`
-- Settings: `config/settings.json`
+- Settings: `settings.ini` (created in executable directory: build/Debug/ or build/Release/)
+- Camera config: `config/camera_config.json` (camera ordering, if present)
 - Logs: Console window (View → Log Panel)
 
 **Default parameters:**

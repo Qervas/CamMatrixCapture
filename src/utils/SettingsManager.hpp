@@ -193,7 +193,7 @@ private:
     void LoadFullSettings(const SimpleJSON& json);
 
 public:
-    explicit SettingsManager(const std::string& config_path = "settings.json");
+    explicit SettingsManager(const std::string& config_path = "settings.ini");
     ~SettingsManager();
 
     // Camera Settings
