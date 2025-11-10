@@ -1,8 +1,0 @@
-#pragma once
-// Auto-generated build configuration
-#define BUILD_VERSION "@CMAKE_PROJECT_VERSION@"
-#define BUILD_TYPE "@CMAKE_BUILD_TYPE@"
-#define SAPERA_SDK_AVAILABLE @SAPERA_FOUND@
-#define SAPERA_SDK_PATH "@SAPERA_ROOT@"
-#define PROJECT_NAME "@PROJECT_NAME@"
-#define CMAKE_GENERATOR "@CMAKE_GENERATOR@"

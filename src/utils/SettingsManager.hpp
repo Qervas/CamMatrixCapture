@@ -205,6 +205,7 @@ public:
     CameraOrderSettings& GetCameraOrderSettings() { return camera_order_settings; }
     const CameraOrderSettings& GetCameraOrderSettings() const { return camera_order_settings; }
     void ResetCameraOrderSettings();
+    bool LoadCameraConfigJson(const std::string& config_path = "config/camera_config.json");
 
     // Individual Camera Settings - NEW
     IndividualCameraSettings& GetIndividualCameraSettings(const std::string& camera_id);

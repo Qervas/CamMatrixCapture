@@ -176,6 +176,16 @@ void HardwarePanel::RenderCameraControls() {
         if (ImGui::Button("🔍 Discover Cameras", btn)) {
             camera_manager_->DiscoverCameras([this](const std::string& msg) {
                 LogMessage(msg);
+                // Auto-apply camera ordering after discovery completes
+                if (msg.find("Discovery complete") != std::string::npos) {
+                    if (settings_manager_) {
+                        auto& order_settings = settings_manager_->GetCameraOrderSettings();
+                        if (order_settings.use_custom_ordering) {
+                            camera_manager_->ApplyCameraOrdering(order_settings);
+                            LogMessage("[ORDER] Applied camera ordering from config");
+                        }
+                    }
+                }
             });
         }
     }
@@ -655,6 +665,16 @@ void HardwarePanel::QuickConnectAll() {
             LogMessage("[QUICK] " + msg);
         });
         std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+
+        // Apply camera ordering after discovery
+        if (settings_manager_) {
+            auto& order_settings = settings_manager_->GetCameraOrderSettings();
+            if (order_settings.use_custom_ordering) {
+                camera_manager_->ApplyCameraOrdering(order_settings);
+                LogMessage("[QUICK] Applied camera ordering from config");
+            }
+        }
+
         auto cameras = camera_manager_->GetDiscoveredCameras();
         if (cameras.empty()) {
             LogMessage("[QUICK] ⚠️ No cameras discovered");

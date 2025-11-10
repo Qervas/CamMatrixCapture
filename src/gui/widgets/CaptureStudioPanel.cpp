@@ -603,6 +603,9 @@ void CaptureStudioPanel::StartSingleCameraCapture() {
 
     LogMessage("[STUDIO] Starting single camera capture: " + selected_camera.name + " -> " + final_name);
 
+    // Apply camera settings from config before capture
+    ApplyCameraSettingsFromConfig();
+
     // Get current session path
     CaptureSession* current_session = session_manager_->GetCurrentSession();
     if (!current_session) {
@@ -760,6 +763,9 @@ void CaptureStudioPanel::PerformSingleCapture(const std::string& capture_name) {
         LogMessage("[STUDIO] Capture already in progress, please wait...");
         return;
     }
+
+    // Apply camera settings from config before capture
+    ApplyCameraSettingsFromConfig();
 
     is_capturing_ = true;
 
@@ -1130,6 +1136,9 @@ void CaptureStudioPanel::RunAutomatedSequenceInBackground() {
             return;
         }
 
+        // Apply camera settings from config before starting sequence
+        ApplyCameraSettingsFromConfig();
+
         for (int i = 0; i < auto_capture_count_ && !sequence_stop_requested_; ++i) {
             if (sequence_pause_requested_) {
                 LogMessage("[THREAD] Sequence paused, waiting...");
@@ -1244,6 +1253,37 @@ void CaptureStudioPanel::UpdateSequenceStateFromThread() {
         is_capturing_ = false;
         SetCurrentStep(SequenceStep::Idle, "Sequence completed", 0.0f);
     }
+}
+
+void CaptureStudioPanel::ApplyCameraSettingsFromConfig() {
+    if (!camera_manager_ || !settings_manager_) {
+        LogMessage("[STUDIO] Cannot apply settings: manager(s) not initialized");
+        return;
+    }
+
+    const auto& camera_settings = settings_manager_->GetCameraSettings();
+
+    // Apply exposure time
+    camera_manager_->ApplyParameterToAllCameras("ExposureTime", std::to_string(camera_settings.exposure_time));
+    LogMessage("[STUDIO] Applied ExposureTime: " + std::to_string(camera_settings.exposure_time) + " us");
+
+    // Apply gain
+    camera_manager_->ApplyParameterToAllCameras("Gain", std::to_string(camera_settings.gain));
+    LogMessage("[STUDIO] Applied Gain: " + std::to_string(camera_settings.gain));
+
+    // Apply white balance
+    camera_manager_->ApplyParameterToAllCameras("BalanceRatioRed", std::to_string(camera_settings.white_balance_red));
+    camera_manager_->ApplyParameterToAllCameras("BalanceRatioGreen", std::to_string(camera_settings.white_balance_green));
+    camera_manager_->ApplyParameterToAllCameras("BalanceRatioBlue", std::to_string(camera_settings.white_balance_blue));
+    LogMessage("[STUDIO] Applied White Balance: R=" + std::to_string(camera_settings.white_balance_red) +
+               " G=" + std::to_string(camera_settings.white_balance_green) +
+               " B=" + std::to_string(camera_settings.white_balance_blue));
+
+    // Apply gamma
+    camera_manager_->ApplyParameterToAllCameras("Gamma", std::to_string(camera_settings.gamma));
+    LogMessage("[STUDIO] Applied Gamma: " + std::to_string(camera_settings.gamma));
+
+    LogMessage("[STUDIO] ✅ All camera settings applied from config");
 }
 
 

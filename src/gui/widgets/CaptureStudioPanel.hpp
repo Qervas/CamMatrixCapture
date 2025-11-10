@@ -205,6 +205,7 @@ private:
     void LogMessage(const std::string& message);
     std::string GenerateCaptureFilename() const;
     bool ValidateSystemState() const;
+    void ApplyCameraSettingsFromConfig();  // Apply settings from SettingsManager to CameraManager
 };
 
 } // namespace SaperaCapturePro

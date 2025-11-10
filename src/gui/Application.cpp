@@ -78,7 +78,18 @@ void Application::InitializeSettings() {
   // Initialize settings manager with absolute path to exe directory
   settings_manager_ = std::make_unique<SettingsManager>(settings_path_str);
   settings_manager_->Load();
-  
+
+  // Load camera ordering from camera_config.json if it exists
+  std::filesystem::path camera_config_path = std::filesystem::path(exe_dir) / "config" / "camera_config.json";
+  std::string camera_config_str = camera_config_path.string();
+  std::cout << "[DEBUG] Attempting to load camera config: " << camera_config_str << std::endl;
+  if (settings_manager_->LoadCameraConfigJson(camera_config_str)) {
+    std::cout << "[SETTINGS] Camera ordering initialized from camera_config.json" << std::endl;
+    // Save to persist the ordering to settings.json
+    settings_manager_->Save();
+    std::cout << "[SETTINGS] Camera ordering saved to settings.json" << std::endl;
+  }
+
   // Initialize session manager with absolute path using settings
   std::string dataset_folder = settings_manager_->GetAppSettings().last_output_folder;
   std::filesystem::path dataset_path = std::filesystem::path(exe_dir) / dataset_folder;
@@ -239,6 +250,14 @@ void Application::RenderMainContent() {
       if (ImGui::MenuItem("Discover Cameras", "F5")) {
         camera_manager_->DiscoverCameras([this](const std::string& msg) {
           AddGlobalLog(msg);
+          // Auto-apply camera ordering after discovery completes
+          if (msg.find("Discovery complete") != std::string::npos) {
+            auto& order_settings = settings_manager_->GetCameraOrderSettings();
+            if (order_settings.use_custom_ordering) {
+              camera_manager_->ApplyCameraOrdering(order_settings);
+              AddGlobalLog("[ORDER] Applied camera ordering from config");
+            }
+          }
         });
       }
       if (ImGui::MenuItem("Connect All", "F6")) {

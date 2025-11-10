@@ -444,6 +444,108 @@ void SettingsManager::SetConfigPath(const std::string& path) {
     config_file_path = path;
 }
 
+bool SettingsManager::LoadCameraConfigJson(const std::string& config_path) {
+    try {
+        std::ifstream file(config_path);
+        if (!file.is_open()) {
+            std::cout << "[SETTINGS] camera_config.json not found: " << config_path << std::endl;
+            return false;
+        }
+
+        // Read entire file
+        std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+        file.close();
+
+        // Simple JSON parsing for camera_positions array
+        // Look for "camera_positions": [ ... ]
+        size_t positions_start = content.find("\"camera_positions\"");
+        if (positions_start == std::string::npos) {
+            std::cout << "[SETTINGS] No camera_positions found in config" << std::endl;
+            return false;
+        }
+
+        size_t array_start = content.find('[', positions_start);
+        size_t array_end = content.find(']', array_start);
+        if (array_start == std::string::npos || array_end == std::string::npos) {
+            std::cout << "[SETTINGS] Invalid camera_positions array" << std::endl;
+            return false;
+        }
+
+        std::string array_content = content.substr(array_start + 1, array_end - array_start - 1);
+
+        // Parse each camera entry
+        camera_order_settings.order_entries.clear();
+        size_t pos = 0;
+        int entries_found = 0;
+
+        while (pos < array_content.length()) {
+            // Find next object { ... }
+            size_t obj_start = array_content.find('{', pos);
+            if (obj_start == std::string::npos) break;
+
+            size_t obj_end = array_content.find('}', obj_start);
+            if (obj_end == std::string::npos) break;
+
+            std::string obj = array_content.substr(obj_start, obj_end - obj_start + 1);
+
+            // Extract position
+            int position = -1;
+            size_t pos_key = obj.find("\"position\"");
+            if (pos_key != std::string::npos) {
+                size_t colon = obj.find(':', pos_key);
+                size_t comma = obj.find(',', colon);
+                if (colon != std::string::npos) {
+                    std::string pos_str = obj.substr(colon + 1,
+                        (comma != std::string::npos ? comma : obj_end) - colon - 1);
+                    // Remove whitespace
+                    pos_str.erase(0, pos_str.find_first_not_of(" \t\n\r"));
+                    pos_str.erase(pos_str.find_last_not_of(" \t\n\r,") + 1);
+                    position = std::stoi(pos_str);
+                }
+            }
+
+            // Extract full_serial
+            std::string serial;
+            size_t serial_key = obj.find("\"full_serial\"");
+            if (serial_key != std::string::npos) {
+                size_t colon = obj.find(':', serial_key);
+                size_t quote1 = obj.find('\"', colon);
+                size_t quote2 = obj.find('\"', quote1 + 1);
+                if (quote1 != std::string::npos && quote2 != std::string::npos) {
+                    serial = obj.substr(quote1 + 1, quote2 - quote1 - 1);
+                }
+            }
+
+            // Add to order settings if valid
+            if (position > 0 && !serial.empty()) {
+                CameraOrderEntry entry;
+                entry.serial_number = serial;
+                entry.display_position = position - 1; // Convert 1-based to 0-based
+                camera_order_settings.order_entries.push_back(entry);
+                entries_found++;
+                std::cout << "[SETTINGS] Loaded camera position " << position
+                          << ": " << serial << std::endl;
+            }
+
+            pos = obj_end + 1;
+        }
+
+        if (entries_found > 0) {
+            camera_order_settings.use_custom_ordering = true;
+            std::cout << "[SETTINGS] Loaded " << entries_found
+                      << " camera positions from camera_config.json" << std::endl;
+            return true;
+        } else {
+            std::cout << "[SETTINGS] No valid camera positions found" << std::endl;
+            return false;
+        }
+
+    } catch (const std::exception& e) {
+        std::cout << "[SETTINGS] Error loading camera_config.json: " << e.what() << std::endl;
+        return false;
+    }
+}
+
 bool SettingsManager::LoadFromFile() {
     try {
         std::ifstream file(config_file_path);

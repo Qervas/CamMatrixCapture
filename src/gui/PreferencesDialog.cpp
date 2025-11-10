@@ -315,7 +315,7 @@ void PreferencesDialog::RenderCameraTab() {
   // Exposure Time
   ImGui::Text("Exposure Time (us):");
   ImGui::SameLine();
-  ImGui::SetNextItemWidth(150);
+  ImGui::SetNextItemWidth(250);
   if (ImGui::InputInt("##Exposure", &temp_exposure_time_)) {
     if (temp_exposure_time_ < 1) temp_exposure_time_ = 1;
     if (on_exposure_changed_) {
@@ -326,7 +326,7 @@ void PreferencesDialog::RenderCameraTab() {
   // Gain
   ImGui::Text("Gain:");
   ImGui::SameLine();
-  ImGui::SetNextItemWidth(150);
+  ImGui::SetNextItemWidth(250);
   if (ImGui::SliderFloat("##Gain", &temp_gain_, 0.0f, 10.0f, "%.2f")) {
     if (on_gain_changed_) {
       on_gain_changed_(temp_gain_);
