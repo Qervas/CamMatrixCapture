@@ -190,47 +190,13 @@ void PreferencesDialog::RenderGeneralTab() {
   ImGui::Text("Notification Sounds");
   ImGui::Spacing();
 
-  if (ImGui::Checkbox("Enable completion sound", &temp_completion_sound_enabled_)) {
+  if (ImGui::Checkbox("Enable completion sound (Windows default alert)", &temp_completion_sound_enabled_)) {
     NotificationSounds::Instance().SetCompletionSoundEnabled(temp_completion_sound_enabled_);
   }
   ImGui::SameLine();
   ImGui::TextDisabled("(?)");
   if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip("Play a sound when automated capture sequences complete");
-  }
-
-  if (temp_completion_sound_enabled_) {
-    const char* sound_types[] = {
-      "Clean Bell",
-      "Trap Beat",
-      "Microwave Ding (3x)",
-      "Car Siren"
-    };
-
-    ImGui::Text("Sound type:");
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(200);
-    if (ImGui::Combo("##SoundType", &temp_completion_sound_type_, sound_types, IM_ARRAYSIZE(sound_types))) {
-      NotificationSounds::Instance().SetCompletionSoundType(static_cast<NotificationSounds::SoundType>(temp_completion_sound_type_));
-    }
-
-    if (temp_completion_sound_type_ == 5) { // Custom sound file
-      ImGui::Text("Custom sound file (leave empty for custom beats):");
-      ImGui::SetNextItemWidth(300);
-      if (ImGui::InputText("##CustomSoundPath", temp_custom_sound_path_, sizeof(temp_custom_sound_path_))) {
-        NotificationSounds::Instance().SetCustomSoundPath(temp_custom_sound_path_);
-      }
-      ImGui::SameLine();
-      if (ImGui::Button("Browse...")) {
-        ImGui::SameLine();
-        ImGui::TextDisabled("(file dialog coming soon)");
-      }
-    }
-
-    ImGui::SameLine();
-    if (ImGui::Button("Test Sound")) {
-      NotificationSounds::Instance().TestSound(static_cast<NotificationSounds::SoundType>(temp_completion_sound_type_), 0.8f);
-    }
+    ImGui::SetTooltip("Play Windows default alert sound when automated capture sequences complete");
   }
 
   ImGui::Spacing();
@@ -526,8 +492,6 @@ void PreferencesDialog::ResetSettings() {
   temp_log_max_messages_ = 0;
 
   temp_completion_sound_enabled_ = true;
-  temp_completion_sound_type_ = 0;
-  strcpy_s(temp_custom_sound_path_, "");
 }
 
 void PreferencesDialog::LoadSettingsOnce() {
@@ -568,8 +532,6 @@ void PreferencesDialog::LoadSettingsOnce() {
   // Load sound settings
   auto& sound_system = NotificationSounds::Instance();
   temp_completion_sound_enabled_ = sound_system.IsCompletionSoundEnabled();
-  temp_completion_sound_type_ = static_cast<int>(sound_system.GetCompletionSoundType());
-  strncpy_s(temp_custom_sound_path_, sound_system.GetCustomSoundPath().c_str(), sizeof(temp_custom_sound_path_) - 1);
 
   settings_loaded_ = true;
 }

@@ -620,7 +620,7 @@ void CaptureStudioPanel::StartSingleCameraCapture() {
     } else {
         LogMessage("[STUDIO] ❌ Single camera capture failed");
         // Play notification sound for error
-        NotificationSounds::Instance().PlayNotificationSound(NotificationSounds::SoundType::CarSiren);
+        NotificationSounds::Instance().PlayCompletionSound();
     }
 }
 
