@@ -87,8 +87,6 @@ class PreferencesDialog {
 
   // Sound settings temporary values
   bool temp_completion_sound_enabled_ = true;
-  int temp_completion_sound_type_ = 0; // 0=WindowsDing, 1=WindowsNotification, etc.
-  char temp_custom_sound_path_[256] = "";
 
   // Callbacks
   std::function<void(float)> on_ui_scale_changed_;
