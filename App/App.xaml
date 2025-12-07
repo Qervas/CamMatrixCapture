@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Application
+    x:Class="CameraMatrixCapture.App"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:CameraMatrixCapture">
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
+            </ResourceDictionary.MergedDictionaries>
+
+            <!-- App Colors -->
+            <SolidColorBrush x:Key="AccentBrush" Color="#0078D4"/>
+            <SolidColorBrush x:Key="SuccessBrush" Color="#107C10"/>
+            <SolidColorBrush x:Key="WarningBrush" Color="#FF8C00"/>
+            <SolidColorBrush x:Key="ErrorBrush" Color="#E81123"/>
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>

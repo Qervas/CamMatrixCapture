@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(NeuralRenderingCapture)
+project(CameraMatrixCapture)
 
 # Use C++20 for std::format and std::expected support
 set(CMAKE_CXX_STANDARD 20)
@@ -11,59 +11,6 @@ if(WIN32)
     add_definitions(-D_CRT_SECURE_NO_WARNINGS)
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 endif()
-
-# Find OpenGL
-find_package(OpenGL REQUIRED)
-
-# GLFW - Download and build
-include(FetchContent)
-FetchContent_Declare(
-    glfw
-    GIT_REPOSITORY https://github.com/glfw/glfw.git
-    GIT_TAG 3.3.9
-    GIT_SHALLOW TRUE
-    GIT_SUBMODULES ""
-)
-set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
-set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-FetchContent_MakeAvailable(glfw)
-
-# Dear ImGui - Download and build (DOCKING BRANCH)
-FetchContent_Declare(
-    imgui
-    GIT_REPOSITORY https://github.com/ocornut/imgui.git
-    GIT_TAG docking
-    GIT_SHALLOW TRUE
-    GIT_SUBMODULES ""
-)
-FetchContent_MakeAvailable(imgui)
-
-# Create GLAD library from local files
-add_library(glad STATIC
-    third_party/glad/src/glad.c
-)
-target_include_directories(glad PUBLIC third_party/glad/include)
-
-# Create ImGui library
-set(IMGUI_SOURCES
-    ${imgui_SOURCE_DIR}/imgui.cpp
-    ${imgui_SOURCE_DIR}/imgui_demo.cpp
-    ${imgui_SOURCE_DIR}/imgui_draw.cpp
-    ${imgui_SOURCE_DIR}/imgui_tables.cpp
-    ${imgui_SOURCE_DIR}/imgui_widgets.cpp
-    ${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.cpp
-    ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp
-)
-
-add_library(imgui STATIC ${IMGUI_SOURCES})
-target_include_directories(imgui PUBLIC 
-    ${imgui_SOURCE_DIR}
-    ${imgui_SOURCE_DIR}/backends
-)
-target_link_libraries(imgui PUBLIC glfw OpenGL::GL)
-
-# GLAD is automatically configured by FetchContent
 
 # =============================================================================
 # SAPERA SDK CONFIGURATION
@@ -108,12 +55,12 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
 endif()
 
 # =============================================================================
-# MAIN EXECUTABLE
+# BACKEND DLL (for WinUI frontend)
 # =============================================================================
 
-# Main GUI application
-add_executable(neural_capture
-    src/main.cpp  # Now using the modular architecture
+# Core backend library as DLL
+add_library(CaptureCore SHARED
+    src/api/CaptureAPI.cpp
     src/hardware/CameraTypes.cpp
     src/hardware/CameraManager.cpp
     src/utils/SessionManager.cpp
@@ -123,57 +70,43 @@ add_executable(neural_capture
     src/bluetooth/BluetoothDevice.cpp
     src/bluetooth/BluetoothScanner.cpp
     src/bluetooth/TurntableController.cpp
-    src/gui/HardwarePanel.cpp
-    src/gui/GuiManager.cpp
-    src/gui/PreferencesDialog.cpp
-    src/gui/LogPanel.cpp
-    src/gui/Application.cpp
-    src/gui/core/NavigationRail.cpp
-    src/gui/views/CaptureView.cpp
-    src/gui/views/FilesView.cpp
-    src/gui/views/HardwareView.cpp
-    src/gui/views/SettingsView.cpp
-    src/gui/widgets/FileExplorerWidget.cpp
-    src/gui/widgets/SessionWidget.cpp
-    src/gui/widgets/CaptureStudioPanel.cpp
-    src/gui/widgets/CameraPreviewWidget.cpp
 )
 
-target_include_directories(neural_capture PRIVATE
+target_compile_definitions(CaptureCore PRIVATE CAPTURECORE_EXPORTS)
+
+target_include_directories(CaptureCore PRIVATE
     src
     "C:/Program Files/Teledyne DALSA/Sapera/Classes/Basic"
     "C:/Program Files/Teledyne DALSA/Sapera/Include"
-    ${imgui_SOURCE_DIR}
-    ${imgui_SOURCE_DIR}/backends
-    third_party/glad/include
-    third_party/stb
 )
 
-target_link_directories(neural_capture PRIVATE
+target_link_directories(CaptureCore PRIVATE
     "C:/Program Files/Teledyne DALSA/Sapera/Lib/Win64"
 )
 
-target_link_libraries(neural_capture PRIVATE
-    imgui
-    glad
+target_link_libraries(CaptureCore PRIVATE
     SapClassBasic.lib
     windowsapp.lib  # For WinRT/C++
-    opengl32.lib    # Windows OpenGL
 )
 
-# WinRT specific settings (based on working BLE demo)
+# WinRT specific settings
 if(MSVC)
-    set_property(TARGET neural_capture PROPERTY VS_GLOBAL_ConsumeWinRTExtension true)
-    set_property(TARGET neural_capture PROPERTY VS_GLOBAL_AdditionalUsingDirectories "$(WindowsSDK_WindowsMetadata)")
+    set_property(TARGET CaptureCore PROPERTY VS_GLOBAL_ConsumeWinRTExtension true)
+    set_property(TARGET CaptureCore PROPERTY VS_GLOBAL_AdditionalUsingDirectories "$(WindowsSDK_WindowsMetadata)")
 endif()
-
-# Set as default target
-set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT neural_capture)
 
 # =============================================================================
 # INSTALLATION
 # =============================================================================
 
-install(TARGETS neural_capture
+install(TARGETS CaptureCore
     RUNTIME DESTINATION bin
+    LIBRARY DESTINATION lib
+)
+
+# Copy DLL to WinUI App output directory
+add_custom_command(TARGET CaptureCore POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        $<TARGET_FILE:CaptureCore>
+        ${CMAKE_SOURCE_DIR}/App/bin/x64/$<CONFIG>/net8.0-windows10.0.19041.0/
 ) 

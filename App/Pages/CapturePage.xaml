@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="CameraMatrixCapture.Pages.CapturePage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:CameraMatrixCapture.Pages">
+
+    <Grid HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="500">
+        <StackPanel>
+            <!-- Big Start/Stop Button -->
+            <Button x:Name="CaptureButton"
+                    HorizontalAlignment="Center"
+                    Width="200" Height="200"
+                    CornerRadius="100"
+                    Click="CaptureButton_Click">
+                <StackPanel HorizontalAlignment="Center">
+                    <FontIcon x:Name="CaptureIcon" Glyph="&#xE768;" FontSize="48"/>
+                    <TextBlock x:Name="CaptureButtonText" Text="Start" FontSize="24" FontWeight="SemiBold" Margin="0,8,0,0"/>
+                </StackPanel>
+            </Button>
+
+            <!-- Progress -->
+            <StackPanel Margin="0,40,0,0">
+                <TextBlock x:Name="ProgressText" Text="Ready to capture" FontSize="18" HorizontalAlignment="Center"/>
+
+                <ProgressBar x:Name="CaptureProgressBar"
+                             Margin="0,16,0,0"
+                             Height="8"
+                             Minimum="0"
+                             Maximum="100"
+                             Value="0"/>
+
+                <TextBlock x:Name="ProgressDetailText"
+                           Text="0 / 36 positions"
+                           FontSize="14"
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                           HorizontalAlignment="Center"
+                           Margin="0,8,0,0"/>
+            </StackPanel>
+
+            <!-- Current Status -->
+            <Border CornerRadius="8" Padding="16" Margin="0,24,0,0"
+                    Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+
+                    <StackPanel Grid.Column="0">
+                        <TextBlock Text="Current Angle" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        <TextBlock x:Name="AngleText" Text="0°" FontSize="24" FontWeight="SemiBold"/>
+                    </StackPanel>
+
+                    <StackPanel Grid.Column="1">
+                        <TextBlock Text="Images Captured" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        <TextBlock x:Name="ImagesText" Text="0" FontSize="24" FontWeight="SemiBold"/>
+                    </StackPanel>
+                </Grid>
+            </Border>
+        </StackPanel>
+    </Grid>
+</Page>

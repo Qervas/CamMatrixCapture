@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="CameraMatrixCapture.Pages.DonePage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:CameraMatrixCapture.Pages">
+
+    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="500">
+
+        <!-- Success Icon -->
+        <FontIcon Glyph="&#xE73E;" FontSize="80" Foreground="{StaticResource SuccessBrush}" HorizontalAlignment="Center"/>
+
+        <!-- Title -->
+        <TextBlock Text="Capture Complete!" FontSize="32" FontWeight="Bold" HorizontalAlignment="Center" Margin="0,24,0,0"/>
+
+        <!-- Image Count -->
+        <TextBlock x:Name="ImageCountText" Text="432 images saved" FontSize="18"
+                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                   HorizontalAlignment="Center" Margin="0,8,0,0"/>
+
+        <!-- Path -->
+        <Border CornerRadius="8" Padding="16" Margin="0,32,0,0"
+                Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}">
+            <StackPanel>
+                <TextBlock Text="Saved to:" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                <TextBlock x:Name="PathText" Text="C:\neural_dataset\session_001\" TextWrapping="Wrap" IsTextSelectionEnabled="True"/>
+            </StackPanel>
+        </Border>
+
+        <!-- Buttons -->
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,32,0,0">
+            <Button x:Name="OpenFolderButton" Content="Open Folder" Width="140" Height="40" Click="OpenFolderButton_Click"/>
+            <Button x:Name="NewCaptureButton" Content="New Capture" Width="140" Height="40" Margin="16,0,0,0"
+                    Style="{StaticResource AccentButtonStyle}" Click="NewCaptureButton_Click"/>
+        </StackPanel>
+    </StackPanel>
+</Page>
