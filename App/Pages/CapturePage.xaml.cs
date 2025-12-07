@@ -3,6 +3,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Navigation;
 using CameraMatrixCapture.Services;
 using System;
+using System.Diagnostics;
 
 namespace CameraMatrixCapture.Pages;
 
@@ -10,9 +11,14 @@ public sealed partial class CapturePage : Page
 {
     private readonly DispatcherTimer _refreshTimer;
     private bool _isCapturing = false;
+    private bool _isManualMode = false;
     private int _totalPositions = 36;
     private float _angleStep = 10f;
     private string _sessionName = "";
+    private string _sessionPath = "";
+    private int _captureCount = 0;
+    private int _totalImages = 0;
+    private bool _sessionStarted = false;
 
     public CapturePage()
     {
@@ -32,19 +38,39 @@ public sealed partial class CapturePage : Page
     {
         base.OnNavigatedTo(e);
 
-        // Get settings from previous page (SetupPage)
-        // In a real app, this would be passed via a navigation parameter or view model
-        // For now, use defaults
-        _totalPositions = 36;
-        _angleStep = 10f;
+        // Get settings from SetupPage
+        _totalPositions = SetupPage.CurrentTotalPositions;
+        _angleStep = SetupPage.CurrentAngleStep;
+        _sessionName = SetupPage.CurrentSessionName;
+        _isManualMode = SetupPage.CurrentIsManualMode;
 
-        ProgressDetailText.Text = $"0 / {_totalPositions} positions";
-        CaptureProgressBar.Maximum = _totalPositions;
+        // Setup UI based on mode
+        if (_isManualMode)
+        {
+            ModeTitleText.Text = "Manual Capture";
+            AutomatedModePanel.Visibility = Visibility.Collapsed;
+            ManualModePanel.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            ModeTitleText.Text = "Automated 360° Capture";
+            AutomatedModePanel.Visibility = Visibility.Visible;
+            ManualModePanel.Visibility = Visibility.Collapsed;
+            ProgressDetailText.Text = $"0 / {_totalPositions} positions";
+            CaptureProgressBar.Maximum = _totalPositions;
+        }
+
+        // Reset state
+        _captureCount = 0;
+        _totalImages = 0;
+        _sessionStarted = false;
+        SessionCompletePanel.Visibility = Visibility.Collapsed;
+        UpdateStats();
     }
 
     private void RefreshStatus(object? sender, object e)
     {
-        if (_isCapturing)
+        if (_isCapturing && !_isManualMode)
         {
             int progress = CaptureService.CaptureProgress;
             int total = CaptureService.TotalPositions;
@@ -53,11 +79,24 @@ public sealed partial class CapturePage : Page
 
             CaptureProgressBar.Value = progress;
             ProgressDetailText.Text = $"{progress} / {total} positions";
-            AngleText.Text = $"{angle:F1}°";
-            ImagesText.Text = images.ToString();
+            _captureCount = progress;
+            _totalImages = images;
+            UpdateStats();
 
             int percent = total > 0 ? (progress * 100 / total) : 0;
             ProgressText.Text = $"Capturing... {percent}%";
+        }
+
+        // Update session path if available
+        if (_sessionStarted)
+        {
+            string path = CaptureService.LastSessionPath;
+            if (!string.IsNullOrEmpty(path) && path != _sessionPath)
+            {
+                _sessionPath = path;
+                SessionPathText.Text = path;
+                OpenFolderButton.IsEnabled = true;
+            }
         }
     }
 
@@ -67,6 +106,9 @@ public sealed partial class CapturePage : Page
         {
             CaptureProgressBar.Value = current;
             ProgressDetailText.Text = $"{current} / {total} positions";
+            _captureCount = current;
+            _totalImages = current * CaptureService.ConnectedCameraCount;
+            UpdateStats();
         });
     }
 
@@ -79,17 +121,36 @@ public sealed partial class CapturePage : Page
 
             if (success)
             {
-                ProgressText.Text = "Capture complete!";
+                _sessionPath = sessionPath;
+                SessionPathText.Text = sessionPath;
+                OpenFolderButton.IsEnabled = true;
 
-                // Navigate to Done page
-                if (this.Frame != null)
+                if (_isManualMode)
                 {
-                    this.Frame.Navigate(typeof(DonePage));
+                    // In manual mode, just update status - user can keep capturing
+                    ManualStatusText.Text = "Captured! Click again to take more";
+                }
+                else
+                {
+                    // In automated mode, show completion panel with options
+                    ProgressText.Text = "Capture complete!";
+                    SessionCompletePanel.Visibility = Visibility.Visible;
+                    CaptureButton.IsEnabled = false;
+
+                    int totalImages = _totalPositions * CaptureService.ConnectedCameraCount;
+                    CompleteText.Text = $"Captured {_totalPositions} positions ({totalImages} images)";
                 }
             }
             else
             {
-                ProgressText.Text = "Capture failed";
+                if (_isManualMode)
+                {
+                    ManualStatusText.Text = "Capture failed - try again";
+                }
+                else
+                {
+                    ProgressText.Text = "Capture failed";
+                }
             }
         });
     }
@@ -106,12 +167,92 @@ public sealed partial class CapturePage : Page
         }
         else
         {
-            // Start capture
+            // Start automated capture
             _isCapturing = true;
+            _sessionStarted = true;
             UpdateButtonState();
             ProgressText.Text = "Starting capture...";
+            SessionCompletePanel.Visibility = Visibility.Collapsed;
 
             CaptureService.StartCapture(_sessionName, _totalPositions, _angleStep);
+        }
+    }
+
+    private void ManualCaptureButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (!_sessionStarted)
+        {
+            // First capture - create session
+            _sessionStarted = true;
+            CaptureService.CreateSession(_sessionName);
+        }
+
+        ManualStatusText.Text = "Capturing...";
+        ManualCaptureButton.IsEnabled = false;
+
+        // Capture with all cameras
+        CaptureService.CaptureOnce(() =>
+        {
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                _captureCount++;
+                int cameraCount = CaptureService.ConnectedCameraCount;
+                if (cameraCount == 0) cameraCount = 12;
+                _totalImages = _captureCount * cameraCount;
+                UpdateStats();
+
+                ManualStatusText.Text = "Captured! Click again to take more";
+                ManualCaptureButton.IsEnabled = true;
+
+                // Update session path
+                _sessionPath = CaptureService.LastSessionPath;
+                if (!string.IsNullOrEmpty(_sessionPath))
+                {
+                    SessionPathText.Text = _sessionPath;
+                    OpenFolderButton.IsEnabled = true;
+                }
+            });
+        });
+    }
+
+    private void ContinueCaptureButton_Click(object sender, RoutedEventArgs e)
+    {
+        // Allow user to continue capturing in the same session
+        SessionCompletePanel.Visibility = Visibility.Collapsed;
+        CaptureButton.IsEnabled = true;
+
+        // Reset for another round but keep session
+        CaptureProgressBar.Value = 0;
+        ProgressDetailText.Text = $"0 / {_totalPositions} positions";
+        ProgressText.Text = "Ready to continue";
+    }
+
+    private void NewSessionButton_Click(object sender, RoutedEventArgs e)
+    {
+        // Go back to Setup page to start a new session
+        if (App.MainWindow is MainWindow mainWindow)
+        {
+            mainWindow.NavigateToStep(2); // Step 2 is Setup
+        }
+    }
+
+    private void OpenFolderButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (!string.IsNullOrEmpty(_sessionPath))
+        {
+            try
+            {
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = "explorer.exe",
+                    Arguments = _sessionPath,
+                    UseShellExecute = true
+                });
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Failed to open folder: {ex.Message}");
+            }
         }
     }
 
@@ -127,5 +268,11 @@ public sealed partial class CapturePage : Page
             CaptureIcon.Glyph = "\uE768"; // Play icon
             CaptureButtonText.Text = "Start";
         }
+    }
+
+    private void UpdateStats()
+    {
+        CaptureCountText.Text = _captureCount.ToString();
+        ImagesText.Text = _totalImages.ToString();
     }
 }

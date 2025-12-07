@@ -5,94 +5,157 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:local="using:CameraMatrixCapture.Pages">
 
-    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="600">
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Top" MaxWidth="700" Padding="0,20,0,40">
 
-        <!-- Preset Selection -->
-        <TextBlock Text="Capture Preset" FontSize="24" FontWeight="SemiBold" Margin="0,0,0,16"/>
+            <!-- Capture Mode Selection -->
+            <TextBlock Text="Capture Mode" FontSize="24" FontWeight="SemiBold" Margin="0,0,0,16"/>
 
-        <Grid>
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="*"/>
-            </Grid.ColumnDefinitions>
-
-            <!-- Quick 36 -->
-            <RadioButton x:Name="QuickPreset" Grid.Column="0" GroupName="Preset" IsChecked="True" Checked="Preset_Checked">
-                <Border CornerRadius="8" Padding="16" MinWidth="160"
-                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
-                    <StackPanel HorizontalAlignment="Center">
-                        <TextBlock Text="Quick" FontSize="18" FontWeight="SemiBold" HorizontalAlignment="Center"/>
-                        <TextBlock Text="36 positions" Foreground="{ThemeResource TextFillColorSecondaryBrush}" HorizontalAlignment="Center"/>
-                        <TextBlock Text="10° steps" Foreground="{ThemeResource TextFillColorSecondaryBrush}" HorizontalAlignment="Center"/>
-                    </StackPanel>
-                </Border>
-            </RadioButton>
-
-            <!-- Detailed 72 -->
-            <RadioButton x:Name="DetailedPreset" Grid.Column="1" GroupName="Preset" Margin="8,0" Checked="Preset_Checked">
-                <Border CornerRadius="8" Padding="16" MinWidth="160"
-                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
-                    <StackPanel HorizontalAlignment="Center">
-                        <TextBlock Text="Detailed" FontSize="18" FontWeight="SemiBold" HorizontalAlignment="Center"/>
-                        <TextBlock Text="72 positions" Foreground="{ThemeResource TextFillColorSecondaryBrush}" HorizontalAlignment="Center"/>
-                        <TextBlock Text="5° steps" Foreground="{ThemeResource TextFillColorSecondaryBrush}" HorizontalAlignment="Center"/>
-                    </StackPanel>
-                </Border>
-            </RadioButton>
-
-            <!-- Custom -->
-            <RadioButton x:Name="CustomPreset" Grid.Column="2" GroupName="Preset" Checked="Preset_Checked">
-                <Border CornerRadius="8" Padding="16" MinWidth="160"
-                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
-                    <StackPanel HorizontalAlignment="Center">
-                        <TextBlock Text="Custom" FontSize="18" FontWeight="SemiBold" HorizontalAlignment="Center"/>
-                        <TextBlock x:Name="CustomPositionsText" Text="36 positions" Foreground="{ThemeResource TextFillColorSecondaryBrush}" HorizontalAlignment="Center"/>
-                        <TextBlock x:Name="CustomStepsText" Text="10° steps" Foreground="{ThemeResource TextFillColorSecondaryBrush}" HorizontalAlignment="Center"/>
-                    </StackPanel>
-                </Border>
-            </RadioButton>
-        </Grid>
-
-        <!-- Custom settings (visible when Custom selected) -->
-        <StackPanel x:Name="CustomSettingsPanel" Visibility="Collapsed" Margin="0,24,0,0">
-            <TextBlock Text="Custom Settings" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8"/>
-
-            <Grid>
+            <Grid Margin="0,0,0,32">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
 
-                <StackPanel Grid.Column="0" Margin="0,0,8,0">
-                    <TextBlock Text="Positions" Margin="0,0,0,4"/>
-                    <NumberBox x:Name="PositionsNumberBox" Value="36" Minimum="1" Maximum="360"
-                               SpinButtonPlacementMode="Inline" ValueChanged="CustomSettings_Changed"/>
-                </StackPanel>
+                <!-- Automated Mode -->
+                <RadioButton x:Name="AutomatedMode" Grid.Column="0" GroupName="CaptureMode" IsChecked="True" Checked="CaptureMode_Checked">
+                    <Border CornerRadius="8" Padding="20" MinWidth="280"
+                            Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                        <StackPanel>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                <FontIcon Glyph="&#xE895;" FontSize="24" Margin="0,0,12,0"/>
+                                <TextBlock Text="Automated 360°" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                            </StackPanel>
+                            <TextBlock Text="Turntable rotates automatically" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
+                            <TextBlock Text="Captures at each position" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
+                        </StackPanel>
+                    </Border>
+                </RadioButton>
 
-                <StackPanel Grid.Column="1" Margin="8,0,0,0">
-                    <TextBlock Text="Angle Step (°)" Margin="0,0,0,4"/>
-                    <NumberBox x:Name="AngleStepNumberBox" Value="10" Minimum="1" Maximum="180"
-                               SpinButtonPlacementMode="Inline" ValueChanged="CustomSettings_Changed"/>
-                </StackPanel>
+                <!-- Manual Mode -->
+                <RadioButton x:Name="ManualMode" Grid.Column="1" GroupName="CaptureMode" Margin="16,0,0,0" Checked="CaptureMode_Checked">
+                    <Border CornerRadius="8" Padding="20" MinWidth="280"
+                            Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                        <StackPanel>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                <FontIcon Glyph="&#xE722;" FontSize="24" Margin="0,0,12,0"/>
+                                <TextBlock Text="Manual Capture" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                            </StackPanel>
+                            <TextBlock Text="You control the turntable" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
+                            <TextBlock Text="Capture on demand" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
+                        </StackPanel>
+                    </Border>
+                </RadioButton>
             </Grid>
-        </StackPanel>
 
-        <!-- Session Name -->
-        <TextBlock Text="Session Name (optional)" FontSize="18" FontWeight="SemiBold" Margin="0,32,0,8"/>
-        <TextBox x:Name="SessionNameTextBox" PlaceholderText="my_object_001" MaxLength="100"/>
+            <!-- Automated Mode Settings -->
+            <StackPanel x:Name="AutomatedSettingsPanel">
+                <!-- Preset Selection -->
+                <TextBlock Text="Capture Preset" FontSize="20" FontWeight="SemiBold" Margin="0,0,0,16"/>
 
-        <!-- Summary -->
-        <Border CornerRadius="8" Padding="16" Margin="0,32,0,0"
-                Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}">
-            <StackPanel>
-                <TextBlock Text="Capture Summary" FontWeight="SemiBold" Margin="0,0,0,8"/>
-                <TextBlock x:Name="SummaryText" TextWrapping="Wrap"
-                           Text="36 positions at 10° intervals&#x0a;12 cameras × 36 positions = 432 images&#x0a;Estimated time: ~3 minutes"/>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+
+                    <!-- Quick 36 -->
+                    <RadioButton x:Name="QuickPreset" Grid.Column="0" GroupName="Preset" IsChecked="True" Checked="Preset_Checked">
+                        <Border CornerRadius="8" Padding="16" MinWidth="160"
+                                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                            <StackPanel HorizontalAlignment="Center">
+                                <TextBlock Text="Quick" FontSize="18" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+                                <TextBlock Text="36 positions" Foreground="{ThemeResource TextFillColorSecondaryBrush}" HorizontalAlignment="Center"/>
+                                <TextBlock Text="10° steps" Foreground="{ThemeResource TextFillColorSecondaryBrush}" HorizontalAlignment="Center"/>
+                            </StackPanel>
+                        </Border>
+                    </RadioButton>
+
+                    <!-- Detailed 72 -->
+                    <RadioButton x:Name="DetailedPreset" Grid.Column="1" GroupName="Preset" Margin="8,0" Checked="Preset_Checked">
+                        <Border CornerRadius="8" Padding="16" MinWidth="160"
+                                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                            <StackPanel HorizontalAlignment="Center">
+                                <TextBlock Text="Detailed" FontSize="18" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+                                <TextBlock Text="72 positions" Foreground="{ThemeResource TextFillColorSecondaryBrush}" HorizontalAlignment="Center"/>
+                                <TextBlock Text="5° steps" Foreground="{ThemeResource TextFillColorSecondaryBrush}" HorizontalAlignment="Center"/>
+                            </StackPanel>
+                        </Border>
+                    </RadioButton>
+
+                    <!-- Custom -->
+                    <RadioButton x:Name="CustomPreset" Grid.Column="2" GroupName="Preset" Checked="Preset_Checked">
+                        <Border CornerRadius="8" Padding="16" MinWidth="160"
+                                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                            <StackPanel HorizontalAlignment="Center">
+                                <TextBlock Text="Custom" FontSize="18" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+                                <TextBlock x:Name="CustomPositionsText" Text="36 positions" Foreground="{ThemeResource TextFillColorSecondaryBrush}" HorizontalAlignment="Center"/>
+                                <TextBlock x:Name="CustomStepsText" Text="10° steps" Foreground="{ThemeResource TextFillColorSecondaryBrush}" HorizontalAlignment="Center"/>
+                            </StackPanel>
+                        </Border>
+                    </RadioButton>
+                </Grid>
+
+                <!-- Custom settings (visible when Custom selected) -->
+                <StackPanel x:Name="CustomSettingsPanel" Visibility="Collapsed" Margin="0,24,0,0">
+                    <TextBlock Text="Custom Settings" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8"/>
+
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                            <TextBlock Text="Positions" Margin="0,0,0,4"/>
+                            <NumberBox x:Name="PositionsNumberBox" Value="36" Minimum="1" Maximum="360"
+                                       SpinButtonPlacementMode="Inline" ValueChanged="CustomSettings_Changed"/>
+                        </StackPanel>
+
+                        <StackPanel Grid.Column="1" Margin="8,0,0,0">
+                            <TextBlock Text="Angle Step (°)" Margin="0,0,0,4"/>
+                            <NumberBox x:Name="AngleStepNumberBox" Value="10" Minimum="1" Maximum="180"
+                                       SpinButtonPlacementMode="Inline" ValueChanged="CustomSettings_Changed"/>
+                        </StackPanel>
+                    </Grid>
+                </StackPanel>
             </StackPanel>
-        </Border>
-    </StackPanel>
+
+            <!-- Manual Mode Info -->
+            <StackPanel x:Name="ManualSettingsPanel" Visibility="Collapsed">
+                <Border CornerRadius="8" Padding="20"
+                        Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}">
+                    <StackPanel>
+                        <TextBlock Text="Manual Capture Mode" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,12"/>
+                        <TextBlock TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}">
+                            In manual mode, you control when to capture. Position your object manually or use the turntable controls, then click "Capture" to take photos with all connected cameras.
+                        </TextBlock>
+                        <TextBlock Text="• No automatic rotation" Margin="0,12,0,0"/>
+                        <TextBlock Text="• Capture as many shots as you need"/>
+                        <TextBlock Text="• Great for specific angles or details"/>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+
+            <!-- Session Name -->
+            <TextBlock Text="Session Name (optional)" FontSize="20" FontWeight="SemiBold" Margin="0,32,0,8"/>
+            <TextBox x:Name="SessionNameTextBox" PlaceholderText="my_object_001" MaxLength="100"/>
+
+            <!-- Summary -->
+            <Border CornerRadius="8" Padding="16" Margin="0,32,0,0"
+                    Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}">
+                <StackPanel>
+                    <TextBlock Text="Capture Summary" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                    <TextBlock x:Name="SummaryText" TextWrapping="Wrap"
+                               Text="36 positions at 10° intervals&#x0a;12 cameras × 36 positions = 432 images&#x0a;Estimated time: ~3 minutes"/>
+                </StackPanel>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
 </Page>

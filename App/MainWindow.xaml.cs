@@ -22,7 +22,8 @@ public sealed partial class MainWindow : Window
         NavigateToStep(1);
     }
 
-    private void NavigateToStep(int step)
+    // Public method for pages to navigate to a specific step
+    public void NavigateToStep(int step)
     {
         _currentStep = step;
         UpdateStepIndicators();

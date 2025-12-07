@@ -5,59 +5,130 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:local="using:CameraMatrixCapture.Pages">
 
-    <Grid HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="500">
-        <StackPanel>
-            <!-- Big Start/Stop Button -->
-            <Button x:Name="CaptureButton"
-                    HorizontalAlignment="Center"
-                    Width="200" Height="200"
-                    CornerRadius="100"
-                    Click="CaptureButton_Click">
-                <StackPanel HorizontalAlignment="Center">
-                    <FontIcon x:Name="CaptureIcon" Glyph="&#xE768;" FontSize="48"/>
-                    <TextBlock x:Name="CaptureButtonText" Text="Start" FontSize="24" FontWeight="SemiBold" Margin="0,8,0,0"/>
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Main Content -->
+        <Grid Grid.Row="0" HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="600">
+            <StackPanel>
+                <!-- Mode Title -->
+                <TextBlock x:Name="ModeTitleText" Text="Automated Capture" FontSize="24" FontWeight="SemiBold"
+                           HorizontalAlignment="Center" Margin="0,0,0,24"/>
+
+                <!-- Automated Mode UI -->
+                <StackPanel x:Name="AutomatedModePanel">
+                    <!-- Big Start/Stop Button -->
+                    <Button x:Name="CaptureButton"
+                            HorizontalAlignment="Center"
+                            Width="200" Height="200"
+                            CornerRadius="100"
+                            Click="CaptureButton_Click">
+                        <StackPanel HorizontalAlignment="Center">
+                            <FontIcon x:Name="CaptureIcon" Glyph="&#xE768;" FontSize="48"/>
+                            <TextBlock x:Name="CaptureButtonText" Text="Start" FontSize="24" FontWeight="SemiBold" Margin="0,8,0,0"/>
+                        </StackPanel>
+                    </Button>
+
+                    <!-- Progress -->
+                    <StackPanel Margin="0,40,0,0">
+                        <TextBlock x:Name="ProgressText" Text="Ready to capture" FontSize="18" HorizontalAlignment="Center"/>
+
+                        <ProgressBar x:Name="CaptureProgressBar"
+                                     Margin="0,16,0,0"
+                                     Height="8"
+                                     Minimum="0"
+                                     Maximum="100"
+                                     Value="0"/>
+
+                        <TextBlock x:Name="ProgressDetailText"
+                                   Text="0 / 36 positions"
+                                   FontSize="14"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                   HorizontalAlignment="Center"
+                                   Margin="0,8,0,0"/>
+                    </StackPanel>
                 </StackPanel>
-            </Button>
 
-            <!-- Progress -->
-            <StackPanel Margin="0,40,0,0">
-                <TextBlock x:Name="ProgressText" Text="Ready to capture" FontSize="18" HorizontalAlignment="Center"/>
+                <!-- Manual Mode UI -->
+                <StackPanel x:Name="ManualModePanel" Visibility="Collapsed">
+                    <!-- Big Capture Button -->
+                    <Button x:Name="ManualCaptureButton"
+                            HorizontalAlignment="Center"
+                            Width="200" Height="200"
+                            CornerRadius="100"
+                            Style="{StaticResource AccentButtonStyle}"
+                            Click="ManualCaptureButton_Click">
+                        <StackPanel HorizontalAlignment="Center">
+                            <FontIcon Glyph="&#xE722;" FontSize="48"/>
+                            <TextBlock Text="Capture" FontSize="24" FontWeight="SemiBold" Margin="0,8,0,0"/>
+                        </StackPanel>
+                    </Button>
 
-                <ProgressBar x:Name="CaptureProgressBar"
-                             Margin="0,16,0,0"
-                             Height="8"
-                             Minimum="0"
-                             Maximum="100"
-                             Value="0"/>
+                    <!-- Manual capture count -->
+                    <TextBlock x:Name="ManualStatusText" Text="Ready - Click to capture" FontSize="18"
+                               HorizontalAlignment="Center" Margin="0,24,0,0"/>
+                </StackPanel>
 
-                <TextBlock x:Name="ProgressDetailText"
-                           Text="0 / 36 positions"
-                           FontSize="14"
-                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                           HorizontalAlignment="Center"
-                           Margin="0,8,0,0"/>
+                <!-- Current Status (shared) -->
+                <Border CornerRadius="8" Padding="16" Margin="0,24,0,0"
+                        Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel Grid.Column="0">
+                            <TextBlock Text="Captures" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            <TextBlock x:Name="CaptureCountText" Text="0" FontSize="24" FontWeight="SemiBold"/>
+                        </StackPanel>
+
+                        <StackPanel Grid.Column="1">
+                            <TextBlock Text="Images Saved" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            <TextBlock x:Name="ImagesText" Text="0" FontSize="24" FontWeight="SemiBold"/>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+                <!-- Session Complete Panel (shown after automated capture completes) -->
+                <Border x:Name="SessionCompletePanel" Visibility="Collapsed" CornerRadius="8" Padding="20" Margin="0,24,0,0"
+                        Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}">
+                    <StackPanel>
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,0,0,12">
+                            <FontIcon Glyph="&#xE73E;" FontSize="24" Foreground="{StaticResource SuccessBrush}" Margin="0,0,8,0"/>
+                            <TextBlock x:Name="CompleteText" Text="Capture complete!" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                        </StackPanel>
+
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Spacing="12">
+                            <Button x:Name="ContinueCaptureButton" Content="Continue Capturing" Click="ContinueCaptureButton_Click"/>
+                            <Button x:Name="NewSessionButton" Content="New Session" Style="{StaticResource AccentButtonStyle}" Click="NewSessionButton_Click"/>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
             </StackPanel>
+        </Grid>
 
-            <!-- Current Status -->
-            <Border CornerRadius="8" Padding="16" Margin="0,24,0,0"
-                    Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}">
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="*"/>
-                    </Grid.ColumnDefinitions>
+        <!-- Bottom Bar -->
+        <Border Grid.Row="1" Padding="20" Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
 
-                    <StackPanel Grid.Column="0">
-                        <TextBlock Text="Current Angle" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
-                        <TextBlock x:Name="AngleText" Text="0°" FontSize="24" FontWeight="SemiBold"/>
-                    </StackPanel>
+                <!-- Session Path -->
+                <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                    <TextBlock Text="Session:" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                    <TextBlock x:Name="SessionPathText" Text="Not started" FontSize="14" TextTrimming="CharacterEllipsis"/>
+                </StackPanel>
 
-                    <StackPanel Grid.Column="1">
-                        <TextBlock Text="Images Captured" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
-                        <TextBlock x:Name="ImagesText" Text="0" FontSize="24" FontWeight="SemiBold"/>
-                    </StackPanel>
-                </Grid>
-            </Border>
-        </StackPanel>
+                <!-- Open Folder Button -->
+                <Button x:Name="OpenFolderButton" Grid.Column="1" Content="Open Folder" Click="OpenFolderButton_Click"
+                        VerticalAlignment="Center" IsEnabled="False"/>
+            </Grid>
+        </Border>
     </Grid>
 </Page>

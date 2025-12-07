@@ -86,6 +86,12 @@ public static class CaptureService
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
     private static extern int CamMatrix_GetTotalPositions();
 
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
+    private static extern void CamMatrix_CreateSession(string sessionName);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    private static extern void CamMatrix_CaptureOnce();
+
     #endregion
 
     #region Native Imports - Bluetooth
@@ -266,6 +272,26 @@ public static class CaptureService
 
     public static int CaptureProgress => CamMatrix_GetCaptureProgress();
     public static int TotalPositions => CamMatrix_GetTotalPositions();
+
+    /// <summary>
+    /// Create a new session directory for manual capture mode
+    /// </summary>
+    public static void CreateSession(string sessionName)
+    {
+        CamMatrix_CreateSession(sessionName ?? "");
+    }
+
+    /// <summary>
+    /// Capture a single frame from all connected cameras (for manual mode)
+    /// </summary>
+    public static void CaptureOnce(Action? onComplete = null)
+    {
+        Task.Run(() =>
+        {
+            CamMatrix_CaptureOnce();
+            onComplete?.Invoke();
+        });
+    }
 
     #endregion
 
