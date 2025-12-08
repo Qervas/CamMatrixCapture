@@ -103,6 +103,45 @@
 
                 <!-- Progress -->
                 <ProgressBar x:Name="TurntableProgressBar" Margin="0,16,0,0" IsIndeterminate="False" Visibility="Collapsed"/>
+
+                <!-- Turntable Controls (visible when connected) -->
+                <StackPanel x:Name="TurntableControlsPanel" Visibility="Collapsed" Margin="0,24,0,0">
+                    <TextBlock Text="Turntable Controls" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,12"/>
+
+                    <!-- Rotation Control -->
+                    <TextBlock Text="Rotation" Margin="0,0,0,4"/>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <Button Grid.Column="0" Content="◀ -10°" Click="RotateLeft_Click" HorizontalAlignment="Stretch" Height="36"/>
+                        <Button Grid.Column="1" Content="⌂ Home" Click="RotateHome_Click" Margin="8,0" Height="36"/>
+                        <Button Grid.Column="2" Content="+10° ▶" Click="RotateRight_Click" HorizontalAlignment="Stretch" Height="36"/>
+                    </Grid>
+
+                    <!-- Tilt Control -->
+                    <TextBlock Text="Tilt" Margin="0,16,0,4"/>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <Button Grid.Column="0" Content="▼ -5°" Click="TiltDown_Click" HorizontalAlignment="Stretch" Height="36"/>
+                        <Button Grid.Column="1" Content="⌂ Home" Click="TiltHome_Click" Margin="8,0" Height="36"/>
+                        <Button Grid.Column="2" Content="+5° ▲" Click="TiltUp_Click" HorizontalAlignment="Stretch" Height="36"/>
+                    </Grid>
+
+                    <!-- Current Position -->
+                    <StackPanel Orientation="Horizontal" Margin="0,16,0,0">
+                        <TextBlock Text="Position: " Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        <TextBlock x:Name="RotationAngleText" Text="0°" Margin="0,0,16,0"/>
+                        <TextBlock Text="Tilt: " Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        <TextBlock x:Name="TiltAngleText" Text="0°"/>
+                    </StackPanel>
+                </StackPanel>
             </StackPanel>
         </Border>
     </Grid>

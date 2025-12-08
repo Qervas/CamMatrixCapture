@@ -29,6 +29,10 @@ public sealed partial class DonePage : Page
     private void OpenFolderButton_Click(object sender, RoutedEventArgs e)
     {
         string path = CaptureService.LastSessionPath;
+
+        // Convert to absolute path using C++ backend's working directory
+        path = CaptureService.GetAbsolutePath(path);
+
         if (!string.IsNullOrEmpty(path))
         {
             try
@@ -36,7 +40,7 @@ public sealed partial class DonePage : Page
                 Process.Start(new ProcessStartInfo
                 {
                     FileName = "explorer.exe",
-                    Arguments = path,
+                    Arguments = $"\"{path}\"",
                     UseShellExecute = true
                 });
             }

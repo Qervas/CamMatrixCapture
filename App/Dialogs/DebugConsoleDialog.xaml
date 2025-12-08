@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ContentDialog
+    x:Class="CameraMatrixCapture.Dialogs.DebugConsoleDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:CameraMatrixCapture.Dialogs"
+    Title="Debug Console"
+    CloseButtonText="Close"
+    DefaultButton="Close">
+
+    <Grid Width="600" Height="450">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Header -->
+        <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="8" Margin="0,0,0,8">
+            <Button x:Name="ClearButton" Content="Clear" Click="ClearButton_Click"/>
+            <Button x:Name="RefreshButton" Content="Refresh" Click="RefreshButton_Click"/>
+            <CheckBox x:Name="AutoScrollCheck" Content="Auto-scroll" IsChecked="True"/>
+        </StackPanel>
+
+        <!-- Log Output -->
+        <ScrollViewer Grid.Row="1" x:Name="LogScrollViewer"
+                      Background="{ThemeResource SystemControlBackgroundChromeMediumLowBrush}"
+                      Padding="8"
+                      CornerRadius="4">
+            <TextBlock x:Name="LogTextBlock"
+                       FontFamily="Consolas"
+                       FontSize="12"
+                       TextWrapping="Wrap"
+                       IsTextSelectionEnabled="True"/>
+        </ScrollViewer>
+
+        <!-- Status Bar -->
+        <Grid Grid.Row="2" Margin="0,8,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock x:Name="StatusText" Grid.Column="0" Text="Ready"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+            <TextBlock x:Name="LineCountText" Grid.Column="1" Text="0 lines"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+        </Grid>
+    </Grid>
+</ContentDialog>

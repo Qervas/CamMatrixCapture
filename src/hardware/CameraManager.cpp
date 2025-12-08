@@ -1194,6 +1194,31 @@ void CameraManager::ApplyCameraOrdering(const ::CameraOrderSettings& order_setti
   Log("[ORDER] Applied custom camera ordering");
 }
 
+void CameraManager::ReorderCamera(int fromIndex, int toIndex) {
+  std::lock_guard<std::mutex> lock(camera_mutex_);
+
+  if (fromIndex < 0 || fromIndex >= static_cast<int>(discovered_cameras_.size()) ||
+      toIndex < 0 || toIndex >= static_cast<int>(discovered_cameras_.size()) ||
+      fromIndex == toIndex) {
+    return;
+  }
+
+  // Move camera from fromIndex to toIndex
+  CameraInfo camera = discovered_cameras_[fromIndex];
+  discovered_cameras_.erase(discovered_cameras_.begin() + fromIndex);
+  discovered_cameras_.insert(discovered_cameras_.begin() + toIndex, camera);
+
+  // Update all camera names based on new positions
+  for (size_t i = 0; i < discovered_cameras_.size(); ++i) {
+    std::string indexStr = std::to_string(i + 1);  // 1-based for display
+    if (indexStr.length() == 1) indexStr = "0" + indexStr;
+    discovered_cameras_[i].name = "cam_" + indexStr;
+    discovered_cameras_[i].displayPosition = static_cast<int>(i);
+  }
+
+  Log("[ORDER] Reordered cameras: moved " + std::to_string(fromIndex) + " to " + std::to_string(toIndex));
+}
+
 std::vector<CameraInfo> CameraManager::GetOrderedCameras() const {
   std::vector<CameraInfo> ordered = discovered_cameras_;
 

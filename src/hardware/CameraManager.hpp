@@ -79,6 +79,7 @@ class CameraManager {
 
   // Camera ordering
   void ApplyCameraOrdering(const ::CameraOrderSettings& order_settings);
+  void ReorderCamera(int fromIndex, int toIndex);  // Move camera from one position to another
   std::string GetOrderedCameraName(const std::string& serial_number, int fallback_index) const;
   
   // Settings

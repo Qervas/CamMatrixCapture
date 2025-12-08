@@ -174,7 +174,9 @@ public sealed partial class ConnectPage : Page
         {
             TurntableStatusDot.Fill = new SolidColorBrush(Colors.Green);
             TurntableStatusText.Text = "Connected";
-            TurntableNameText.Text = "Turntable ready";
+            TurntableControlsPanel.Visibility = Visibility.Visible;
+            TurntableProgressBar.Visibility = Visibility.Collapsed;
+            UpdateTurntablePosition();
         }
         else if (CaptureService.IsBluetoothScanning)
         {
@@ -182,12 +184,14 @@ public sealed partial class ConnectPage : Page
             TurntableStatusText.Text = "Scanning...";
             TurntableProgressBar.Visibility = Visibility.Visible;
             TurntableProgressBar.IsIndeterminate = true;
+            TurntableControlsPanel.Visibility = Visibility.Collapsed;
         }
         else
         {
             TurntableStatusDot.Fill = new SolidColorBrush(Colors.Gray);
             TurntableStatusText.Text = "Not connected";
             TurntableProgressBar.Visibility = Visibility.Collapsed;
+            TurntableControlsPanel.Visibility = Visibility.Collapsed;
         }
 
         ScanButton.IsEnabled = !CaptureService.IsBluetoothScanning;
@@ -272,16 +276,83 @@ public sealed partial class ConnectPage : Page
         ConnectTurntableButton.IsEnabled = DeviceListView.SelectedItem != null;
     }
 
-    private void ConnectTurntableButton_Click(object sender, RoutedEventArgs e)
+    private async void ConnectTurntableButton_Click(object sender, RoutedEventArgs e)
     {
         if (DeviceListView.SelectedItem is BluetoothDeviceItem device)
         {
             CaptureService.StopBluetoothScan();
-            bool success = CaptureService.ConnectBluetooth(device.Id);
+
+            // Update UI to show connecting
+            ConnectTurntableButton.IsEnabled = false;
+            ConnectTurntableButton.Content = "Connecting...";
+            TurntableStatusText.Text = "Connecting...";
+
+            // Run connection on background thread to not block UI
+            bool success = await System.Threading.Tasks.Task.Run(() =>
+                CaptureService.ConnectBluetooth(device.Id));
+
+            // Update UI based on result
+            ConnectTurntableButton.IsEnabled = true;
+            ConnectTurntableButton.Content = "Connect";
+
             if (success)
             {
                 TurntableNameText.Text = device.Name;
+                TurntableStatusText.Text = "Connected";
+                TurntableControlsPanel.Visibility = Visibility.Visible;
+                UpdateTurntablePosition();
+            }
+            else
+            {
+                TurntableStatusText.Text = "Connection failed";
+                TurntableControlsPanel.Visibility = Visibility.Collapsed;
             }
         }
     }
+
+    #region Turntable Controls
+
+    private void UpdateTurntablePosition()
+    {
+        RotationAngleText.Text = $"{CaptureService.CurrentAngle:F1}°";
+        TiltAngleText.Text = $"{CaptureService.CurrentTilt:F1}°";
+    }
+
+    private async void RotateLeft_Click(object sender, RoutedEventArgs e)
+    {
+        await System.Threading.Tasks.Task.Run(() => CaptureService.RotateTurntable(-10));
+        UpdateTurntablePosition();
+    }
+
+    private async void RotateRight_Click(object sender, RoutedEventArgs e)
+    {
+        await System.Threading.Tasks.Task.Run(() => CaptureService.RotateTurntable(10));
+        UpdateTurntablePosition();
+    }
+
+    private async void RotateHome_Click(object sender, RoutedEventArgs e)
+    {
+        await System.Threading.Tasks.Task.Run(() => CaptureService.ReturnToZero());
+        UpdateTurntablePosition();
+    }
+
+    private async void TiltDown_Click(object sender, RoutedEventArgs e)
+    {
+        await System.Threading.Tasks.Task.Run(() => CaptureService.TiltTurntable(-5));
+        UpdateTurntablePosition();
+    }
+
+    private async void TiltUp_Click(object sender, RoutedEventArgs e)
+    {
+        await System.Threading.Tasks.Task.Run(() => CaptureService.TiltTurntable(5));
+        UpdateTurntablePosition();
+    }
+
+    private async void TiltHome_Click(object sender, RoutedEventArgs e)
+    {
+        await System.Threading.Tasks.Task.Run(() => CaptureService.TiltTurntable(-CaptureService.CurrentTilt));
+        UpdateTurntablePosition();
+    }
+
+    #endregion
 }

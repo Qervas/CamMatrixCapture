@@ -84,7 +84,7 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private void NextButton_Click(object sender, RoutedEventArgs e)
+    private async void NextButton_Click(object sender, RoutedEventArgs e)
     {
         if (_currentStep == TotalSteps)
         {
@@ -93,6 +93,24 @@ public sealed partial class MainWindow : Window
         }
         else if (_currentStep < TotalSteps)
         {
+            // Validate before moving from Setup to Capture
+            if (_currentStep == 2)
+            {
+                // Check if output path is selected
+                if (string.IsNullOrEmpty(SetupPage.CurrentOutputPath))
+                {
+                    var dialog = new ContentDialog
+                    {
+                        Title = "Output Folder Required",
+                        Content = "Please select an output folder before starting capture.",
+                        CloseButtonText = "OK",
+                        XamlRoot = this.Content.XamlRoot
+                    };
+                    await dialog.ShowAsync();
+                    return;
+                }
+            }
+
             NavigateToStep(_currentStep + 1);
         }
     }
@@ -100,6 +118,15 @@ public sealed partial class MainWindow : Window
     private async void SettingsButton_Click(object sender, RoutedEventArgs e)
     {
         var dialog = new SettingsDialog
+        {
+            XamlRoot = this.Content.XamlRoot
+        };
+        await dialog.ShowAsync();
+    }
+
+    private async void DebugConsoleButton_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new DebugConsoleDialog
         {
             XamlRoot = this.Content.XamlRoot
         };

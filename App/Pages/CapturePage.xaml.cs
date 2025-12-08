@@ -238,14 +238,33 @@ public sealed partial class CapturePage : Page
 
     private void OpenFolderButton_Click(object sender, RoutedEventArgs e)
     {
-        if (!string.IsNullOrEmpty(_sessionPath))
+        // Get the current output path from CaptureService
+        string pathToOpen = _sessionPath;
+
+        // If no session path, try to get the base output folder
+        if (string.IsNullOrEmpty(pathToOpen))
+        {
+            pathToOpen = CaptureService.OutputPath;
+        }
+
+        // Convert to absolute path using C++ backend's working directory
+        pathToOpen = CaptureService.GetAbsolutePath(pathToOpen);
+
+        if (!string.IsNullOrEmpty(pathToOpen))
         {
             try
             {
+                // Make sure the path exists
+                if (!System.IO.Directory.Exists(pathToOpen))
+                {
+                    System.IO.Directory.CreateDirectory(pathToOpen);
+                }
+
+                Debug.WriteLine($"Opening folder: {pathToOpen}");
                 Process.Start(new ProcessStartInfo
                 {
                     FileName = "explorer.exe",
-                    Arguments = _sessionPath,
+                    Arguments = $"\"{pathToOpen}\"",
                     UseShellExecute = true
                 });
             }

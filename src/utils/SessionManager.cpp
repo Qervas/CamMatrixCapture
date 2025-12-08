@@ -10,10 +10,11 @@ namespace fs = std::filesystem;
 
 // CaptureSession implementation
 std::string CaptureSession::GetNextCapturePath() const {
-    std::stringstream path;
-    path << base_path << "/capture_" 
-         << std::setfill('0') << std::setw(3) << (capture_count + 1);
-    return path.str();
+    fs::path p(base_path);
+    std::stringstream ss;
+    ss << "capture_" << std::setfill('0') << std::setw(3) << (capture_count + 1);
+    p /= ss.str();
+    return p.string();
 }
 
 std::string CaptureSession::GetSessionInfo() const {
@@ -96,7 +97,9 @@ bool SessionManager::StartNewSession(const std::string& object_name) {
     // Create folder name: session_name_timestamp
     std::string folder_name = object_name + "_" + timestamp;
     
-    current_session->base_path = base_output_path + "/images/" + folder_name;
+    // Use std::filesystem::path to ensure proper path separators on Windows
+    fs::path sessionPath = fs::path(base_output_path) / "images" / folder_name;
+    current_session->base_path = sessionPath.string();
     current_session->created_at = std::chrono::system_clock::now();
     
     // Create session directory

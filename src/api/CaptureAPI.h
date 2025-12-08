@@ -51,7 +51,12 @@ CAPTURE_API int  CamMatrix_IsCapturing();
 
 // Get camera info by index (0-based)
 CAPTURE_API void CamMatrix_GetCameraName(int index, char* nameOut, int maxLen);
+CAPTURE_API void CamMatrix_GetCameraSerial(int index, char* serialOut, int maxLen);
 CAPTURE_API int  CamMatrix_IsCameraConnected(int index);
+
+// Camera ordering (for user-defined display order)
+CAPTURE_API void CamMatrix_SetCameraOrder(int fromIndex, int toIndex);
+CAPTURE_API void CamMatrix_ApplySavedCameraOrder();
 
 // ============================================================================
 // Capture Operations
@@ -59,7 +64,8 @@ CAPTURE_API int  CamMatrix_IsCameraConnected(int index);
 
 CAPTURE_API void CamMatrix_StartCapture(const char* sessionName, int totalPositions, float angleStep);
 CAPTURE_API void CamMatrix_StopCapture();
-CAPTURE_API void CamMatrix_CaptureOnce(const char* sessionPath);
+CAPTURE_API void CamMatrix_CreateSession(const char* sessionName);
+CAPTURE_API void CamMatrix_CaptureOnce();
 
 CAPTURE_API int  CamMatrix_GetCaptureProgress();
 CAPTURE_API int  CamMatrix_GetTotalPositions();
@@ -139,6 +145,19 @@ CAPTURE_API void CamMatrix_SetCaptureCompleteCallback(CaptureCompleteCallback ca
 
 CAPTURE_API void CamMatrix_GetLastSessionPath(char* pathOut, int maxLen);
 CAPTURE_API int  CamMatrix_GetLastSessionImageCount();
+
+// ============================================================================
+// Debug Logging
+// ============================================================================
+
+CAPTURE_API void CamMatrix_GetDebugLogs(char* logsOut, int maxLen);
+CAPTURE_API void CamMatrix_ClearDebugLogs();
+
+// ============================================================================
+// Working Directory
+// ============================================================================
+
+CAPTURE_API void CamMatrix_GetWorkingDirectory(char* pathOut, int maxLen);
 
 #ifdef __cplusplus
 }

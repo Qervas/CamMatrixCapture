@@ -133,10 +133,19 @@ public static class CaptureService
     private static extern int CamMatrix_RotateTurntable(float angle);
 
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    private static extern int CamMatrix_TiltTurntable(float angle);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
     private static extern int CamMatrix_ReturnToZero();
 
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    private static extern int CamMatrix_StopTurntable();
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
     private static extern float CamMatrix_GetCurrentAngle();
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    private static extern float CamMatrix_GetCurrentTilt();
 
     #endregion
 
@@ -336,8 +345,11 @@ public static class CaptureService
     public static bool IsBluetoothConnected => CamMatrix_IsBluetoothConnected() != 0;
 
     public static bool RotateTurntable(float angle) => CamMatrix_RotateTurntable(angle) != 0;
+    public static bool TiltTurntable(float angle) => CamMatrix_TiltTurntable(angle) != 0;
     public static bool ReturnToZero() => CamMatrix_ReturnToZero() != 0;
+    public static bool StopTurntable() => CamMatrix_StopTurntable() != 0;
     public static float CurrentAngle => CamMatrix_GetCurrentAngle();
+    public static float CurrentTilt => CamMatrix_GetCurrentTilt();
 
     #endregion
 
@@ -396,6 +408,61 @@ public static class CaptureService
     }
 
     public static int LastSessionImageCount => CamMatrix_GetLastSessionImageCount();
+
+    #endregion
+
+    #region Debug Logging
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    private static extern void CamMatrix_GetDebugLogs(StringBuilder logsOut, int maxLen);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    private static extern void CamMatrix_ClearDebugLogs();
+
+    public static string GetDebugLogs()
+    {
+        var sb = new StringBuilder(65536); // 64KB buffer for logs
+        CamMatrix_GetDebugLogs(sb, sb.Capacity);
+        return sb.ToString();
+    }
+
+    public static void ClearDebugLogs() => CamMatrix_ClearDebugLogs();
+
+    #endregion
+
+    #region Working Directory
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    private static extern void CamMatrix_GetWorkingDirectory(StringBuilder pathOut, int maxLen);
+
+    /// <summary>
+    /// Get the working directory set by the C++ backend (exe's directory).
+    /// All relative paths (like neural_dataset) are relative to this directory.
+    /// </summary>
+    public static string WorkingDirectory
+    {
+        get
+        {
+            var sb = new StringBuilder(512);
+            CamMatrix_GetWorkingDirectory(sb, sb.Capacity);
+            return sb.ToString();
+        }
+    }
+
+    /// <summary>
+    /// Convert a relative path to absolute using the working directory from C++ backend.
+    /// If the path is already absolute, returns it unchanged.
+    /// </summary>
+    public static string GetAbsolutePath(string relativePath)
+    {
+        if (string.IsNullOrEmpty(relativePath))
+            return WorkingDirectory;
+
+        if (System.IO.Path.IsPathRooted(relativePath))
+            return relativePath;
+
+        return System.IO.Path.Combine(WorkingDirectory, relativePath);
+    }
 
     #endregion
 }

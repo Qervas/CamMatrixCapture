@@ -16,6 +16,12 @@
 #include <atomic>
 #include <thread>
 #include <vector>
+#include <filesystem>
+
+// Windows API for getting module path
+#ifdef _WIN32
+#include <Windows.h>
+#endif
 
 // Use namespaces
 using namespace SaperaCapturePro;
@@ -39,17 +45,44 @@ static std::atomic<int> g_captureProgress{0};
 static std::atomic<int> g_totalPositions{0};
 static std::string g_lastSessionPath;
 static std::atomic<int> g_lastImageCount{0};
+static std::atomic<bool> g_isCapturing{false};  // API-level capture state
 
 // Turntable state
 static std::string g_connectedTurntableId;
 static std::atomic<float> g_currentAngle{0.0f};
 static std::atomic<float> g_currentTilt{0.0f};
 
+// Debug log buffer
+static std::string g_debugLogs;
+static std::mutex g_logMutex;
+
+// Working directory (set once at init, used by C# for path resolution)
+static std::string g_workingDirectory;
+
 // ============================================================================
 // Helper Functions
 // ============================================================================
 
 static void SafeLog(const std::string& message) {
+    // Add to debug log buffer
+    {
+        std::lock_guard<std::mutex> lock(g_logMutex);
+        auto now = std::chrono::system_clock::now();
+        auto time_t = std::chrono::system_clock::to_time_t(now);
+        char timestamp[32];
+        std::strftime(timestamp, sizeof(timestamp), "%H:%M:%S", std::localtime(&time_t));
+        g_debugLogs += "[" + std::string(timestamp) + "] " + message + "\n";
+
+        // Keep log size reasonable (max 64KB)
+        if (g_debugLogs.size() > 65536) {
+            g_debugLogs = g_debugLogs.substr(g_debugLogs.size() - 32768);
+        }
+    }
+
+    // Also output to debug window
+    OutputDebugStringA(("[CamMatrix] " + message + "\n").c_str());
+
+    // Call user callback if set
     if (g_logCallback) {
         g_logCallback(message.c_str());
     }
@@ -67,6 +100,19 @@ static void SafeCopyString(const std::string& src, char* dest, int maxLen) {
 
 CAPTURE_API void CamMatrix_Initialize() {
     std::lock_guard<std::mutex> lock(g_mutex);
+
+    // Set working directory to executable's directory
+    // This ensures relative paths (like neural_dataset) are created next to the exe
+#ifdef _WIN32
+    char modulePath[MAX_PATH];
+    if (GetModuleFileNameA(NULL, modulePath, MAX_PATH) > 0) {
+        std::filesystem::path exePath(modulePath);
+        std::filesystem::path exeDir = exePath.parent_path();
+        std::filesystem::current_path(exeDir);
+        g_workingDirectory = exeDir.string();
+        SafeLog("Working directory set to: " + g_workingDirectory);
+    }
+#endif
 
     // Initialize settings manager
     if (!g_settingsManager) {
@@ -112,10 +158,69 @@ CAPTURE_API void CamMatrix_Shutdown() {
 // Camera Operations
 // ============================================================================
 
+// Helper function to apply saved camera order after discovery
+static void ApplySavedCameraOrder() {
+    if (!g_settingsManager) return;
+
+    auto& orderSettings = g_settingsManager->GetCameraOrderSettings();
+    if (!orderSettings.use_custom_ordering || orderSettings.order_entries.empty()) {
+        SafeLog("No saved camera order to apply");
+        return;
+    }
+
+    auto& camMgr = CameraManager::GetInstance();
+    auto cameras = camMgr.GetDiscoveredCameras();  // Copy to work with
+
+    if (cameras.empty()) return;
+
+    // Create a map of serial -> desired position
+    std::map<std::string, int> serialToPosition;
+    for (const auto& entry : orderSettings.order_entries) {
+        serialToPosition[entry.serial_number] = entry.display_position;
+    }
+
+    // Sort cameras by their saved position (cameras not in saved order go to end)
+    std::vector<std::pair<int, int>> sortOrder;  // (saved_position, current_index)
+    for (size_t i = 0; i < cameras.size(); ++i) {
+        auto it = serialToPosition.find(cameras[i].serialNumber);
+        int pos = (it != serialToPosition.end()) ? it->second : 9999 + static_cast<int>(i);
+        sortOrder.push_back({pos, static_cast<int>(i)});
+    }
+    std::sort(sortOrder.begin(), sortOrder.end());
+
+    // Apply the sorted order by moving cameras one at a time
+    for (size_t targetPos = 0; targetPos < sortOrder.size(); ++targetPos) {
+        int currentPos = sortOrder[targetPos].second;
+        if (currentPos != static_cast<int>(targetPos)) {
+            // Find where the camera we want is now
+            for (size_t j = targetPos; j < sortOrder.size(); ++j) {
+                if (sortOrder[j].second == sortOrder[targetPos].second) {
+                    // Move it to target position
+                    camMgr.ReorderCamera(static_cast<int>(j), static_cast<int>(targetPos));
+                    // Update indices for remaining items
+                    for (size_t k = targetPos + 1; k < sortOrder.size(); ++k) {
+                        if (sortOrder[k].second >= static_cast<int>(targetPos) && sortOrder[k].second < static_cast<int>(j)) {
+                            sortOrder[k].second++;
+                        }
+                    }
+                    sortOrder[targetPos].second = static_cast<int>(targetPos);
+                    break;
+                }
+            }
+        }
+    }
+
+    SafeLog("Applied saved camera order for " + std::to_string(cameras.size()) + " cameras");
+}
+
 CAPTURE_API void CamMatrix_DiscoverCameras() {
     CameraManager::GetInstance().DiscoverCameras([](const std::string& msg) {
         SafeLog(msg);
     });
+
+    // Wait for discovery to complete, then apply saved order
+    // Note: Discovery runs in background thread, we need to apply order after it completes
+    // This is handled by polling IsDiscovering from the frontend
 }
 
 CAPTURE_API void CamMatrix_ConnectAllCameras() {
@@ -145,7 +250,7 @@ CAPTURE_API int CamMatrix_IsConnecting() {
 }
 
 CAPTURE_API int CamMatrix_IsCapturing() {
-    return CameraManager::GetInstance().IsCapturing() ? 1 : 0;
+    return g_isCapturing ? 1 : 0;
 }
 
 CAPTURE_API void CamMatrix_GetCameraName(int index, char* nameOut, int maxLen) {
@@ -157,6 +262,15 @@ CAPTURE_API void CamMatrix_GetCameraName(int index, char* nameOut, int maxLen) {
     }
 }
 
+CAPTURE_API void CamMatrix_GetCameraSerial(int index, char* serialOut, int maxLen) {
+    auto& cameras = CameraManager::GetInstance().GetDiscoveredCameras();
+    if (index >= 0 && index < static_cast<int>(cameras.size())) {
+        SafeCopyString(cameras[index].serialNumber, serialOut, maxLen);
+    } else if (serialOut && maxLen > 0) {
+        serialOut[0] = '\0';
+    }
+}
+
 CAPTURE_API int CamMatrix_IsCameraConnected(int index) {
     auto& cameras = CameraManager::GetInstance().GetDiscoveredCameras();
     if (index >= 0 && index < static_cast<int>(cameras.size())) {
@@ -165,21 +279,55 @@ CAPTURE_API int CamMatrix_IsCameraConnected(int index) {
     return 0;
 }
 
+CAPTURE_API void CamMatrix_SetCameraOrder(int fromIndex, int toIndex) {
+    CameraManager::GetInstance().ReorderCamera(fromIndex, toIndex);
+
+    // Save the new order to settings
+    if (g_settingsManager) {
+        auto& orderSettings = g_settingsManager->GetCameraOrderSettings();
+        orderSettings.use_custom_ordering = true;
+        orderSettings.order_entries.clear();
+
+        // Save current order by serial number
+        auto& cameras = CameraManager::GetInstance().GetDiscoveredCameras();
+        for (size_t i = 0; i < cameras.size(); ++i) {
+            CameraOrderEntry entry;
+            entry.serial_number = cameras[i].serialNumber;
+            entry.display_position = static_cast<int>(i);
+            orderSettings.order_entries.push_back(entry);
+        }
+
+        g_settingsManager->Save();
+        SafeLog("Camera order saved to settings");
+    }
+
+    SafeLog("Camera reordered: " + std::to_string(fromIndex) + " -> " + std::to_string(toIndex));
+}
+
+CAPTURE_API void CamMatrix_ApplySavedCameraOrder() {
+    ApplySavedCameraOrder();
+}
+
 // ============================================================================
 // Capture Operations
 // ============================================================================
 
 CAPTURE_API void CamMatrix_StartCapture(const char* sessionName, int totalPositions, float angleStep) {
     if (!g_sessionManager) return;
+    if (g_isCapturing) return;  // Already capturing
 
     g_totalPositions = totalPositions;
     g_captureProgress = 0;
+    g_isCapturing = true;
+
+    SafeLog("StartCapture: positions=" + std::to_string(totalPositions) + " angleStep=" + std::to_string(angleStep));
 
     // Create session
     std::string name = sessionName ? sessionName : "";
     g_sessionManager->StartNewSession(name);
     if (g_sessionManager->GetCurrentSession()) {
         g_lastSessionPath = g_sessionManager->GetCurrentSession()->base_path;
+        SafeLog("Session path: " + g_lastSessionPath);
     }
 
     // Get capture params from settings
@@ -196,51 +344,103 @@ CAPTURE_API void CamMatrix_StartCapture(const char* sessionName, int totalPositi
         auto& camMgr = CameraManager::GetInstance();
         auto& btMgr = BluetoothManager::GetInstance();
 
-        for (int pos = 0; pos < g_totalPositions.load(); ++pos) {
-            if (!camMgr.IsCapturing()) break;
+        SafeLog("Capture thread started, totalPositions=" + std::to_string(g_totalPositions.load()));
 
-            // Create position folder
-            std::string posPath = g_lastSessionPath + "/pos_" + std::to_string(pos + 1);
+        for (int pos = 0; pos < g_totalPositions.load(); ++pos) {
+            // Check our own flag, not CameraManager's
+            if (!g_isCapturing) {
+                SafeLog("Capture stopped by user at position " + std::to_string(pos));
+                break;
+            }
+
+            SafeLog("=== Position " + std::to_string(pos + 1) + "/" + std::to_string(g_totalPositions.load()) + " ===");
+
+            // Create position folder (use backslash for Windows)
+            std::string posPath = g_lastSessionPath + "\\pos_" + std::to_string(pos + 1);
             std::filesystem::create_directories(posPath);
 
-            // Capture all cameras
-            camMgr.CaptureAllCameras(posPath, params);
+            // STEP 1: Capture all cameras (SYNCHRONOUS - waits for all cameras to complete)
+            SafeLog("[CAPTURE] Starting capture...");
+            bool captureSuccess = camMgr.CaptureAllCameras(posPath, params);
+
+            if (!captureSuccess) {
+                SafeLog("[CAPTURE] Warning: Capture had errors");
+            } else {
+                SafeLog("[CAPTURE] Complete");
+            }
 
             g_captureProgress = pos + 1;
             if (g_progressCallback) {
                 g_progressCallback(pos + 1, g_totalPositions.load());
             }
 
-            // Rotate turntable for next position (if not last)
+            // STEP 2: Rotate turntable for next position (if not last)
             if (pos < g_totalPositions.load() - 1 && !g_connectedTurntableId.empty()) {
-                btMgr.RotateTurntable(g_connectedTurntableId, angleStep);
-                g_currentAngle = g_currentAngle.load() + angleStep;
+                SafeLog("[ROTATE] Rotating " + std::to_string(angleStep) + "° and waiting for completion...");
 
-                // Wait for rotation to complete
-                std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+                // Use blocking rotation that waits for actual turntable position
+                bool rotateSuccess = btMgr.RotateTurntableAndWait(g_connectedTurntableId, angleStep, 30000);
+
+                if (rotateSuccess) {
+                    g_currentAngle = g_currentAngle.load() + angleStep;
+                    SafeLog("[ROTATE] Complete");
+                } else {
+                    SafeLog("[ROTATE] Warning: Rotation may not have completed properly");
+                    // Add a fallback delay if rotation detection failed
+                    std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+                }
+
+                // STEP 3: Settling delay after rotation before next capture
+                // This ensures turntable vibrations have stopped
+                SafeLog("[SETTLE] Waiting 300ms for turntable to settle...");
+                std::this_thread::sleep_for(std::chrono::milliseconds(300));
+                SafeLog("[READY] Ready for next capture");
             }
         }
 
         // Calculate total images
         g_lastImageCount = g_captureProgress.load() * camMgr.GetConnectedCount();
+        g_isCapturing = false;
+
+        SafeLog("Capture sequence completed: " + std::to_string(g_captureProgress.load()) + " positions, " +
+                std::to_string(g_lastImageCount.load()) + " images");
 
         // Notify completion
         if (g_captureCompleteCallback) {
             g_captureCompleteCallback(1, g_lastSessionPath.c_str());
         }
-
-        SafeLog("Capture sequence completed");
     });
     captureThread.detach();
 }
 
 CAPTURE_API void CamMatrix_StopCapture() {
-    // Signal stop by setting progress to total (capture loop checks IsCapturing)
-    g_captureProgress = g_totalPositions.load();
+    SafeLog("StopCapture called");
+    g_isCapturing = false;  // Signal thread to stop
 }
 
-CAPTURE_API void CamMatrix_CaptureOnce(const char* sessionPath) {
-    if (!sessionPath) return;
+CAPTURE_API void CamMatrix_CreateSession(const char* sessionName) {
+    if (!g_sessionManager) {
+        SafeLog("CreateSession failed: session manager not initialized");
+        return;
+    }
+
+    std::string name = sessionName ? sessionName : "";
+    g_sessionManager->StartNewSession(name);
+
+    if (g_sessionManager->GetCurrentSession()) {
+        g_lastSessionPath = g_sessionManager->GetCurrentSession()->base_path;
+        g_captureProgress = 0;
+        SafeLog("Session created: " + g_lastSessionPath);
+    }
+}
+
+CAPTURE_API void CamMatrix_CaptureOnce() {
+    if (g_lastSessionPath.empty()) {
+        SafeLog("CaptureOnce failed: no active session. Call CreateSession first.");
+        return;
+    }
+
+    SafeLog("CaptureOnce: capturing to " + g_lastSessionPath);
 
     CameraManager::CaptureParams params;
     if (g_settingsManager) {
@@ -250,7 +450,17 @@ CAPTURE_API void CamMatrix_CaptureOnce(const char* sessionPath) {
         params.stagger_delay_ms = camSettings.stagger_delay_ms;
     }
 
-    CameraManager::GetInstance().CaptureAllCameras(sessionPath, params);
+    // Create a subfolder for this capture (pos_N)
+    g_captureProgress = g_captureProgress.load() + 1;
+    std::string capturePath = g_lastSessionPath + "/pos_" + std::to_string(g_captureProgress.load());
+    std::filesystem::create_directories(capturePath);
+
+    CameraManager::GetInstance().CaptureAllCameras(capturePath, params);
+
+    // Update last image count
+    g_lastImageCount = g_captureProgress.load() * CameraManager::GetInstance().GetConnectedCount();
+
+    SafeLog("CaptureOnce completed: " + std::to_string(g_captureProgress.load()) + " captures");
 }
 
 CAPTURE_API int CamMatrix_GetCaptureProgress() {
@@ -267,6 +477,11 @@ CAPTURE_API int CamMatrix_GetTotalPositions() {
 
 CAPTURE_API void CamMatrix_StartBluetoothScan() {
     auto& btMgr = BluetoothManager::GetInstance();
+
+    // Initialize if not already done
+    if (!btMgr.IsScanning()) {
+        btMgr.Initialize();
+    }
 
     // Set up device discovered callback
     btMgr.SetDeviceDiscoveredCallback([](const std::string& id, const std::string& name) {
@@ -304,9 +519,16 @@ CAPTURE_API void CamMatrix_GetBluetoothDevice(int index, char* idOut, int idMaxL
 CAPTURE_API int CamMatrix_ConnectBluetooth(const char* deviceId) {
     if (!deviceId) return 0;
 
+    SafeLog("ConnectBluetooth called with deviceId: " + std::string(deviceId));
+
+    // Ensure initialized
+    BluetoothManager::GetInstance().Initialize();
+
     bool success = BluetoothManager::GetInstance().ConnectToDevice(deviceId);
+    SafeLog("ConnectBluetooth: ConnectToDevice returned " + std::to_string(success));
     if (success) {
         g_connectedTurntableId = deviceId;
+        SafeLog("ConnectBluetooth: g_connectedTurntableId set to '" + g_connectedTurntableId + "'");
         g_currentAngle = 0.0f;
         g_currentTilt = 0.0f;
 
@@ -340,8 +562,13 @@ CAPTURE_API int CamMatrix_IsBluetoothConnected() {
 }
 
 CAPTURE_API int CamMatrix_RotateTurntable(float angle) {
-    if (g_connectedTurntableId.empty()) return 0;
+    SafeLog("RotateTurntable called with angle=" + std::to_string(angle) + ", turntableId='" + g_connectedTurntableId + "'");
+    if (g_connectedTurntableId.empty()) {
+        SafeLog("RotateTurntable: No turntable connected!");
+        return 0;
+    }
     bool success = BluetoothManager::GetInstance().RotateTurntable(g_connectedTurntableId, angle);
+    SafeLog("RotateTurntable: success=" + std::to_string(success));
     if (success) {
         g_currentAngle = g_currentAngle.load() + angle;
     }
@@ -502,7 +729,7 @@ CAPTURE_API void CamMatrix_GetOutputPath(char* pathOut, int maxLen) {
     if (g_settingsManager) {
         SafeCopyString(g_settingsManager->GetAppSettings().last_output_folder, pathOut, maxLen);
     } else if (pathOut && maxLen > 0) {
-        SafeCopyString("neural_dataset", pathOut, maxLen);
+        pathOut[0] = '\0';  // No default - user must select
     }
 }
 
@@ -545,4 +772,26 @@ CAPTURE_API void CamMatrix_GetLastSessionPath(char* pathOut, int maxLen) {
 
 CAPTURE_API int CamMatrix_GetLastSessionImageCount() {
     return g_lastImageCount.load();
+}
+
+// ============================================================================
+// Debug Logging
+// ============================================================================
+
+CAPTURE_API void CamMatrix_GetDebugLogs(char* logsOut, int maxLen) {
+    std::lock_guard<std::mutex> lock(g_logMutex);
+    SafeCopyString(g_debugLogs, logsOut, maxLen);
+}
+
+CAPTURE_API void CamMatrix_ClearDebugLogs() {
+    std::lock_guard<std::mutex> lock(g_logMutex);
+    g_debugLogs.clear();
+}
+
+// ============================================================================
+// Working Directory
+// ============================================================================
+
+CAPTURE_API void CamMatrix_GetWorkingDirectory(char* pathOut, int maxLen) {
+    SafeCopyString(g_workingDirectory, pathOut, maxLen);
 }
