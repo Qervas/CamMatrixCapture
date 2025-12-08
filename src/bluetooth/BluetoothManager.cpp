@@ -334,19 +334,21 @@ bool BluetoothManager::RotateTurntableAndWait(const std::string& deviceId, float
         return false;
     }
 
-    // CRITICAL: Wait for turntable to actually start moving before polling
-    // Without this delay, the turntable may still report the start angle
-    // causing premature "stability" detection
-    Log("RotateTurntableAndWait: Waiting 200ms for turntable to start moving...");
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    // Brief delay for turntable to start moving (reduced from 200ms)
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
-    // Poll for completion
+    // Poll for completion with faster polling
     auto start_time = std::chrono::steady_clock::now();
-    const float tolerance = 2.0f;  // 2 degree tolerance
+    const float tolerance = 2.0f;      // 2 degree tolerance for target
+    const float close_tolerance = 3.0f; // 3 degree tolerance for "close enough + stable"
+    const int poll_interval_ms = 25;    // Faster polling (was 40ms)
+    const int stable_required = 3;      // Reduced from 5 (75ms vs 200ms)
+
     int poll_count = 0;
     float previous_angle = start_angle;
     int stable_count = 0;
-    bool movement_detected = false;  // Track if we've seen any movement
+    int close_stable_count = 0;  // For "close enough and stable" detection
+    bool movement_detected = false;
 
     while (true) {
         auto current_time = std::chrono::steady_clock::now();
@@ -357,12 +359,10 @@ bool BluetoothManager::RotateTurntableAndWait(const std::string& deviceId, float
             return false;
         }
 
-        // Small delay between polls (40ms like the turntable controller)
-        std::this_thread::sleep_for(std::chrono::milliseconds(40));
+        std::this_thread::sleep_for(std::chrono::milliseconds(poll_interval_ms));
 
         float current_angle = GetCurrentAngle(deviceId);
         if (current_angle < 0) {
-            // Failed to read, try again
             poll_count++;
             continue;
         }
@@ -374,47 +374,58 @@ bool BluetoothManager::RotateTurntableAndWait(const std::string& deviceId, float
             movement_detected = true;
         }
 
-        // Check if we've reached target (with wraparound handling)
+        // Check distance to target (with wraparound handling)
         float angle_diff = std::abs(current_angle - target_angle);
         if (angle_diff > 180.0f) {
             angle_diff = 360.0f - angle_diff;
         }
 
+        // Exact target reached - return immediately
         if (angle_diff <= tolerance) {
             Log("RotateTurntableAndWait: Target reached at " + std::to_string(current_angle) +
-                " degrees (polls: " + std::to_string(poll_count) + ")");
+                " degrees (polls: " + std::to_string(poll_count) + ", " + std::to_string(elapsed) + "ms)");
             return true;
         }
 
-        // Check for stability (turntable stopped moving)
-        // Only consider stable AFTER we've detected movement
+        // Check movement since last poll
         float movement = std::abs(current_angle - previous_angle);
         if (movement > 180.0f) movement = 360.0f - movement;
 
-        if (movement < 0.5f) {
-            // Only count stability if we've seen movement first
-            if (movement_detected) {
-                stable_count++;
-                if (stable_count >= 5) {
-                    // Turntable has stopped moving after moving
-                    Log("RotateTurntableAndWait: Turntable stabilized at " + std::to_string(current_angle) +
-                        " degrees (target was " + std::to_string(target_angle) + ")");
+        bool is_stable = (movement < 0.5f);
+
+        if (is_stable && movement_detected) {
+            stable_count++;
+
+            // Close to target and stable - faster exit
+            if (angle_diff <= close_tolerance) {
+                close_stable_count++;
+                if (close_stable_count >= 2) {
+                    Log("RotateTurntableAndWait: Close and stable at " + std::to_string(current_angle) +
+                        " degrees (target: " + std::to_string(target_angle) + ", diff: " + std::to_string(angle_diff) + ")");
                     return true;
                 }
             }
+
+            // General stability detection
+            if (stable_count >= stable_required) {
+                Log("RotateTurntableAndWait: Stabilized at " + std::to_string(current_angle) +
+                    " degrees (target: " + std::to_string(target_angle) + ")");
+                return true;
+            }
         } else {
             stable_count = 0;
+            close_stable_count = 0;
         }
 
         previous_angle = current_angle;
         poll_count++;
 
-        // Log progress every 25 polls (~1 second)
-        if (poll_count % 25 == 0) {
+        // Log progress every 40 polls (~1 second)
+        if (poll_count % 40 == 0) {
             Log("RotateTurntableAndWait: Current=" + std::to_string(current_angle) +
                 ", Target=" + std::to_string(target_angle) +
                 ", Diff=" + std::to_string(angle_diff) +
-                ", Movement=" + (movement_detected ? "YES" : "NO"));
+                ", Stable=" + std::to_string(stable_count));
         }
     }
 }
