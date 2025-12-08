@@ -95,6 +95,21 @@ public static class CaptureService
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
     private static extern int CamMatrix_GetTotalPositions();
 
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    private static extern int CamMatrix_GetCaptureState();
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    private static extern int CamMatrix_GetCaptureElapsedMs();
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    private static extern int CamMatrix_GetRotateElapsedMs();
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    private static extern int CamMatrix_GetTotalCaptureTimeMs();
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    private static extern int CamMatrix_GetTotalRotateTimeMs();
+
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
     private static extern void CamMatrix_CreateSession(string sessionName);
 
@@ -301,6 +316,31 @@ public static class CaptureService
 
     public static int CaptureProgress => CamMatrix_GetCaptureProgress();
     public static int TotalPositions => CamMatrix_GetTotalPositions();
+
+    /// <summary>
+    /// Current capture state: 0=idle, 1=capturing, 2=rotating, 3=settling
+    /// </summary>
+    public static int CaptureState => CamMatrix_GetCaptureState();
+
+    /// <summary>
+    /// Time elapsed in current capture phase (ms)
+    /// </summary>
+    public static int CaptureElapsedMs => CamMatrix_GetCaptureElapsedMs();
+
+    /// <summary>
+    /// Time elapsed in current rotation phase (ms)
+    /// </summary>
+    public static int RotateElapsedMs => CamMatrix_GetRotateElapsedMs();
+
+    /// <summary>
+    /// Total cumulative capture time (ms)
+    /// </summary>
+    public static int TotalCaptureTimeMs => CamMatrix_GetTotalCaptureTimeMs();
+
+    /// <summary>
+    /// Total cumulative rotation time (ms)
+    /// </summary>
+    public static int TotalRotateTimeMs => CamMatrix_GetTotalRotateTimeMs();
 
     /// <summary>
     /// Create a new session directory for manual capture mode

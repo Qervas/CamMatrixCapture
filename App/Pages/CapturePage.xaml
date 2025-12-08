@@ -93,6 +93,37 @@
                     </Grid>
                 </Border>
 
+                <!-- Timing Display (shown during automated capture) -->
+                <Border x:Name="TimingPanel" Visibility="Collapsed" CornerRadius="8" Padding="16" Margin="0,12,0,0"
+                        Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+
+                        <!-- Current State -->
+                        <StackPanel Grid.Column="0" HorizontalAlignment="Center">
+                            <TextBlock Text="State" Foreground="{ThemeResource TextFillColorSecondaryBrush}" HorizontalAlignment="Center"/>
+                            <TextBlock x:Name="StateText" Text="Idle" FontSize="16" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+                            <TextBlock x:Name="StateTimeText" Text="0.0s" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" HorizontalAlignment="Center"/>
+                        </StackPanel>
+
+                        <!-- Capture Time -->
+                        <StackPanel Grid.Column="1" HorizontalAlignment="Center">
+                            <TextBlock Text="Capture Time" Foreground="{ThemeResource TextFillColorSecondaryBrush}" HorizontalAlignment="Center"/>
+                            <TextBlock x:Name="TotalCaptureTimeText" Text="0.0s" FontSize="16" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+                        </StackPanel>
+
+                        <!-- Rotation Time -->
+                        <StackPanel Grid.Column="2" HorizontalAlignment="Center">
+                            <TextBlock Text="Rotation Time" Foreground="{ThemeResource TextFillColorSecondaryBrush}" HorizontalAlignment="Center"/>
+                            <TextBlock x:Name="TotalRotateTimeText" Text="0.0s" FontSize="16" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
                 <!-- Session Complete Panel (shown after automated capture completes) -->
                 <Border x:Name="SessionCompletePanel" Visibility="Collapsed" CornerRadius="8" Padding="20" Margin="0,24,0,0"
                         Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}">

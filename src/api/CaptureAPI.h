@@ -70,6 +70,13 @@ CAPTURE_API void CamMatrix_CaptureOnce();
 CAPTURE_API int  CamMatrix_GetCaptureProgress();
 CAPTURE_API int  CamMatrix_GetTotalPositions();
 
+// Capture state for timing (0=idle, 1=capturing, 2=rotating, 3=settling)
+CAPTURE_API int  CamMatrix_GetCaptureState();
+CAPTURE_API int  CamMatrix_GetCaptureElapsedMs();   // Time spent in current capture phase
+CAPTURE_API int  CamMatrix_GetRotateElapsedMs();    // Time spent in current rotation phase
+CAPTURE_API int  CamMatrix_GetTotalCaptureTimeMs(); // Cumulative capture time
+CAPTURE_API int  CamMatrix_GetTotalRotateTimeMs();  // Cumulative rotation time
+
 // ============================================================================
 // Bluetooth / Turntable Operations
 // ============================================================================

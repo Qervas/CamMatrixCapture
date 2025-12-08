@@ -85,6 +85,9 @@ public sealed partial class CapturePage : Page
 
             int percent = total > 0 ? (progress * 100 / total) : 0;
             ProgressText.Text = $"Capturing... {percent}%";
+
+            // Update timing display
+            UpdateTimingDisplay();
         }
 
         // Update session path if available
@@ -98,6 +101,40 @@ public sealed partial class CapturePage : Page
                 OpenFolderButton.IsEnabled = true;
             }
         }
+    }
+
+    private void UpdateTimingDisplay()
+    {
+        int state = CaptureService.CaptureState;
+        int captureElapsed = CaptureService.CaptureElapsedMs;
+        int rotateElapsed = CaptureService.RotateElapsedMs;
+        int totalCaptureMs = CaptureService.TotalCaptureTimeMs;
+        int totalRotateMs = CaptureService.TotalRotateTimeMs;
+
+        // Update state text and current phase time
+        switch (state)
+        {
+            case 1:
+                StateText.Text = "Capturing";
+                StateTimeText.Text = $"{captureElapsed / 1000.0:F1}s";
+                break;
+            case 2:
+                StateText.Text = "Rotating";
+                StateTimeText.Text = $"{rotateElapsed / 1000.0:F1}s";
+                break;
+            case 3:
+                StateText.Text = "Settling";
+                StateTimeText.Text = "";
+                break;
+            default:
+                StateText.Text = "Idle";
+                StateTimeText.Text = "";
+                break;
+        }
+
+        // Update total times
+        TotalCaptureTimeText.Text = $"{totalCaptureMs / 1000.0:F1}s";
+        TotalRotateTimeText.Text = $"{totalRotateMs / 1000.0:F1}s";
     }
 
     private void OnProgress(int current, int total)
@@ -119,6 +156,14 @@ public sealed partial class CapturePage : Page
             _isCapturing = false;
             UpdateButtonState();
 
+            // Update final timing
+            int totalCaptureMs = CaptureService.TotalCaptureTimeMs;
+            int totalRotateMs = CaptureService.TotalRotateTimeMs;
+            StateText.Text = "Complete";
+            StateTimeText.Text = "";
+            TotalCaptureTimeText.Text = $"{totalCaptureMs / 1000.0:F1}s";
+            TotalRotateTimeText.Text = $"{totalRotateMs / 1000.0:F1}s";
+
             if (success)
             {
                 _sessionPath = sessionPath;
@@ -138,7 +183,8 @@ public sealed partial class CapturePage : Page
                     CaptureButton.IsEnabled = false;
 
                     int totalImages = _totalPositions * CaptureService.ConnectedCameraCount;
-                    CompleteText.Text = $"Captured {_totalPositions} positions ({totalImages} images)";
+                    int totalTimeMs = totalCaptureMs + totalRotateMs;
+                    CompleteText.Text = $"Captured {_totalPositions} positions ({totalImages} images) in {totalTimeMs / 1000.0:F1}s";
                 }
             }
             else
@@ -164,6 +210,7 @@ public sealed partial class CapturePage : Page
             _isCapturing = false;
             UpdateButtonState();
             ProgressText.Text = "Capture stopped";
+            TimingPanel.Visibility = Visibility.Collapsed;
         }
         else
         {
@@ -173,6 +220,13 @@ public sealed partial class CapturePage : Page
             UpdateButtonState();
             ProgressText.Text = "Starting capture...";
             SessionCompletePanel.Visibility = Visibility.Collapsed;
+            TimingPanel.Visibility = Visibility.Visible;
+
+            // Reset timing display
+            StateText.Text = "Starting...";
+            StateTimeText.Text = "";
+            TotalCaptureTimeText.Text = "0.0s";
+            TotalRotateTimeText.Text = "0.0s";
 
             CaptureService.StartCapture(_sessionName, _totalPositions, _angleStep);
         }
