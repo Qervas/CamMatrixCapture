@@ -1,29 +1,34 @@
 # ==============================================
-# Clean Sapera Camera System - .gitignore
+# Camera Matrix Capture - .gitignore
 # ==============================================
 
 # Build directories
 build/
 build-*/
+
+# C++ build outputs
 Debug/
 Release/
-
-# Executable outputs
+x64/
 *.exe
 *.dll
 *.lib
 *.obj
 *.pdb
+*.exp
+*.ilk
+
+# .NET / WinUI build outputs
+App/bin/
+App/obj/
+*.nupkg
 
 # Captured images and data
-data/captured_images_*/
-data/*.tiff
-data/*.tif
-data/*.jpg
-data/*.png
-
-# Neural dataset (captured images)
 neural_dataset/
+data/
+
+# Settings (user-specific)
+settings.ini
 
 # Temporary files
 *.tmp
@@ -37,22 +42,17 @@ neural_dataset/
 *.vcxproj*
 *.filters
 *.user
+*.suo
 
 # CMake generated files
 CMakeFiles/
 CMakeCache.txt
 cmake_install.cmake
-*.cmake
 
 # Python cache
 __pycache__/
 *.pyc
 *.pyo
-*.pyd
-.Python
-env/
-venv/
-.env
 
 # System files
 .DS_Store
@@ -60,18 +60,9 @@ Thumbs.db
 *.swp
 *.swo
 
-# ImGui user preferences
+# ImGui (legacy)
 imgui.ini
 
-# Keep essential files
-!backend/src/
-!web-bridge/web_bridge.py
-!frontend/
-!config/
-!CMakeLists.txt
-!README.md
-!start-system.bat 
-
-examples/*
+# Deploy/distribution
 deploy/
-classes/
+*.zip

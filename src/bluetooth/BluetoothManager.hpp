@@ -68,6 +68,7 @@ public:
     
     // Turntable-specific commands
     bool RotateTurntable(const std::string& deviceId, float angle);
+    bool RotateTurntableAndWait(const std::string& deviceId, float angle, int timeout_ms = 30000);  // Waits for rotation to complete
     bool SetRotationSpeed(const std::string& deviceId, float speed);
     bool StopRotation(const std::string& deviceId);
     bool TiltTurntable(const std::string& deviceId, float angle);
@@ -75,6 +76,7 @@ public:
     bool StopTilt(const std::string& deviceId);
     bool ReturnToZero(const std::string& deviceId);
     bool GetTurntableStatus(const std::string& deviceId, CommandResponseCallback callback);
+    float GetCurrentAngle(const std::string& deviceId);  // Returns current turntable angle (-1 on error)
     
     // Callbacks
     void SetDeviceDiscoveredCallback(DeviceDiscoveredCallback callback) { m_deviceDiscoveredCallback = callback; }
@@ -101,7 +103,10 @@ public:
     };
     
     DeviceInfo GetDeviceInfo(const std::string& deviceId) const;
-    
+
+    // Logging (public so BluetoothDevice can use it)
+    void Log(const std::string& message);
+
 private:
     BluetoothManager();
     ~BluetoothManager();
@@ -120,9 +125,9 @@ private:
     std::atomic<bool> m_initialized{false};
     std::atomic<bool> m_isScanning{false};
     
-    // Configuration
-    std::string m_serviceUUID = "0000ffe0-0000-1000-8000-00805f9b34fb";
-    std::string m_characteristicUUID = "0000ffe1-0000-1000-8000-00805f9b34fb";
+    // UUIDs discovered from device (no hardcoding)
+    std::string m_serviceUUID;
+    std::string m_characteristicUUID;
     
     // Callbacks
     DeviceDiscoveredCallback m_deviceDiscoveredCallback;
@@ -130,12 +135,14 @@ private:
     LogCallback m_logCallback;
     
     // Internal methods
-    void Log(const std::string& message);
     void OnDeviceDiscovered(const std::string& deviceId, const std::string& deviceName);
     void OnConnectionStatusChanged(const std::string& deviceId, bool connected);
     std::string FormatCommand(const std::string& command);
     
     // Scan timeout functionality removed for manual control
 };
+
+// Global log function for use by BluetoothDevice
+void BluetoothLog(const std::string& message);
 
 } // namespace SaperaCapturePro

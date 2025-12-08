@@ -154,7 +154,7 @@ struct CameraSettings {
 
 // General application settings
 struct AppSettings {
-    std::string last_output_folder = "neural_dataset";
+    std::string last_output_folder = "";  // No default - user must select
     bool auto_save_settings = true;
     bool dark_theme = true;
     int window_width = 1200;

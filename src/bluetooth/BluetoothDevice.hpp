@@ -57,9 +57,9 @@ private:
     std::string m_deviceId;
     std::string m_deviceName;
     
-    // Configuration
-    std::string m_serviceUUID = "0000ffe0-0000-1000-8000-00805f9b34fb";
-    std::string m_characteristicUUID = "0000ffe1-0000-1000-8000-00805f9b34fb";
+    // UUIDs discovered from device (no hardcoding)
+    std::string m_serviceUUID;
+    std::string m_characteristicUUID;
     
     // State
     std::atomic<bool> m_connected{false};

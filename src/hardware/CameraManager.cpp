@@ -249,58 +249,80 @@ void CameraManager::DisconnectAllCameras() {
     Log("[NET] No cameras connected to disconnect");
     return;
   }
-  
+
   int device_count = static_cast<int>(connected_devices_.size());
   Log("[NET] Disconnecting " + std::to_string(device_count) + " cameras...");
-  
-  // Destroy all connected devices and buffers
+
+  // IMPORTANT: Sapera SDK requires disconnection in reverse order of creation:
+  // 1. First disconnect and destroy transfers
+  // 2. Then destroy buffers
+  // 3. Finally destroy acquisition devices
+  // This prevents "CorXferDisconnect" errors
+
   int destroyed_count = 0;
+
+  // Step 1: Disconnect and destroy all transfers FIRST
+  Log("[NET] Step 1: Disconnecting transfers...");
+  for (auto& [id, transfer] : connected_transfers_) {
+    if (transfer) {
+      try {
+        // Stop any ongoing transfer
+        if (transfer->IsGrabbing()) {
+          transfer->Freeze();
+          transfer->Wait(1000);
+        }
+        // Disconnect from hardware
+        if (transfer->IsConnected()) {
+          transfer->Disconnect();
+        }
+        // Destroy the transfer object
+        transfer->Destroy();
+        delete transfer;
+        Log("[OK] Transfer disconnected: " + id);
+      } catch (const std::exception& e) {
+        Log("[ERROR] Failed to destroy transfer " + id + ": " + e.what());
+      }
+    }
+  }
+  connected_transfers_.clear();
+
+  // Step 2: Destroy all buffers
+  Log("[NET] Step 2: Destroying buffers...");
+  for (auto& [id, buffer] : connected_buffers_) {
+    if (buffer) {
+      try {
+        buffer->Destroy();
+        delete buffer;
+        Log("[OK] Buffer destroyed: " + id);
+      } catch (const std::exception& e) {
+        Log("[ERROR] Failed to destroy buffer " + id + ": " + e.what());
+      }
+    }
+  }
+  connected_buffers_.clear();
+
+  // Step 3: Destroy all acquisition devices LAST
+  Log("[NET] Step 3: Destroying devices...");
   for (auto& [id, device] : connected_devices_) {
     if (device) {
       try {
         device->Destroy();
         delete device;
         destroyed_count++;
-        Log("[OK] Disconnected device: " + id);
+        Log("[OK] Device disconnected: " + id);
       } catch (const std::exception& e) {
         Log("[ERROR] Failed to destroy device " + id + ": " + e.what());
       }
     }
   }
-  
-  for (auto& [id, buffer] : connected_buffers_) {
-    if (buffer) {
-      try {
-        buffer->Destroy();
-        delete buffer;
-      } catch (const std::exception& e) {
-        Log("[ERROR] Failed to destroy buffer " + id + ": " + e.what());
-      }
-    }
-  }
-  
-  for (auto& [id, transfer] : connected_transfers_) {
-    if (transfer) {
-      try {
-        transfer->Destroy();
-        delete transfer;
-      } catch (const std::exception& e) {
-        Log("[ERROR] Failed to destroy transfer " + id + ": " + e.what());
-      }
-    }
-  }
-  
-  // Clear all connected devices and buffers
   connected_devices_.clear();
-  connected_buffers_.clear();
-  connected_transfers_.clear();
-  
+
   // Update camera connection status in discovered_cameras_ list
   for (auto& camera : discovered_cameras_) {
     camera.isConnected = false;
     camera.status = CameraStatus::Disconnected;
   }
-  
+
   Log("[OK] Successfully disconnected " + std::to_string(destroyed_count) + "/" + std::to_string(device_count) + " cameras");
 }
 
@@ -1192,6 +1214,31 @@ void CameraManager::ApplyCameraOrdering(const ::CameraOrderSettings& order_setti
   }
 
   Log("[ORDER] Applied custom camera ordering");
+}
+
+void CameraManager::ReorderCamera(int fromIndex, int toIndex) {
+  std::lock_guard<std::mutex> lock(camera_mutex_);
+
+  if (fromIndex < 0 || fromIndex >= static_cast<int>(discovered_cameras_.size()) ||
+      toIndex < 0 || toIndex >= static_cast<int>(discovered_cameras_.size()) ||
+      fromIndex == toIndex) {
+    return;
+  }
+
+  // Move camera from fromIndex to toIndex
+  CameraInfo camera = discovered_cameras_[fromIndex];
+  discovered_cameras_.erase(discovered_cameras_.begin() + fromIndex);
+  discovered_cameras_.insert(discovered_cameras_.begin() + toIndex, camera);
+
+  // Update all camera names based on new positions
+  for (size_t i = 0; i < discovered_cameras_.size(); ++i) {
+    std::string indexStr = std::to_string(i + 1);  // 1-based for display
+    if (indexStr.length() == 1) indexStr = "0" + indexStr;
+    discovered_cameras_[i].name = "cam_" + indexStr;
+    discovered_cameras_[i].displayPosition = static_cast<int>(i);
+  }
+
+  Log("[ORDER] Reordered cameras: moved " + std::to_string(fromIndex) + " to " + std::to_string(toIndex));
 }
 
 std::vector<CameraInfo> CameraManager::GetOrderedCameras() const {
