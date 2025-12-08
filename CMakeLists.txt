@@ -61,6 +61,7 @@ endif()
 # Core backend library as DLL
 add_library(CaptureCore SHARED
     src/api/CaptureAPI.cpp
+    src/api/CaptureStateMachine.cpp
     src/hardware/CameraTypes.cpp
     src/hardware/CameraManager.cpp
     src/utils/SessionManager.cpp

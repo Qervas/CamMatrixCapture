@@ -4,6 +4,19 @@ Multi-camera dataset capture system for neural rendering, using Teledyne DALSA i
 
 Build your own multi-view capture rig with off-the-shelf industrial cameras and turntable equipment.
 
+![Connect Page](image/README/connect.png)
+
+## Features
+
+- **Wizard-style UI** - Step-by-step workflow for beginners
+- **Multi-camera sync** - Parallel capture with staggered timing (bandwidth-optimized)
+- **Bluetooth turntable control** - Automated 360° capture sequences
+- **Real-time status** - Live capture/rotation state machine with timing display
+- **Flexible presets** - Quick 36, Detailed 72, or custom positions
+- **Drag-and-drop camera ordering** - Reorder cameras in the UI
+- **TIFF output** - High-quality ~35MB images per capture
+- **Sound notifications** - Audio feedback on completion
+
 ## Requirements
 
 - Windows 10/11
@@ -54,15 +67,6 @@ App\bin\x64\Release\net8.0-windows10.0.19041.0\CameraMatrixCapture.exe
 4. **Capture**: Start automated 360° capture sequence
 5. **Done**: View results and open output folder
 
-## Features
-
-- Wizard-style UI for beginners
-- Parallel capture with staggered timing (bandwidth-optimized)
-- Automated 360° turntable sequences via Bluetooth
-- Multiple capture presets (Quick 36, Detailed 72, Custom)
-- TIFF output format (~35MB per image)
-- Sound notifications on completion
-
 ## Output
 
 Images saved to `neural_dataset/[session_name]/`
@@ -83,34 +87,50 @@ neural_dataset/
 
 ```
 CamMatrixCapture/
-├── App/                        # WinUI 3 Frontend (C#)
+├── App/                           # WinUI 3 Frontend (C#)
 │   ├── Pages/
-│   │   ├── ConnectPage.xaml    # Step 1: Device connection
-│   │   ├── SetupPage.xaml      # Step 2: Capture settings
-│   │   ├── CapturePage.xaml    # Step 3: Capture execution
-│   │   └── DonePage.xaml       # Step 4: Completion
+│   │   ├── ConnectPage.xaml       # Step 1: Device connection
+│   │   ├── SetupPage.xaml         # Step 2: Capture settings
+│   │   ├── CapturePage.xaml       # Step 3: Capture execution
+│   │   └── DonePage.xaml          # Step 4: Completion
 │   ├── Dialogs/
-│   │   └── SettingsDialog.xaml # Settings flyout
+│   │   ├── SettingsDialog.xaml    # Settings flyout
+│   │   └── DebugConsoleDialog.xaml # Debug log viewer
 │   └── Services/
-│       └── CaptureService.cs   # P/Invoke wrapper
+│       └── CaptureService.cs      # P/Invoke wrapper
 │
-├── src/                        # C++ Backend (CaptureCore.dll)
+├── src/                           # C++ Backend (CaptureCore.dll)
 │   ├── api/
-│   │   └── CaptureAPI.cpp      # C-style DLL exports
+│   │   ├── CaptureAPI.cpp         # C-style DLL exports
+│   │   └── CaptureStateMachine.cpp # Capture/rotation state machine
 │   ├── hardware/
-│   │   └── CameraManager.cpp   # Sapera SDK integration
+│   │   └── CameraManager.cpp      # Sapera SDK integration
 │   ├── bluetooth/
-│   │   ├── BluetoothManager.cpp
-│   │   ├── BluetoothDevice.cpp # BLE communication
+│   │   ├── BluetoothManager.cpp   # BLE device management
+│   │   ├── BluetoothDevice.cpp    # BLE communication
 │   │   └── TurntableController.cpp
 │   └── utils/
-│       ├── SettingsManager.cpp # INI persistence
-│       └── SessionManager.cpp  # File organization
+│       ├── SettingsManager.cpp    # INI persistence
+│       └── SessionManager.cpp     # File organization
 │
-├── build.bat                   # Build script (CMD)
-├── build.ps1                   # Build script (PowerShell)
+├── build.bat                      # Build script (CMD)
+├── build.ps1                      # Build script (PowerShell)
 └── CMakeLists.txt
 ```
+
+### State Machine
+
+The capture-rotation cycle is managed by a state machine to ensure correct synchronization:
+
+```
+Idle → Capturing → Rotating → Settling → Idle (repeat)
+```
+
+States:
+- **Idle**: Ready for next operation
+- **Capturing**: Cameras actively capturing images
+- **Rotating**: Turntable moving to next position
+- **Settling**: Waiting for turntable vibration to stop
 
 ## Settings
 

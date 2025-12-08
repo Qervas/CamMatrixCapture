@@ -84,7 +84,15 @@ public sealed partial class CapturePage : Page
             UpdateStats();
 
             int percent = total > 0 ? (progress * 100 / total) : 0;
-            ProgressText.Text = $"Capturing... {percent}%";
+            int state = CaptureService.CaptureState;
+            string stateText = state switch
+            {
+                1 => "Capturing",
+                2 => "Rotating",
+                3 => "Settling",
+                _ => "Working"
+            };
+            ProgressText.Text = $"{stateText}... {percent}%";
 
             // Update timing display
             UpdateTimingDisplay();

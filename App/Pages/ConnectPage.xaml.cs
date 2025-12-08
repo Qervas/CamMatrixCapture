@@ -137,6 +137,7 @@ public sealed partial class ConnectPage : Page
             CameraStatusText.Text = "Discovering...";
             CameraProgressBar.Visibility = Visibility.Visible;
             CameraProgressBar.IsIndeterminate = true;
+            ConnectCamerasButton.Content = "Connect All";
         }
         else if (CaptureService.IsConnecting)
         {
@@ -144,28 +145,32 @@ public sealed partial class ConnectPage : Page
             CameraStatusText.Text = "Connecting...";
             CameraProgressBar.Visibility = Visibility.Visible;
             CameraProgressBar.IsIndeterminate = true;
+            ConnectCamerasButton.Content = "Connecting...";
         }
         else if (connected > 0)
         {
             CameraStatusDot.Fill = new SolidColorBrush(Colors.Green);
             CameraStatusText.Text = "Connected";
             CameraProgressBar.Visibility = Visibility.Collapsed;
+            ConnectCamerasButton.Content = "Disconnect All";
         }
         else if (discovered > 0)
         {
             CameraStatusDot.Fill = new SolidColorBrush(Colors.Orange);
             CameraStatusText.Text = "Discovered, not connected";
             CameraProgressBar.Visibility = Visibility.Collapsed;
+            ConnectCamerasButton.Content = "Connect All";
         }
         else
         {
             CameraStatusDot.Fill = new SolidColorBrush(Colors.Gray);
             CameraStatusText.Text = "Not connected";
             CameraProgressBar.Visibility = Visibility.Collapsed;
+            ConnectCamerasButton.Content = "Connect All";
         }
 
-        ConnectCamerasButton.IsEnabled = discovered > 0 && !CaptureService.IsConnecting;
-        DiscoverButton.IsEnabled = !CaptureService.IsDiscovering;
+        ConnectCamerasButton.IsEnabled = discovered > 0 && !CaptureService.IsConnecting && !CaptureService.IsDiscovering;
+        DiscoverButton.IsEnabled = !CaptureService.IsDiscovering && !CaptureService.IsConnecting;
     }
 
     private void UpdateTurntableStatus()
@@ -241,9 +246,24 @@ public sealed partial class ConnectPage : Page
     {
         try
         {
-            Debug.WriteLine("[ConnectPage] Connecting to cameras...");
-            await CaptureService.ConnectAllCamerasAsync();
-            Debug.WriteLine($"[ConnectPage] Connection complete. Connected: {CaptureService.ConnectedCameraCount}");
+            if (CaptureService.ConnectedCameraCount > 0)
+            {
+                // Disconnect
+                Debug.WriteLine("[ConnectPage] Disconnecting cameras...");
+                ConnectCamerasButton.IsEnabled = false;
+                ConnectCamerasButton.Content = "Disconnecting...";
+
+                await System.Threading.Tasks.Task.Run(() => CaptureService.DisconnectAllCameras());
+
+                Debug.WriteLine("[ConnectPage] Cameras disconnected");
+            }
+            else
+            {
+                // Connect
+                Debug.WriteLine("[ConnectPage] Connecting to cameras...");
+                await CaptureService.ConnectAllCamerasAsync();
+                Debug.WriteLine($"[ConnectPage] Connection complete. Connected: {CaptureService.ConnectedCameraCount}");
+            }
         }
         catch (Exception ex)
         {
