@@ -5,7 +5,7 @@ using Microsoft.UI;
 using CameraMatrixCapture.Services;
 using System;
 using System.Collections.ObjectModel;
-using System.Threading.Tasks;
+using System.Diagnostics;
 
 namespace CameraMatrixCapture.Pages;
 
@@ -15,18 +15,32 @@ public class BluetoothDeviceItem
     public string Name { get; set; } = "";
 }
 
+public class CameraItem
+{
+    public int Index { get; set; }
+    public string DisplayName { get; set; } = "";
+    public string SerialNumber { get; set; } = "";
+    public bool IsConnected { get; set; }
+    public SolidColorBrush StatusColor => IsConnected
+        ? new SolidColorBrush(Colors.Green)
+        : new SolidColorBrush(Colors.Gray);
+}
+
 public sealed partial class ConnectPage : Page
 {
     private readonly ObservableCollection<BluetoothDeviceItem> _devices = new();
+    private readonly ObservableCollection<CameraItem> _cameras = new();
     private readonly DispatcherTimer _refreshTimer;
 
     public ConnectPage()
     {
         this.InitializeComponent();
         DeviceListView.ItemsSource = _devices;
+        CameraListView.ItemsSource = _cameras;
 
-        // Set up device discovered callback
+        // Set up callbacks
         CaptureService.OnDeviceDiscovered += OnDeviceDiscovered;
+        CaptureService.OnLog += OnLog;
 
         // Timer to refresh status
         _refreshTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
@@ -38,11 +52,76 @@ public sealed partial class ConnectPage : Page
         UpdateTurntableStatus();
     }
 
+    private void OnLog(string message)
+    {
+        Debug.WriteLine($"[CaptureCore] {message}");
+    }
+
     private void RefreshStatus(object? sender, object e)
     {
         UpdateCameraStatus();
+        UpdateCameraList();
         UpdateTurntableStatus();
         UpdateNextButtonState();
+    }
+
+    private void UpdateCameraList()
+    {
+        int discovered = CaptureService.DiscoveredCameraCount;
+
+        // Only update if count changed (don't refresh during drag)
+        if (_cameras.Count != discovered)
+        {
+            _cameras.Clear();
+            for (int i = 0; i < discovered; i++)
+            {
+                string name = CaptureService.GetCameraName(i);
+                string serial = CaptureService.GetCameraSerial(i);
+                bool connected = CaptureService.IsCameraConnected(i);
+
+                _cameras.Add(new CameraItem
+                {
+                    Index = i,
+                    DisplayName = string.IsNullOrEmpty(name) ? $"Camera {i + 1}" : name,
+                    SerialNumber = serial,
+                    IsConnected = connected
+                });
+            }
+
+            // Re-attach collection changed handler for reorder detection
+            _cameras.CollectionChanged -= OnCamerasCollectionChanged;
+            _cameras.CollectionChanged += OnCamerasCollectionChanged;
+        }
+        else
+        {
+            // Just update connection status and names (in case of reorder)
+            for (int i = 0; i < _cameras.Count; i++)
+            {
+                string name = CaptureService.GetCameraName(i);
+                bool connected = CaptureService.IsCameraConnected(i);
+                if (_cameras[i].IsConnected != connected || _cameras[i].DisplayName != name)
+                {
+                    _cameras[i] = new CameraItem
+                    {
+                        Index = i,
+                        DisplayName = string.IsNullOrEmpty(name) ? $"Camera {i + 1}" : name,
+                        SerialNumber = _cameras[i].SerialNumber,
+                        IsConnected = connected
+                    };
+                }
+            }
+        }
+    }
+
+    private void OnCamerasCollectionChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
+    {
+        // Handle reorder - when an item is moved, update the backend
+        if (e.Action == System.Collections.Specialized.NotifyCollectionChangedAction.Move &&
+            e.OldStartingIndex >= 0 && e.NewStartingIndex >= 0)
+        {
+            Debug.WriteLine($"[ConnectPage] Camera reordered: {e.OldStartingIndex} -> {e.NewStartingIndex}");
+            CaptureService.SetCameraOrder(e.OldStartingIndex, e.NewStartingIndex);
+        }
     }
 
     private void UpdateCameraStatus()
@@ -131,12 +210,41 @@ public sealed partial class ConnectPage : Page
 
     private async void DiscoverButton_Click(object sender, RoutedEventArgs e)
     {
-        await CaptureService.DiscoverCamerasAsync();
+        try
+        {
+            Debug.WriteLine("[ConnectPage] Starting camera discovery...");
+            _cameras.Clear();
+            await CaptureService.DiscoverCamerasAsync();
+            Debug.WriteLine($"[ConnectPage] Discovery complete. Found {CaptureService.DiscoveredCameraCount} cameras.");
+
+            // Apply saved camera order after discovery
+            if (CaptureService.DiscoveredCameraCount > 0)
+            {
+                Debug.WriteLine("[ConnectPage] Applying saved camera order...");
+                CaptureService.ApplySavedCameraOrder();
+                // Force refresh the camera list to show new order
+                _cameras.Clear();
+                UpdateCameraList();
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[ConnectPage] Discovery error: {ex.Message}\n{ex.StackTrace}");
+        }
     }
 
     private async void ConnectCamerasButton_Click(object sender, RoutedEventArgs e)
     {
-        await CaptureService.ConnectAllCamerasAsync();
+        try
+        {
+            Debug.WriteLine("[ConnectPage] Connecting to cameras...");
+            await CaptureService.ConnectAllCamerasAsync();
+            Debug.WriteLine($"[ConnectPage] Connection complete. Connected: {CaptureService.ConnectedCameraCount}");
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[ConnectPage] Connection error: {ex.Message}\n{ex.StackTrace}");
+        }
     }
 
     private void ScanButton_Click(object sender, RoutedEventArgs e)

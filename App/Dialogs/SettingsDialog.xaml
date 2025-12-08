@@ -18,9 +18,9 @@
 
             <StackPanel>
                 <TextBlock Text="Exposure Time (μs)" Margin="0,0,0,4"/>
-                <Slider x:Name="ExposureSlider" Minimum="100" Maximum="80000" Value="40000"
-                        StepFrequency="100" TickFrequency="10000" TickPlacement="Outside"/>
-                <TextBlock x:Name="ExposureValueText" Text="40000 μs" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                <NumberBox x:Name="ExposureBox" Value="40000" Minimum="100" Maximum="200000"
+                           SpinButtonPlacementMode="Inline" SmallChange="100" LargeChange="1000"/>
+                <TextBlock Text="Range: 100 - 200,000 μs" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
             </StackPanel>
 
             <StackPanel>

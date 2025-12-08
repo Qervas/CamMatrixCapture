@@ -68,7 +68,16 @@ public static class CaptureService
     private static extern void CamMatrix_GetCameraName(int index, StringBuilder nameOut, int maxLen);
 
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    private static extern void CamMatrix_GetCameraSerial(int index, StringBuilder serialOut, int maxLen);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
     private static extern int CamMatrix_IsCameraConnected(int index);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    private static extern void CamMatrix_SetCameraOrder(int fromIndex, int toIndex);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    private static extern void CamMatrix_ApplySavedCameraOrder();
 
     #endregion
 
@@ -257,7 +266,18 @@ public static class CaptureService
         return sb.ToString();
     }
 
+    public static string GetCameraSerial(int index)
+    {
+        var sb = new StringBuilder(256);
+        CamMatrix_GetCameraSerial(index, sb, sb.Capacity);
+        return sb.ToString();
+    }
+
     public static bool IsCameraConnected(int index) => CamMatrix_IsCameraConnected(index) != 0;
+
+    public static void SetCameraOrder(int fromIndex, int toIndex) => CamMatrix_SetCameraOrder(fromIndex, toIndex);
+
+    public static void ApplySavedCameraOrder() => CamMatrix_ApplySavedCameraOrder();
 
     #endregion
 

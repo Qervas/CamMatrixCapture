@@ -17,19 +17,41 @@
                 BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                 BorderThickness="1" Padding="24">
             <StackPanel>
-                <StackPanel Orientation="Horizontal" Margin="0,0,0,24">
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
                     <FontIcon Glyph="&#xE722;" FontSize="32" Foreground="{StaticResource AccentBrush}"/>
                     <TextBlock Text="Cameras" FontSize="24" FontWeight="SemiBold" Margin="16,0,0,0" VerticalAlignment="Center"/>
                 </StackPanel>
 
                 <!-- Status -->
-                <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
                     <Ellipse x:Name="CameraStatusDot" Width="12" Height="12" Fill="Gray"/>
                     <TextBlock x:Name="CameraStatusText" Text="Not connected" Margin="8,0,0,0" VerticalAlignment="Center"/>
                 </StackPanel>
 
                 <!-- Camera count -->
-                <TextBlock x:Name="CameraCountText" Text="0 / 12 cameras" FontSize="32" FontWeight="Bold" Margin="0,0,0,24"/>
+                <TextBlock x:Name="CameraCountText" Text="0 / 12 cameras" FontSize="28" FontWeight="Bold" Margin="0,0,0,8"/>
+
+                <!-- Camera list -->
+                <ListView x:Name="CameraListView" MaxHeight="180" Margin="0,0,0,8"
+                          Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                          CornerRadius="4"
+                          CanReorderItems="True" AllowDrop="True"
+                          ReorderMode="Enabled">
+                    <ListView.ItemTemplate>
+                        <DataTemplate>
+                            <Grid Padding="4,2">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <Ellipse Grid.Column="0" Width="8" Height="8" Fill="{Binding StatusColor}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                <TextBlock Grid.Column="1" Text="{Binding DisplayName}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                                <TextBlock Grid.Column="2" Text="{Binding SerialNumber}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" FontSize="12" Margin="8,0,0,0"/>
+                            </Grid>
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                </ListView>
 
                 <!-- Discover button -->
                 <Button x:Name="DiscoverButton" Content="Discover Cameras" HorizontalAlignment="Stretch" Height="40" Click="DiscoverButton_Click"/>
