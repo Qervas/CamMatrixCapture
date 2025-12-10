@@ -22,6 +22,7 @@ public sealed partial class CapturePage : Page
     private bool _isManualMode = false;
     private int _totalPositions = 36;
     private float _angleStep = 10f;
+    private float _turntableSpeed = 40f;
     private string _sessionName = "";
     private string _sessionPath = "";
     private int _captureCount = 0;
@@ -49,6 +50,7 @@ public sealed partial class CapturePage : Page
         // Get settings from SetupPage
         _totalPositions = SetupPage.CurrentTotalPositions;
         _angleStep = SetupPage.CurrentAngleStep;
+        _turntableSpeed = SetupPage.CurrentTurntableSpeed;
         _isManualMode = SetupPage.CurrentIsManualMode;
 
         // Setup UI based on mode
@@ -270,7 +272,7 @@ public sealed partial class CapturePage : Page
             TotalCaptureTimeText.Text = "0.0s";
             TotalRotateTimeText.Text = "0.0s";
 
-            CaptureService.StartCapture(_sessionName, _totalPositions, _angleStep);
+            CaptureService.StartCapture(_sessionName, _totalPositions, _angleStep, _turntableSpeed);
         }
     }
 

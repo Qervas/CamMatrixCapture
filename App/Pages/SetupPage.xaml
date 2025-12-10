@@ -102,6 +102,16 @@
                     </RadioButton>
                 </Grid>
 
+                <!-- Turntable Speed -->
+                <StackPanel Margin="0,24,0,0">
+                    <TextBlock Text="Turntable Speed" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,12"/>
+                    <ComboBox x:Name="TurntableSpeedComboBox" SelectedIndex="0" SelectionChanged="TurntableSpeed_Changed" MinWidth="200">
+                        <ComboBoxItem Content="Fast - ~40s per full rotation" Tag="40"/>
+                        <ComboBoxItem Content="Medium - ~70s per full rotation" Tag="70"/>
+                        <ComboBoxItem Content="Slow - ~100s per full rotation (stable)" Tag="100"/>
+                    </ComboBox>
+                </StackPanel>
+
                 <!-- Custom settings (visible when Custom selected) -->
                 <StackPanel x:Name="CustomSettingsPanel" Visibility="Collapsed" Margin="0,24,0,0">
                     <TextBlock Text="Custom Settings" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,12"/>

@@ -137,6 +137,25 @@ CAPTURE_API void CamMatrix_SetCaptureFormatRaw(int useRaw);
 CAPTURE_API void CamMatrix_GetOutputPath(char* pathOut, int maxLen);
 CAPTURE_API void CamMatrix_SetOutputPath(const char* path);
 
+// Capture setup settings (persisted)
+CAPTURE_API int   CamMatrix_GetCaptureTotalPositions();
+CAPTURE_API void  CamMatrix_SetCaptureTotalPositions(int positions);
+
+CAPTURE_API float CamMatrix_GetCaptureAngleStep();
+CAPTURE_API void  CamMatrix_SetCaptureAngleStep(float angle);
+
+CAPTURE_API float CamMatrix_GetCaptureTotalRotation();
+CAPTURE_API void  CamMatrix_SetCaptureTotalRotation(float rotation);
+
+CAPTURE_API float CamMatrix_GetCaptureTurntableSpeed();
+CAPTURE_API void  CamMatrix_SetCaptureTurntableSpeed(float speed);
+
+CAPTURE_API int   CamMatrix_GetCaptureManualMode();
+CAPTURE_API void  CamMatrix_SetCaptureManualMode(int isManual);
+
+CAPTURE_API int   CamMatrix_GetCapturePreset();
+CAPTURE_API void  CamMatrix_SetCapturePreset(int preset);
+
 // ============================================================================
 // Callbacks
 // ============================================================================

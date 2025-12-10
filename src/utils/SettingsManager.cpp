@@ -317,6 +317,15 @@ SimpleJSON AppSettings::ToJson() const {
     json.set("last_bluetooth_device_id", last_bluetooth_device_id);
     json.set("last_bluetooth_device_name", last_bluetooth_device_name);
     json.set("auto_connect_enabled", auto_connect_enabled);
+
+    // Capture settings
+    json.set("capture_total_positions", capture_total_positions);
+    json.set("capture_angle_step", capture_angle_step);
+    json.set("capture_total_rotation", capture_total_rotation);
+    json.set("capture_turntable_speed", capture_turntable_speed);
+    json.set("capture_manual_mode", capture_manual_mode);
+    json.set("capture_preset", capture_preset);
+
     return json;
 }
 
@@ -329,16 +338,24 @@ void AppSettings::FromJson(const SimpleJSON& json) {
     window_x = json.getInt("window_x", window_x);
     window_y = json.getInt("window_y", window_y);
     vsync = json.getBool("vsync", vsync);
-    
+
     // Load connection info
     last_bluetooth_device_id = json.get("last_bluetooth_device_id", last_bluetooth_device_id);
     last_bluetooth_device_name = json.get("last_bluetooth_device_name", last_bluetooth_device_name);
     auto_connect_enabled = json.getBool("auto_connect_enabled", auto_connect_enabled);
-    
+
     // Load and validate UI scale
     float loaded_scale = json.getFloat("ui_scale", ui_scale);
     // Clamp to valid range
     ui_scale = std::min(std::max(loaded_scale, 0.5f), 8.0f);
+
+    // Capture settings
+    capture_total_positions = json.getInt("capture_total_positions", capture_total_positions);
+    capture_angle_step = json.getFloat("capture_angle_step", capture_angle_step);
+    capture_total_rotation = json.getFloat("capture_total_rotation", capture_total_rotation);
+    capture_turntable_speed = json.getFloat("capture_turntable_speed", capture_turntable_speed);
+    capture_manual_mode = json.getBool("capture_manual_mode", capture_manual_mode);
+    capture_preset = json.getInt("capture_preset", capture_preset);
 }
 
 void AppSettings::Reset() {

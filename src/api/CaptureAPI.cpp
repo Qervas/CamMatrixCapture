@@ -852,6 +852,76 @@ CAPTURE_API void CamMatrix_SetOutputPath(const char* path) {
 }
 
 // ============================================================================
+// Capture Setup Settings (persisted)
+// ============================================================================
+
+CAPTURE_API int CamMatrix_GetCaptureTotalPositions() {
+    if (!g_settingsManager) return 36;
+    return g_settingsManager->GetAppSettings().capture_total_positions;
+}
+
+CAPTURE_API void CamMatrix_SetCaptureTotalPositions(int positions) {
+    if (g_settingsManager) {
+        g_settingsManager->GetAppSettings().capture_total_positions = positions;
+    }
+}
+
+CAPTURE_API float CamMatrix_GetCaptureAngleStep() {
+    if (!g_settingsManager) return 10.0f;
+    return g_settingsManager->GetAppSettings().capture_angle_step;
+}
+
+CAPTURE_API void CamMatrix_SetCaptureAngleStep(float angle) {
+    if (g_settingsManager) {
+        g_settingsManager->GetAppSettings().capture_angle_step = angle;
+    }
+}
+
+CAPTURE_API float CamMatrix_GetCaptureTotalRotation() {
+    if (!g_settingsManager) return 360.0f;
+    return g_settingsManager->GetAppSettings().capture_total_rotation;
+}
+
+CAPTURE_API void CamMatrix_SetCaptureTotalRotation(float rotation) {
+    if (g_settingsManager) {
+        g_settingsManager->GetAppSettings().capture_total_rotation = rotation;
+    }
+}
+
+CAPTURE_API float CamMatrix_GetCaptureTurntableSpeed() {
+    if (!g_settingsManager) return 40.0f;
+    return g_settingsManager->GetAppSettings().capture_turntable_speed;
+}
+
+CAPTURE_API void CamMatrix_SetCaptureTurntableSpeed(float speed) {
+    if (g_settingsManager) {
+        g_settingsManager->GetAppSettings().capture_turntable_speed = speed;
+    }
+}
+
+CAPTURE_API int CamMatrix_GetCaptureManualMode() {
+    if (!g_settingsManager) return 0;
+    return g_settingsManager->GetAppSettings().capture_manual_mode ? 1 : 0;
+}
+
+CAPTURE_API void CamMatrix_SetCaptureManualMode(int isManual) {
+    if (g_settingsManager) {
+        g_settingsManager->GetAppSettings().capture_manual_mode = (isManual != 0);
+    }
+}
+
+CAPTURE_API int CamMatrix_GetCapturePreset() {
+    if (!g_settingsManager) return 0;
+    return g_settingsManager->GetAppSettings().capture_preset;
+}
+
+CAPTURE_API void CamMatrix_SetCapturePreset(int preset) {
+    if (g_settingsManager) {
+        g_settingsManager->GetAppSettings().capture_preset = preset;
+    }
+}
+
+// ============================================================================
 // Callbacks
 // ============================================================================
 
