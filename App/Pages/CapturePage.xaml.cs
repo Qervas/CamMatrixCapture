@@ -4,16 +4,25 @@ using Microsoft.UI.Xaml.Navigation;
 using CameraMatrixCapture.Services;
 using System;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 
 namespace CameraMatrixCapture.Pages;
 
 public sealed partial class CapturePage : Page
 {
+    // P/Invoke for system sound notification
+    [DllImport("winmm.dll", SetLastError = true)]
+    private static extern bool PlaySound(string pszSound, IntPtr hmod, uint fdwSound);
+
+    private const uint SND_ALIAS = 0x00010000;
+    private const uint SND_ASYNC = 0x0001;
+
     private readonly DispatcherTimer _refreshTimer;
     private bool _isCapturing = false;
     private bool _isManualMode = false;
     private int _totalPositions = 36;
     private float _angleStep = 10f;
+    private float _turntableSpeed = 40f;
     private string _sessionName = "";
     private string _sessionPath = "";
     private int _captureCount = 0;
@@ -41,7 +50,7 @@ public sealed partial class CapturePage : Page
         // Get settings from SetupPage
         _totalPositions = SetupPage.CurrentTotalPositions;
         _angleStep = SetupPage.CurrentAngleStep;
-        _sessionName = SetupPage.CurrentSessionName;
+        _turntableSpeed = SetupPage.CurrentTurntableSpeed;
         _isManualMode = SetupPage.CurrentIsManualMode;
 
         // Setup UI based on mode
@@ -66,6 +75,22 @@ public sealed partial class CapturePage : Page
         _sessionStarted = false;
         SessionCompletePanel.Visibility = Visibility.Collapsed;
         UpdateStats();
+
+        // Initialize camera selection
+        PopulateCameraCheckboxes();
+
+        // Show output folder path from settings
+        string outputPath = SetupPage.CurrentOutputPath;
+        if (!string.IsNullOrEmpty(outputPath))
+        {
+            SessionPathText.Text = $"Output: {outputPath}";
+            OpenFolderButton.IsEnabled = true;
+        }
+        else
+        {
+            SessionPathText.Text = "Output folder not set";
+            OpenFolderButton.IsEnabled = false;
+        }
     }
 
     private void RefreshStatus(object? sender, object e)
@@ -108,6 +133,12 @@ public sealed partial class CapturePage : Page
                 SessionPathText.Text = path;
                 OpenFolderButton.IsEnabled = true;
             }
+        }
+
+        // Update current angle display in manual mode
+        if (_isManualMode)
+        {
+            UpdateCurrentAngleDisplay();
         }
     }
 
@@ -164,6 +195,14 @@ public sealed partial class CapturePage : Page
             _isCapturing = false;
             UpdateButtonState();
 
+            // Play notification sound
+            try
+            {
+                // Play system notification sound (SystemAsterisk for success, SystemHand for error)
+                PlaySound(success ? "SystemAsterisk" : "SystemHand", IntPtr.Zero, SND_ALIAS | SND_ASYNC);
+            }
+            catch { /* Ignore sound errors */ }
+
             // Update final timing
             int totalCaptureMs = CaptureService.TotalCaptureTimeMs;
             int totalRotateMs = CaptureService.TotalRotateTimeMs;
@@ -188,6 +227,7 @@ public sealed partial class CapturePage : Page
                     // In automated mode, show completion panel with options
                     ProgressText.Text = "Capture complete!";
                     SessionCompletePanel.Visibility = Visibility.Visible;
+                    SessionNameTextBox.IsEnabled = false;  // Keep visible but disabled
                     CaptureButton.IsEnabled = false;
 
                     int totalImages = _totalPositions * CaptureService.ConnectedCameraCount;
@@ -219,9 +259,13 @@ public sealed partial class CapturePage : Page
             UpdateButtonState();
             ProgressText.Text = "Capture stopped";
             TimingPanel.Visibility = Visibility.Collapsed;
+            SessionNameTextBox.IsEnabled = true;  // Re-enable editing
         }
         else
         {
+            // Get session name from textbox
+            _sessionName = SessionNameTextBox.Text?.Trim() ?? "";
+
             // Start automated capture
             _isCapturing = true;
             _sessionStarted = true;
@@ -229,6 +273,7 @@ public sealed partial class CapturePage : Page
             ProgressText.Text = "Starting capture...";
             SessionCompletePanel.Visibility = Visibility.Collapsed;
             TimingPanel.Visibility = Visibility.Visible;
+            SessionNameTextBox.IsEnabled = false;  // Keep visible but disable editing
 
             // Reset timing display
             StateText.Text = "Starting...";
@@ -236,7 +281,7 @@ public sealed partial class CapturePage : Page
             TotalCaptureTimeText.Text = "0.0s";
             TotalRotateTimeText.Text = "0.0s";
 
-            CaptureService.StartCapture(_sessionName, _totalPositions, _angleStep);
+            CaptureService.StartCapture(_sessionName, _totalPositions, _angleStep, _turntableSpeed);
         }
     }
 
@@ -279,14 +324,29 @@ public sealed partial class CapturePage : Page
 
     private void ContinueCaptureButton_Click(object sender, RoutedEventArgs e)
     {
-        // Allow user to continue capturing in the same session
+        // Prepare for a new capture session
         SessionCompletePanel.Visibility = Visibility.Collapsed;
         CaptureButton.IsEnabled = true;
+        SessionNameTextBox.IsEnabled = true;  // Re-enable editing
 
-        // Reset for another round but keep session
+        // Clear session name for new input
+        SessionNameTextBox.Text = "";
+
+        // Reset for another round
         CaptureProgressBar.Value = 0;
         ProgressDetailText.Text = $"0 / {_totalPositions} positions";
-        ProgressText.Text = "Ready to continue";
+        ProgressText.Text = "Enter session name and click Start";
+        TimingPanel.Visibility = Visibility.Collapsed;
+
+        // Reset session state
+        _sessionStarted = false;
+        _sessionPath = "";
+
+        // Show output folder path
+        string outputPath = SetupPage.CurrentOutputPath;
+        SessionPathText.Text = !string.IsNullOrEmpty(outputPath)
+            ? $"Output: {outputPath}"
+            : "Output folder not set";
     }
 
     private void NewSessionButton_Click(object sender, RoutedEventArgs e)
@@ -356,4 +416,226 @@ public sealed partial class CapturePage : Page
         CaptureCountText.Text = _captureCount.ToString();
         ImagesText.Text = _totalImages.ToString();
     }
+
+    private void SessionNameTextBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        // Optional: Update UI based on session name input
+        // For now, just store the value
+        _sessionName = SessionNameTextBox.Text?.Trim() ?? "";
+    }
+
+    private void ManualSessionNameTextBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        _sessionName = ManualSessionNameTextBox.Text?.Trim() ?? "";
+    }
+
+    #region Turntable Controls
+
+    private float GetSelectedRotationStep()
+    {
+        if (RotationStepComboBox.SelectedItem is ComboBoxItem item &&
+            float.TryParse(item.Tag?.ToString(), out float step))
+        {
+            return step;
+        }
+        return 10f; // Default 10°
+    }
+
+    private void RotateLeftButton_Click(object sender, RoutedEventArgs e)
+    {
+        float step = GetSelectedRotationStep();
+        SetTurntableButtonsEnabled(false);
+        ManualStatusText.Text = $"Rotating -{step}°...";
+
+        // Rotate counter-clockwise (negative angle)
+        bool success = CaptureService.RotateTurntable(-step);
+
+        if (!success)
+        {
+            ManualStatusText.Text = "Rotation failed - check turntable connection";
+            SetTurntableButtonsEnabled(true);
+            return;
+        }
+
+        // Re-enable after delay (estimate based on rotation)
+        _ = ReenableTurntableButtonsAfterDelay((int)(step * 100)); // ~100ms per degree
+    }
+
+    private void RotateRightButton_Click(object sender, RoutedEventArgs e)
+    {
+        float step = GetSelectedRotationStep();
+        SetTurntableButtonsEnabled(false);
+        ManualStatusText.Text = $"Rotating +{step}°...";
+
+        // Rotate clockwise (positive angle)
+        bool success = CaptureService.RotateTurntable(step);
+
+        if (!success)
+        {
+            ManualStatusText.Text = "Rotation failed - check turntable connection";
+            SetTurntableButtonsEnabled(true);
+            return;
+        }
+
+        // Re-enable after delay
+        _ = ReenableTurntableButtonsAfterDelay((int)(step * 100));
+    }
+
+    private void ReturnToZeroButton_Click(object sender, RoutedEventArgs e)
+    {
+        SetTurntableButtonsEnabled(false);
+        ManualStatusText.Text = "Returning to zero...";
+
+        bool success = CaptureService.ReturnToZero();
+
+        if (!success)
+        {
+            ManualStatusText.Text = "Return to zero failed - check turntable connection";
+            SetTurntableButtonsEnabled(true);
+            return;
+        }
+
+        // Re-enable after delay (allow time for full rotation back)
+        _ = ReenableTurntableButtonsAfterDelay(5000);
+    }
+
+    private void SetTurntableButtonsEnabled(bool enabled)
+    {
+        RotateLeftButton.IsEnabled = enabled;
+        RotateRightButton.IsEnabled = enabled;
+        ReturnToZeroButton.IsEnabled = enabled;
+    }
+
+    private async System.Threading.Tasks.Task ReenableTurntableButtonsAfterDelay(int delayMs)
+    {
+        await System.Threading.Tasks.Task.Delay(delayMs);
+
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            SetTurntableButtonsEnabled(true);
+            ManualStatusText.Text = "Ready - Click to capture";
+            UpdateCurrentAngleDisplay();
+        });
+    }
+
+    private void UpdateCurrentAngleDisplay()
+    {
+        float angle = CaptureService.CurrentAngle;
+        if (angle >= 0)
+        {
+            CurrentAngleText.Text = $"Current: {angle:F1}°";
+        }
+    }
+
+    #endregion
+
+    #region Camera Selection
+
+    private void PopulateCameraCheckboxes()
+    {
+        CameraCheckboxGrid.Children.Clear();
+        CameraCheckboxGrid.RowDefinitions.Clear();
+
+        int cameraCount = CaptureService.ConnectedCameraCount;
+
+        if (cameraCount == 0)
+        {
+            CameraSelectionText.Text = " (no cameras)";
+            return;
+        }
+
+        // Calculate rows needed (3 columns)
+        int columns = 3;
+        int rows = (cameraCount + columns - 1) / columns;
+
+        // Add row definitions
+        for (int r = 0; r < rows; r++)
+        {
+            CameraCheckboxGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        }
+
+        for (int i = 0; i < cameraCount; i++)
+        {
+            string cameraName = CaptureService.GetCameraName(i);
+            if (string.IsNullOrEmpty(cameraName))
+                cameraName = $"Cam {i + 1}";
+
+            var checkBox = new CheckBox
+            {
+                Content = cameraName,
+                Tag = i,
+                IsChecked = CaptureService.IsCameraEnabled(i),
+                FontSize = 11,
+                MinWidth = 0,
+                Padding = new Thickness(2, 1, 2, 1),
+                Margin = new Thickness(0, 2, 4, 2)
+            };
+
+            checkBox.Checked += CameraCheckbox_Changed;
+            checkBox.Unchecked += CameraCheckbox_Changed;
+
+            // Calculate row and column
+            int row = i / columns;
+            int col = i % columns;
+
+            Grid.SetRow(checkBox, row);
+            Grid.SetColumn(checkBox, col);
+
+            CameraCheckboxGrid.Children.Add(checkBox);
+        }
+
+        UpdateCameraSelectionText();
+    }
+
+    private void CameraCheckbox_Changed(object sender, RoutedEventArgs e)
+    {
+        if (sender is CheckBox checkBox && checkBox.Tag is int index)
+        {
+            CaptureService.SetCameraEnabled(index, checkBox.IsChecked == true);
+            UpdateCameraSelectionText();
+        }
+    }
+
+    private void SelectAllCamerasButton_Click(object sender, RoutedEventArgs e)
+    {
+        CaptureService.EnableAllCameras();
+
+        foreach (var child in CameraCheckboxGrid.Children)
+        {
+            if (child is CheckBox checkBox)
+            {
+                checkBox.IsChecked = true;
+            }
+        }
+
+        UpdateCameraSelectionText();
+    }
+
+    private void SelectNoneCamerasButton_Click(object sender, RoutedEventArgs e)
+    {
+        int cameraCount = CaptureService.ConnectedCameraCount;
+        for (int i = 0; i < cameraCount; i++)
+        {
+            CaptureService.SetCameraEnabled(i, false);
+        }
+
+        foreach (var child in CameraCheckboxGrid.Children)
+        {
+            if (child is CheckBox checkBox)
+            {
+                checkBox.IsChecked = false;
+            }
+        }
+
+        UpdateCameraSelectionText();
+    }
+
+    private void UpdateCameraSelectionText()
+    {
+        int total = CaptureService.ConnectedCameraCount;
+        int enabled = CaptureService.EnabledCameraCount;
+        CameraSelectionText.Text = $" ({enabled}/{total})";
+    }
+
+    #endregion
 }

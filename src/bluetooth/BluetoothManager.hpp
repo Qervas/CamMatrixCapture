@@ -68,7 +68,7 @@ public:
     
     // Turntable-specific commands
     bool RotateTurntable(const std::string& deviceId, float angle);
-    bool RotateTurntableAndWait(const std::string& deviceId, float angle, int timeout_ms = 30000);  // Waits for rotation to complete
+    bool RotateTurntableAndWait(const std::string& deviceId, float angle, float turntableSpeed = 40.0f, int timeout_ms = 30000);  // Waits for rotation to complete using calculated timing
     bool SetRotationSpeed(const std::string& deviceId, float speed);
     bool StopRotation(const std::string& deviceId);
     bool TiltTurntable(const std::string& deviceId, float angle);

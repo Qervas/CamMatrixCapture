@@ -58,11 +58,17 @@ CAPTURE_API int  CamMatrix_IsCameraConnected(int index);
 CAPTURE_API void CamMatrix_SetCameraOrder(int fromIndex, int toIndex);
 CAPTURE_API void CamMatrix_ApplySavedCameraOrder();
 
+// Camera enable/disable for selective capture
+CAPTURE_API void CamMatrix_SetCameraEnabled(int index, int enabled);
+CAPTURE_API int  CamMatrix_IsCameraEnabled(int index);
+CAPTURE_API void CamMatrix_EnableAllCameras();
+CAPTURE_API int  CamMatrix_GetEnabledCameraCount();
+
 // ============================================================================
 // Capture Operations
 // ============================================================================
 
-CAPTURE_API void CamMatrix_StartCapture(const char* sessionName, int totalPositions, float angleStep);
+CAPTURE_API void CamMatrix_StartCapture(const char* sessionName, int totalPositions, float angleStep, float turntableSpeed);
 CAPTURE_API void CamMatrix_StopCapture();
 CAPTURE_API void CamMatrix_CreateSession(const char* sessionName);
 CAPTURE_API void CamMatrix_CaptureOnce();
@@ -136,6 +142,25 @@ CAPTURE_API void CamMatrix_SetCaptureFormatRaw(int useRaw);
 // Output settings
 CAPTURE_API void CamMatrix_GetOutputPath(char* pathOut, int maxLen);
 CAPTURE_API void CamMatrix_SetOutputPath(const char* path);
+
+// Capture setup settings (persisted)
+CAPTURE_API int   CamMatrix_GetCaptureTotalPositions();
+CAPTURE_API void  CamMatrix_SetCaptureTotalPositions(int positions);
+
+CAPTURE_API float CamMatrix_GetCaptureAngleStep();
+CAPTURE_API void  CamMatrix_SetCaptureAngleStep(float angle);
+
+CAPTURE_API float CamMatrix_GetCaptureTotalRotation();
+CAPTURE_API void  CamMatrix_SetCaptureTotalRotation(float rotation);
+
+CAPTURE_API float CamMatrix_GetCaptureTurntableSpeed();
+CAPTURE_API void  CamMatrix_SetCaptureTurntableSpeed(float speed);
+
+CAPTURE_API int   CamMatrix_GetCaptureManualMode();
+CAPTURE_API void  CamMatrix_SetCaptureManualMode(int isManual);
+
+CAPTURE_API int   CamMatrix_GetCapturePreset();
+CAPTURE_API void  CamMatrix_SetCapturePreset(int preset);
 
 // ============================================================================
 // Callbacks

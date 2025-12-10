@@ -17,6 +17,7 @@
 #include <atomic>
 #include <thread>
 #include <vector>
+#include <set>
 #include <filesystem>
 
 // Windows API for getting module path
@@ -316,11 +317,28 @@ CAPTURE_API void CamMatrix_ApplySavedCameraOrder() {
     ApplySavedCameraOrder();
 }
 
+// Camera enable/disable for selective capture
+CAPTURE_API void CamMatrix_SetCameraEnabled(int index, int enabled) {
+    CameraManager::GetInstance().SetCameraEnabled(index, enabled != 0);
+}
+
+CAPTURE_API int CamMatrix_IsCameraEnabled(int index) {
+    return CameraManager::GetInstance().IsCameraEnabled(index) ? 1 : 0;
+}
+
+CAPTURE_API void CamMatrix_EnableAllCameras() {
+    CameraManager::GetInstance().EnableAllCameras();
+}
+
+CAPTURE_API int CamMatrix_GetEnabledCameraCount() {
+    return CameraManager::GetInstance().GetEnabledCameraCount();
+}
+
 // ============================================================================
 // Capture Operations
 // ============================================================================
 
-CAPTURE_API void CamMatrix_StartCapture(const char* sessionName, int totalPositions, float angleStep) {
+CAPTURE_API void CamMatrix_StartCapture(const char* sessionName, int totalPositions, float angleStep, float turntableSpeed) {
     if (!g_sessionManager) return;
     if (g_isCapturing) return;  // Already capturing
 
@@ -328,7 +346,7 @@ CAPTURE_API void CamMatrix_StartCapture(const char* sessionName, int totalPositi
     g_captureProgress = 0;
     g_isCapturing = true;
 
-    SafeLog("StartCapture: positions=" + std::to_string(totalPositions) + " angleStep=" + std::to_string(angleStep));
+    SafeLog("StartCapture: positions=" + std::to_string(totalPositions) + " angleStep=" + std::to_string(angleStep) + " speed=" + std::to_string(turntableSpeed));
 
     // Ensure session manager uses the current output path from settings
     if (g_settingsManager) {
@@ -361,11 +379,18 @@ CAPTURE_API void CamMatrix_StartCapture(const char* sessionName, int totalPositi
     g_stateMachine.SetLogCallback([](const std::string& msg) { SafeLog(msg); });
 
     // Start capture thread with turntable rotation
-    std::thread captureThread([params, angleStep]() {
+    std::thread captureThread([params, angleStep, turntableSpeed]() {
         auto& camMgr = CameraManager::GetInstance();
         auto& btMgr = BluetoothManager::GetInstance();
 
         SafeLog("Capture thread started, totalPositions=" + std::to_string(g_totalPositions.load()));
+
+        // Set turntable speed before starting capture
+        if (!g_connectedTurntableId.empty()) {
+            SafeLog("[TURNTABLE] Setting rotation speed to " + std::to_string(turntableSpeed));
+            btMgr.SetRotationSpeed(g_connectedTurntableId, turntableSpeed);
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));  // Brief delay for speed command
+        }
 
         for (int pos = 0; pos < g_totalPositions.load(); ++pos) {
             // Check stop flag
@@ -378,12 +403,11 @@ CAPTURE_API void CamMatrix_StartCapture(const char* sessionName, int totalPositi
             g_stateMachine.SetCurrentPosition(pos + 1);
             SafeLog("=== Position " + std::to_string(pos + 1) + "/" + std::to_string(g_totalPositions.load()) + " ===");
 
-            // Create position folder (use backslash for Windows)
+            // Create position folder
             std::string posPath = g_lastSessionPath + "\\pos_" + std::to_string(pos + 1);
             std::filesystem::create_directories(posPath);
 
             // ==================== CAPTURE PHASE ====================
-            // Transition: Idle/Settling -> Capturing
             if (!g_stateMachine.ProcessEvent(CaptureEvent::StartCapture)) {
                 SafeLog("[ERROR] Invalid state transition to Capturing!");
                 g_stateMachine.ProcessEvent(CaptureEvent::Reset);
@@ -400,11 +424,7 @@ CAPTURE_API void CamMatrix_StartCapture(const char* sessionName, int totalPositi
             int captureMs = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(captureEnd - g_capturePhaseStart).count());
             g_stateMachine.RecordCaptureTime(captureMs);
 
-            if (captureSuccess) {
-                SafeLog("[CAPTURE] Complete (" + std::to_string(captureMs) + "ms)");
-            } else {
-                SafeLog("[CAPTURE] Warning: Capture had errors (" + std::to_string(captureMs) + "ms)");
-            }
+            SafeLog("[CAPTURE] " + std::string(captureSuccess ? "Complete" : "Warning: errors") + " (" + std::to_string(captureMs) + "ms)");
 
             g_captureProgress = pos + 1;
             if (g_progressCallback) {
@@ -415,49 +435,48 @@ CAPTURE_API void CamMatrix_StartCapture(const char* sessionName, int totalPositi
             bool needsRotation = (pos < g_totalPositions.load() - 1 && !g_connectedTurntableId.empty());
 
             if (needsRotation) {
-                // Direct transition: Capturing -> Rotating (skip Idle to avoid UI flicker)
+                // Direct transition: Capturing -> Rotating
                 g_stateMachine.ProcessEvent(CaptureEvent::StartRotation);
 
                 g_rotatePhaseStart = std::chrono::steady_clock::now();
                 g_stateMachine.StartPhaseTimer();
 
-                SafeLog("[ROTATE] Rotating " + std::to_string(angleStep) + "° for next position...");
+                SafeLog("[ROTATE] Rotating " + std::to_string(angleStep) + "°...");
 
-                // Small delay before sending rotation command
-                std::this_thread::sleep_for(std::chrono::milliseconds(50));
-
-                bool rotateSuccess = btMgr.RotateTurntableAndWait(g_connectedTurntableId, angleStep, 30000);
+                // Simple delta rotation - just rotate by the step angle with calculated timing
+                bool rotateSuccess = btMgr.RotateTurntableAndWait(g_connectedTurntableId, angleStep, turntableSpeed, 30000);
 
                 // Record rotation time
                 auto rotateEnd = std::chrono::steady_clock::now();
                 int rotateMs = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(rotateEnd - g_rotatePhaseStart).count());
                 g_stateMachine.RecordRotationTime(rotateMs);
 
+                // Update displayed angle (for UI only)
+                g_currentAngle = g_currentAngle.load() + angleStep;
+                while (g_currentAngle >= 360.0f) g_currentAngle = g_currentAngle.load() - 360.0f;
+
+                SafeLog("[ROTATE] Complete (" + std::to_string(rotateMs) + "ms)");
+
                 if (rotateSuccess) {
-                    g_currentAngle = g_currentAngle.load() + angleStep;
-                    SafeLog("[ROTATE] Complete (" + std::to_string(rotateMs) + "ms), angle now: " + std::to_string(g_currentAngle.load()));
                     g_stateMachine.ProcessEvent(CaptureEvent::RotationComplete);
                 } else {
-                    SafeLog("[ROTATE] Warning: Rotation may not have completed properly (" + std::to_string(rotateMs) + "ms)");
+                    SafeLog("[ROTATE] Warning: Rotation may not have completed properly");
                     std::this_thread::sleep_for(std::chrono::milliseconds(2000));
-                    g_currentAngle = g_currentAngle.load() + angleStep;
-                    g_stateMachine.ProcessEvent(CaptureEvent::RotationFailed);  // Still transitions to Settling
+                    g_stateMachine.ProcessEvent(CaptureEvent::RotationFailed);
                 }
 
                 // ==================== SETTLING PHASE ====================
-                // State machine is now in Settling state
                 SafeLog("[SETTLE] Waiting 300ms for turntable to settle...");
                 std::this_thread::sleep_for(std::chrono::milliseconds(300));
 
-                // Transition: Settling -> Idle
                 g_stateMachine.ProcessEvent(CaptureEvent::SettlingComplete);
             } else {
-                // No rotation needed (last position) - transition Capturing -> Idle
+                // No rotation needed (last position)
                 g_stateMachine.ProcessEvent(CaptureEvent::CaptureComplete);
             }
 
             // Brief pause before next capture cycle
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
         }
 
         // Capture complete
@@ -847,6 +866,76 @@ CAPTURE_API void CamMatrix_SetOutputPath(const char* path) {
         if (g_sessionManager) {
             g_sessionManager->SetOutputPath(path);
         }
+    }
+}
+
+// ============================================================================
+// Capture Setup Settings (persisted)
+// ============================================================================
+
+CAPTURE_API int CamMatrix_GetCaptureTotalPositions() {
+    if (!g_settingsManager) return 36;
+    return g_settingsManager->GetAppSettings().capture_total_positions;
+}
+
+CAPTURE_API void CamMatrix_SetCaptureTotalPositions(int positions) {
+    if (g_settingsManager) {
+        g_settingsManager->GetAppSettings().capture_total_positions = positions;
+    }
+}
+
+CAPTURE_API float CamMatrix_GetCaptureAngleStep() {
+    if (!g_settingsManager) return 10.0f;
+    return g_settingsManager->GetAppSettings().capture_angle_step;
+}
+
+CAPTURE_API void CamMatrix_SetCaptureAngleStep(float angle) {
+    if (g_settingsManager) {
+        g_settingsManager->GetAppSettings().capture_angle_step = angle;
+    }
+}
+
+CAPTURE_API float CamMatrix_GetCaptureTotalRotation() {
+    if (!g_settingsManager) return 360.0f;
+    return g_settingsManager->GetAppSettings().capture_total_rotation;
+}
+
+CAPTURE_API void CamMatrix_SetCaptureTotalRotation(float rotation) {
+    if (g_settingsManager) {
+        g_settingsManager->GetAppSettings().capture_total_rotation = rotation;
+    }
+}
+
+CAPTURE_API float CamMatrix_GetCaptureTurntableSpeed() {
+    if (!g_settingsManager) return 40.0f;
+    return g_settingsManager->GetAppSettings().capture_turntable_speed;
+}
+
+CAPTURE_API void CamMatrix_SetCaptureTurntableSpeed(float speed) {
+    if (g_settingsManager) {
+        g_settingsManager->GetAppSettings().capture_turntable_speed = speed;
+    }
+}
+
+CAPTURE_API int CamMatrix_GetCaptureManualMode() {
+    if (!g_settingsManager) return 0;
+    return g_settingsManager->GetAppSettings().capture_manual_mode ? 1 : 0;
+}
+
+CAPTURE_API void CamMatrix_SetCaptureManualMode(int isManual) {
+    if (g_settingsManager) {
+        g_settingsManager->GetAppSettings().capture_manual_mode = (isManual != 0);
+    }
+}
+
+CAPTURE_API int CamMatrix_GetCapturePreset() {
+    if (!g_settingsManager) return 0;
+    return g_settingsManager->GetAppSettings().capture_preset;
+}
+
+CAPTURE_API void CamMatrix_SetCapturePreset(int preset) {
+    if (g_settingsManager) {
+        g_settingsManager->GetAppSettings().capture_preset = preset;
     }
 }
 

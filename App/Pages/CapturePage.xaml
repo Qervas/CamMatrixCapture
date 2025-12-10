@@ -27,6 +27,13 @@
 
                 <!-- Automated Mode UI -->
                 <StackPanel x:Name="AutomatedModePanel">
+                    <!-- Session Name Input -->
+                    <StackPanel x:Name="SessionNamePanel" Margin="0,0,0,20">
+                        <TextBlock Text="Session Name" FontSize="14" Margin="0,0,0,6"/>
+                        <TextBox x:Name="SessionNameTextBox" PlaceholderText="my_object_001" MaxLength="100"
+                                 HorizontalAlignment="Stretch" TextChanged="SessionNameTextBox_TextChanged"/>
+                    </StackPanel>
+
                     <!-- Big Start/Stop Button -->
                     <Button x:Name="CaptureButton"
                             HorizontalAlignment="Center"
@@ -61,6 +68,13 @@
 
                 <!-- Manual Mode UI -->
                 <StackPanel x:Name="ManualModePanel" Visibility="Collapsed">
+                    <!-- Session Name Input for Manual Mode -->
+                    <StackPanel Margin="0,0,0,20">
+                        <TextBlock Text="Session Name" FontSize="14" Margin="0,0,0,6"/>
+                        <TextBox x:Name="ManualSessionNameTextBox" PlaceholderText="my_object_001" MaxLength="100"
+                                 HorizontalAlignment="Stretch" TextChanged="ManualSessionNameTextBox_TextChanged"/>
+                    </StackPanel>
+
                     <!-- Big Capture Button -->
                     <Button x:Name="ManualCaptureButton"
                             HorizontalAlignment="Center"
@@ -77,6 +91,56 @@
                     <!-- Manual capture count -->
                     <TextBlock x:Name="ManualStatusText" Text="Ready - Click to capture" FontSize="16"
                                HorizontalAlignment="Center" Margin="0,20,0,0"/>
+
+                    <!-- Turntable Controls -->
+                    <Border CornerRadius="8" Padding="16" Margin="0,24,0,0"
+                            Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}">
+                        <StackPanel>
+                            <TextBlock Text="Turntable Control" FontSize="14" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,0,0,12"/>
+
+                            <!-- Rotation buttons -->
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Spacing="8">
+                                <Button x:Name="RotateLeftButton" Click="RotateLeftButton_Click" ToolTipService.ToolTip="Rotate counter-clockwise">
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <FontIcon Glyph="&#xE76B;" FontSize="16"/>
+                                        <TextBlock Text="CCW" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </Button>
+
+                                <Button x:Name="ReturnToZeroButton" Click="ReturnToZeroButton_Click" ToolTipService.ToolTip="Return to 0°">
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <FontIcon Glyph="&#xE72C;" FontSize="16"/>
+                                        <TextBlock Text="Zero" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </Button>
+
+                                <Button x:Name="RotateRightButton" Click="RotateRightButton_Click" ToolTipService.ToolTip="Rotate clockwise">
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <TextBlock Text="CW" VerticalAlignment="Center"/>
+                                        <FontIcon Glyph="&#xE76C;" FontSize="16"/>
+                                    </StackPanel>
+                                </Button>
+                            </StackPanel>
+
+                            <!-- Rotation angle selector -->
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,12,0,0" Spacing="8">
+                                <TextBlock Text="Step:" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                <ComboBox x:Name="RotationStepComboBox" SelectedIndex="1" MinWidth="80">
+                                    <ComboBoxItem Content="5°" Tag="5"/>
+                                    <ComboBoxItem Content="10°" Tag="10"/>
+                                    <ComboBoxItem Content="15°" Tag="15"/>
+                                    <ComboBoxItem Content="30°" Tag="30"/>
+                                    <ComboBoxItem Content="45°" Tag="45"/>
+                                    <ComboBoxItem Content="90°" Tag="90"/>
+                                </ComboBox>
+                            </StackPanel>
+
+                            <!-- Current angle display -->
+                            <TextBlock x:Name="CurrentAngleText" Text="Current: 0°" FontSize="12"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                       HorizontalAlignment="Center" Margin="0,8,0,0"/>
+                        </StackPanel>
+                    </Border>
                 </StackPanel>
 
                 <!-- Session Complete Panel (shown after automated capture completes) -->
@@ -96,10 +160,42 @@
                 </Border>
             </StackPanel>
 
-            <!-- Right Side Panel - Stats and Timing -->
-            <StackPanel Grid.Column="2" VerticalAlignment="Center" Margin="40,0,0,0" MinWidth="200">
-                <!-- Stats Panel -->
+            <!-- Right Side Panel - Stats, Cameras, and Timing -->
+            <StackPanel Grid.Column="2" VerticalAlignment="Center" Margin="40,0,0,0" MinWidth="220">
+                <!-- Camera Selection Panel -->
                 <Border CornerRadius="8" Padding="16"
+                        Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}">
+                    <StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                            <TextBlock Text="Cameras" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                            <TextBlock x:Name="CameraSelectionText" Text=" (0/0)" FontSize="12"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center"/>
+                        </StackPanel>
+
+                        <!-- Select All / None buttons -->
+                        <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,0,0,8">
+                            <Button x:Name="SelectAllCamerasButton" Content="All" Click="SelectAllCamerasButton_Click"
+                                    Padding="8,4" FontSize="12"/>
+                            <Button x:Name="SelectNoneCamerasButton" Content="None" Click="SelectNoneCamerasButton_Click"
+                                    Padding="8,4" FontSize="12"/>
+                        </StackPanel>
+
+                        <!-- Camera list with checkboxes (grid layout) -->
+                        <ScrollViewer MaxHeight="150" VerticalScrollBarVisibility="Auto">
+                            <Grid x:Name="CameraCheckboxGrid">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <!-- Camera checkboxes will be added dynamically -->
+                            </Grid>
+                        </ScrollViewer>
+                    </StackPanel>
+                </Border>
+
+                <!-- Stats Panel -->
+                <Border CornerRadius="8" Padding="16" Margin="0,12,0,0"
                         Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}">
                     <StackPanel>
                         <TextBlock Text="Statistics" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,12"/>

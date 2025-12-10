@@ -393,11 +393,21 @@ bool CameraManager::CaptureAllCameras(const std::string& session_path, const Cap
   int successCount = 0;
   int totalCameras = static_cast<int>(connected_devices_.size());
 
-  // Get list of connected cameras in order
+  // Get list of connected and enabled cameras in order
   std::vector<CameraInfo> cameras_to_capture;
-  for (const auto& camera : discovered_cameras_) {
-    if (connected_devices_.find(camera.id) != connected_devices_.end()) {
-      cameras_to_capture.push_back(camera);
+  {
+    std::lock_guard<std::mutex> lock(disabled_cameras_mutex_);
+    int cameraIndex = 0;
+    for (const auto& camera : discovered_cameras_) {
+      if (connected_devices_.find(camera.id) != connected_devices_.end()) {
+        // Only include if camera is enabled
+        if (disabled_cameras_.find(cameraIndex) == disabled_cameras_.end()) {
+          cameras_to_capture.push_back(camera);
+        } else {
+          Log("[REC] Skipping disabled camera " + std::to_string(cameraIndex) + " (" + camera.name + ")");
+        }
+      }
+      cameraIndex++;
     }
   }
 
@@ -982,10 +992,50 @@ bool CameraManager::ApplySafeParameter(SapAcqDevice* device, const std::string& 
     BOOL result = FALSE;
 
     try {
-      // Integer parameters (using INT64 for GenICam standard)
+      // ExposureTime - detect feature type and use appropriate overload
       if (featureName == "ExposureTime" || featureName == "ExposureTimeAbs") {
-        INT64 intValue = std::stoll(value);
-        result = device->SetFeatureValue(featureName.c_str(), intValue);
+        // Query feature type to determine correct data type
+        SapFeature feature(device->GetLocation());
+        bool featureCreated = feature.Create();
+        bool gotFeatureInfo = featureCreated && device->GetFeatureInfo(featureName.c_str(), &feature);
+
+        if (gotFeatureInfo) {
+          SapFeature::Type featureType;
+          if (feature.GetType(&featureType)) {
+            switch (featureType) {
+              case SapFeature::TypeFloat:
+              case SapFeature::TypeDouble: {
+                double doubleValue = std::stod(value);
+                result = device->SetFeatureValue(featureName.c_str(), doubleValue);
+                Log("[PARAM] Using double type for " + featureName + " = " + std::to_string(doubleValue));
+                break;
+              }
+              case SapFeature::TypeInt32:
+              case SapFeature::TypeInt64:
+              default: {
+                INT64 intValue = std::stoll(value);
+                result = device->SetFeatureValue(featureName.c_str(), intValue);
+                Log("[PARAM] Using INT64 type for " + featureName + " = " + std::to_string(intValue));
+                break;
+              }
+            }
+          } else {
+            // Fallback to INT64 if type query fails
+            INT64 intValue = std::stoll(value);
+            result = device->SetFeatureValue(featureName.c_str(), intValue);
+            Log("[PARAM] Type query failed, using INT64 fallback for " + featureName);
+          }
+        } else {
+          // Fallback to INT64 if feature info query fails
+          INT64 intValue = std::stoll(value);
+          result = device->SetFeatureValue(featureName.c_str(), intValue);
+          Log("[PARAM] Feature info query failed, using INT64 fallback for " + featureName);
+        }
+
+        // Clean up SapFeature object
+        if (featureCreated) {
+          feature.Destroy();
+        }
       }
       // Float/Double parameters
       else if (featureName == "Gain" || featureName == "GainRaw") {
@@ -1239,6 +1289,37 @@ void CameraManager::ReorderCamera(int fromIndex, int toIndex) {
   }
 
   Log("[ORDER] Reordered cameras: moved " + std::to_string(fromIndex) + " to " + std::to_string(toIndex));
+}
+
+void CameraManager::SetCameraEnabled(int index, bool enabled) {
+  std::lock_guard<std::mutex> lock(disabled_cameras_mutex_);
+  if (enabled) {
+    disabled_cameras_.erase(index);
+  } else {
+    disabled_cameras_.insert(index);
+  }
+  Log("[CAM] Camera " + std::to_string(index) + " " + (enabled ? "enabled" : "disabled") + " for capture");
+}
+
+bool CameraManager::IsCameraEnabled(int index) const {
+  std::lock_guard<std::mutex> lock(disabled_cameras_mutex_);
+  return disabled_cameras_.find(index) == disabled_cameras_.end();
+}
+
+void CameraManager::EnableAllCameras() {
+  std::lock_guard<std::mutex> lock(disabled_cameras_mutex_);
+  disabled_cameras_.clear();
+  Log("[CAM] All cameras enabled for capture");
+}
+
+int CameraManager::GetEnabledCameraCount() const {
+  std::lock_guard<std::mutex> lock(disabled_cameras_mutex_);
+  int totalCameras = static_cast<int>(connected_devices_.size());
+  int disabledCount = 0;
+  for (int idx : disabled_cameras_) {
+    if (idx < totalCameras) disabledCount++;
+  }
+  return totalCameras - disabledCount;
 }
 
 std::vector<CameraInfo> CameraManager::GetOrderedCameras() const {

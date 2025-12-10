@@ -16,23 +16,31 @@ public sealed partial class SetupPage : Page
     public int TotalPositions { get; private set; } = 36;
     public float AngleStep { get; private set; } = 10f;
     public float TotalRotation { get; private set; } = 360f;
-    public string SessionName => SessionNameTextBox?.Text ?? "";
+    public float TurntableSpeed { get; private set; } = 40f;  // Fast by default
     public bool IsManualMode => ManualMode?.IsChecked == true;
 
     // Static properties to pass settings between pages
     public static int CurrentTotalPositions { get; private set; } = 36;
     public static float CurrentAngleStep { get; private set; } = 10f;
     public static float CurrentTotalRotation { get; private set; } = 360f;
-    public static string CurrentSessionName { get; private set; } = "";
+    public static float CurrentTurntableSpeed { get; private set; } = 40f;
     public static bool CurrentIsManualMode { get; private set; } = false;
     public static string CurrentOutputPath { get; private set; } = "";
 
     public SetupPage()
     {
         this.InitializeComponent();
-        _isInitialized = true;
 
-        // Load previously selected path if any (but don't set a default)
+        // Load saved settings from backend before marking initialized
+        LoadSavedSettings();
+
+        _isInitialized = true;
+        UpdateSummary();
+    }
+
+    private void LoadSavedSettings()
+    {
+        // Load output path
         string savedPath = CaptureService.OutputPath;
         if (!string.IsNullOrEmpty(savedPath) && savedPath != "neural_dataset")
         {
@@ -40,7 +48,87 @@ public sealed partial class SetupPage : Page
             CurrentOutputPath = savedPath;
         }
 
-        UpdateSummary();
+        // Load capture settings
+        TotalPositions = CaptureService.CaptureTotalPositions;
+        AngleStep = CaptureService.CaptureAngleStep;
+        TotalRotation = CaptureService.CaptureTotalRotation;
+        TurntableSpeed = CaptureService.CaptureTurntableSpeed;
+
+        // Load capture mode
+        bool isManual = CaptureService.CaptureManualMode;
+        if (isManual)
+        {
+            ManualMode.IsChecked = true;
+            AutomatedSettingsPanel.Visibility = Visibility.Collapsed;
+            ManualSettingsPanel.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            AutomatedMode.IsChecked = true;
+            AutomatedSettingsPanel.Visibility = Visibility.Visible;
+            ManualSettingsPanel.Visibility = Visibility.Collapsed;
+        }
+
+        // Load preset and update UI
+        int preset = CaptureService.CapturePreset;
+        switch (preset)
+        {
+            case 1: // Detailed
+                DetailedPreset.IsChecked = true;
+                CustomSettingsPanel.Visibility = Visibility.Collapsed;
+                break;
+            case 2: // Custom
+                CustomPreset.IsChecked = true;
+                CustomSettingsPanel.Visibility = Visibility.Visible;
+                // Update number boxes with saved values
+                PositionsNumberBox.Value = TotalPositions;
+                AngleStepNumberBox.Value = AngleStep;
+                TotalRotationNumberBox.Value = TotalRotation;
+                break;
+            default: // 0 = Quick
+                QuickPreset.IsChecked = true;
+                CustomSettingsPanel.Visibility = Visibility.Collapsed;
+                break;
+        }
+
+        // Load turntable speed selection
+        int speedIndex = TurntableSpeed switch
+        {
+            40f => 0,  // Fast
+            70f => 1,  // Medium
+            100f => 2, // Slow
+            _ => 0     // Default to Fast
+        };
+        TurntableSpeedComboBox.SelectedIndex = speedIndex;
+
+        // Update custom preset text
+        UpdateCustomPresetText();
+
+        // Update static properties
+        CurrentTotalPositions = TotalPositions;
+        CurrentAngleStep = AngleStep;
+        CurrentTotalRotation = TotalRotation;
+        CurrentTurntableSpeed = TurntableSpeed;
+        CurrentIsManualMode = isManual;
+    }
+
+    private void SaveSettings()
+    {
+        // Save all capture settings to backend
+        CaptureService.CaptureTotalPositions = TotalPositions;
+        CaptureService.CaptureAngleStep = AngleStep;
+        CaptureService.CaptureTotalRotation = TotalRotation;
+        CaptureService.CaptureTurntableSpeed = TurntableSpeed;
+        CaptureService.CaptureManualMode = ManualMode?.IsChecked == true;
+
+        // Determine preset index
+        int preset = 0; // Quick
+        if (DetailedPreset?.IsChecked == true) preset = 1;
+        else if (CustomPreset?.IsChecked == true) preset = 2;
+        CaptureService.CapturePreset = preset;
+
+        // Trigger save to file
+        CaptureService.SaveSettings();
     }
 
     private async void BrowseButton_Click(object sender, RoutedEventArgs e)
@@ -61,6 +149,7 @@ public sealed partial class SetupPage : Page
             CaptureService.OutputPath = folder.Path;
             OutputPathError.Visibility = Visibility.Collapsed;
             UpdateSummary();
+            CaptureService.SaveSettings();
         }
     }
 
@@ -85,6 +174,7 @@ public sealed partial class SetupPage : Page
         ManualSettingsPanel.Visibility = isManual ? Visibility.Visible : Visibility.Collapsed;
 
         UpdateSummary();
+        SaveSettings();
     }
 
     private void Preset_Checked(object sender, RoutedEventArgs e)
@@ -95,22 +185,26 @@ public sealed partial class SetupPage : Page
         {
             TotalPositions = 36;
             AngleStep = 10f;
+            TotalRotation = 360f;
             CustomSettingsPanel.Visibility = Visibility.Collapsed;
         }
         else if (DetailedPreset.IsChecked == true)
         {
             TotalPositions = 72;
             AngleStep = 5f;
+            TotalRotation = 360f;
             CustomSettingsPanel.Visibility = Visibility.Collapsed;
         }
         else if (CustomPreset.IsChecked == true)
         {
             TotalPositions = (int)PositionsNumberBox.Value;
             AngleStep = (float)AngleStepNumberBox.Value;
+            TotalRotation = (float)TotalRotationNumberBox.Value;
             CustomSettingsPanel.Visibility = Visibility.Visible;
         }
 
         UpdateSummary();
+        SaveSettings();
     }
 
     private void TotalRotation_Changed(NumberBox sender, NumberBoxValueChangedEventArgs args)
@@ -132,6 +226,7 @@ public sealed partial class SetupPage : Page
 
             UpdateCustomPresetText();
             UpdateSummary();
+            SaveSettings();
         }
         finally
         {
@@ -159,6 +254,7 @@ public sealed partial class SetupPage : Page
 
             UpdateCustomPresetText();
             UpdateSummary();
+            SaveSettings();
         }
         finally
         {
@@ -187,11 +283,29 @@ public sealed partial class SetupPage : Page
 
             UpdateCustomPresetText();
             UpdateSummary();
+            SaveSettings();
         }
         finally
         {
             _isUpdating = false;
         }
+    }
+
+    private void TurntableSpeed_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (!_isInitialized) return;
+
+        if (TurntableSpeedComboBox.SelectedItem is ComboBoxItem selectedItem)
+        {
+            if (float.TryParse(selectedItem.Tag?.ToString(), out float speed))
+            {
+                TurntableSpeed = speed;
+                CurrentTurntableSpeed = speed;
+            }
+        }
+
+        UpdateSummary();
+        SaveSettings();
     }
 
     private void UpdateCustomPresetText()
@@ -245,7 +359,7 @@ public sealed partial class SetupPage : Page
         CurrentTotalPositions = TotalPositions;
         CurrentAngleStep = AngleStep;
         CurrentTotalRotation = TotalRotation;
-        CurrentSessionName = SessionName;
+        CurrentTurntableSpeed = TurntableSpeed;
         CurrentIsManualMode = isManual;
     }
 }

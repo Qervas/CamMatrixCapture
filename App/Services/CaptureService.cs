@@ -79,12 +79,25 @@ public static class CaptureService
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
     private static extern void CamMatrix_ApplySavedCameraOrder();
 
+    // Camera enable/disable for selective capture
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    private static extern void CamMatrix_SetCameraEnabled(int index, int enabled);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    private static extern int CamMatrix_IsCameraEnabled(int index);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    private static extern void CamMatrix_EnableAllCameras();
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    private static extern int CamMatrix_GetEnabledCameraCount();
+
     #endregion
 
     #region Native Imports - Capture Operations
 
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
-    private static extern void CamMatrix_StartCapture(string sessionName, int totalPositions, float angleStep);
+    private static extern void CamMatrix_StartCapture(string sessionName, int totalPositions, float angleStep, float turntableSpeed);
 
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
     private static extern void CamMatrix_StopCapture();
@@ -202,6 +215,43 @@ public static class CaptureService
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
     private static extern void CamMatrix_SetOutputPath(string path);
 
+    // Capture setup settings (persisted)
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    private static extern int CamMatrix_GetCaptureTotalPositions();
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    private static extern void CamMatrix_SetCaptureTotalPositions(int positions);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    private static extern float CamMatrix_GetCaptureAngleStep();
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    private static extern void CamMatrix_SetCaptureAngleStep(float angle);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    private static extern float CamMatrix_GetCaptureTotalRotation();
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    private static extern void CamMatrix_SetCaptureTotalRotation(float rotation);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    private static extern float CamMatrix_GetCaptureTurntableSpeed();
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    private static extern void CamMatrix_SetCaptureTurntableSpeed(float speed);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    private static extern int CamMatrix_GetCaptureManualMode();
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    private static extern void CamMatrix_SetCaptureManualMode(int isManual);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    private static extern int CamMatrix_GetCapturePreset();
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    private static extern void CamMatrix_SetCapturePreset(int preset);
+
     #endregion
 
     #region Native Imports - Callbacks
@@ -299,6 +349,12 @@ public static class CaptureService
 
     public static bool IsCameraConnected(int index) => CamMatrix_IsCameraConnected(index) != 0;
 
+    // Camera enable/disable for selective capture
+    public static void SetCameraEnabled(int index, bool enabled) => CamMatrix_SetCameraEnabled(index, enabled ? 1 : 0);
+    public static bool IsCameraEnabled(int index) => CamMatrix_IsCameraEnabled(index) != 0;
+    public static void EnableAllCameras() => CamMatrix_EnableAllCameras();
+    public static int EnabledCameraCount => CamMatrix_GetEnabledCameraCount();
+
     public static void SetCameraOrder(int fromIndex, int toIndex) => CamMatrix_SetCameraOrder(fromIndex, toIndex);
 
     public static void ApplySavedCameraOrder() => CamMatrix_ApplySavedCameraOrder();
@@ -307,9 +363,9 @@ public static class CaptureService
 
     #region Public API - Capture
 
-    public static void StartCapture(string sessionName, int totalPositions, float angleStep)
+    public static void StartCapture(string sessionName, int totalPositions, float angleStep, float turntableSpeed = 70f)
     {
-        CamMatrix_StartCapture(sessionName, totalPositions, angleStep);
+        CamMatrix_StartCapture(sessionName, totalPositions, angleStep, turntableSpeed);
     }
 
     public static void StopCapture() => CamMatrix_StopCapture();
@@ -431,6 +487,43 @@ public static class CaptureService
             return sb.ToString();
         }
         set => CamMatrix_SetOutputPath(value);
+    }
+
+    // Capture setup settings (persisted)
+    public static int CaptureTotalPositions
+    {
+        get => CamMatrix_GetCaptureTotalPositions();
+        set => CamMatrix_SetCaptureTotalPositions(value);
+    }
+
+    public static float CaptureAngleStep
+    {
+        get => CamMatrix_GetCaptureAngleStep();
+        set => CamMatrix_SetCaptureAngleStep(value);
+    }
+
+    public static float CaptureTotalRotation
+    {
+        get => CamMatrix_GetCaptureTotalRotation();
+        set => CamMatrix_SetCaptureTotalRotation(value);
+    }
+
+    public static float CaptureTurntableSpeed
+    {
+        get => CamMatrix_GetCaptureTurntableSpeed();
+        set => CamMatrix_SetCaptureTurntableSpeed(value);
+    }
+
+    public static bool CaptureManualMode
+    {
+        get => CamMatrix_GetCaptureManualMode() != 0;
+        set => CamMatrix_SetCaptureManualMode(value ? 1 : 0);
+    }
+
+    public static int CapturePreset
+    {
+        get => CamMatrix_GetCapturePreset();
+        set => CamMatrix_SetCapturePreset(value);
     }
 
     #endregion

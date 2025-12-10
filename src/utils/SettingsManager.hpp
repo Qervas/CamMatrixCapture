@@ -163,7 +163,7 @@ struct AppSettings {
     int window_y = 100;
     float ui_scale = 1.0f;  // UI scale factor (0.5 to 8.0)
     bool vsync = true;
-    
+
     // Last connection info for Quick Connect
     std::string last_bluetooth_device_id = "";
     std::string last_bluetooth_device_name = "";
@@ -177,6 +177,14 @@ struct AppSettings {
     bool enable_completion_sound = true;  // Enable sound when sequence completes
     std::string completion_sound = "Windows Ding";  // Sound name/type
     float notification_volume = 0.5f;  // Volume 0.0 to 1.0
+
+    // Capture settings (persisted from Setup page)
+    int capture_total_positions = 36;      // Number of positions for automated capture
+    float capture_angle_step = 10.0f;      // Angle step between positions
+    float capture_total_rotation = 360.0f; // Total rotation angle
+    float capture_turntable_speed = 40.0f; // Turntable speed (seconds per 360°)
+    bool capture_manual_mode = false;      // Manual vs automated mode
+    int capture_preset = 0;                // 0=Quick(36), 1=Detailed(72), 2=Custom
 
     SimpleJSON ToJson() const;
     void FromJson(const SimpleJSON& json);
