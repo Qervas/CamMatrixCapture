@@ -996,7 +996,10 @@ bool CameraManager::ApplySafeParameter(SapAcqDevice* device, const std::string& 
       if (featureName == "ExposureTime" || featureName == "ExposureTimeAbs") {
         // Query feature type to determine correct data type
         SapFeature feature(device->GetLocation());
-        if (device->GetFeatureInfo(featureName.c_str(), &feature)) {
+        bool featureCreated = feature.Create();
+        bool gotFeatureInfo = featureCreated && device->GetFeatureInfo(featureName.c_str(), &feature);
+
+        if (gotFeatureInfo) {
           SapFeature::Type featureType;
           if (feature.GetType(&featureType)) {
             switch (featureType) {
@@ -1027,6 +1030,11 @@ bool CameraManager::ApplySafeParameter(SapAcqDevice* device, const std::string& 
           INT64 intValue = std::stoll(value);
           result = device->SetFeatureValue(featureName.c_str(), intValue);
           Log("[PARAM] Feature info query failed, using INT64 fallback for " + featureName);
+        }
+
+        // Clean up SapFeature object
+        if (featureCreated) {
+          feature.Destroy();
         }
       }
       // Float/Double parameters
