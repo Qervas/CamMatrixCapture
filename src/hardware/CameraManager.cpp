@@ -982,10 +982,42 @@ bool CameraManager::ApplySafeParameter(SapAcqDevice* device, const std::string& 
     BOOL result = FALSE;
 
     try {
-      // Integer parameters (using INT64 for GenICam standard)
+      // ExposureTime - detect feature type and use appropriate overload
       if (featureName == "ExposureTime" || featureName == "ExposureTimeAbs") {
-        INT64 intValue = std::stoll(value);
-        result = device->SetFeatureValue(featureName.c_str(), intValue);
+        // Query feature type to determine correct data type
+        SapFeature feature(device->GetLocation());
+        if (device->GetFeatureInfo(featureName.c_str(), &feature)) {
+          SapFeature::Type featureType;
+          if (feature.GetType(&featureType)) {
+            switch (featureType) {
+              case SapFeature::TypeFloat:
+              case SapFeature::TypeDouble: {
+                double doubleValue = std::stod(value);
+                result = device->SetFeatureValue(featureName.c_str(), doubleValue);
+                Log("[PARAM] Using double type for " + featureName + " = " + std::to_string(doubleValue));
+                break;
+              }
+              case SapFeature::TypeInt32:
+              case SapFeature::TypeInt64:
+              default: {
+                INT64 intValue = std::stoll(value);
+                result = device->SetFeatureValue(featureName.c_str(), intValue);
+                Log("[PARAM] Using INT64 type for " + featureName + " = " + std::to_string(intValue));
+                break;
+              }
+            }
+          } else {
+            // Fallback to INT64 if type query fails
+            INT64 intValue = std::stoll(value);
+            result = device->SetFeatureValue(featureName.c_str(), intValue);
+            Log("[PARAM] Type query failed, using INT64 fallback for " + featureName);
+          }
+        } else {
+          // Fallback to INT64 if feature info query fails
+          INT64 intValue = std::stoll(value);
+          result = device->SetFeatureValue(featureName.c_str(), intValue);
+          Log("[PARAM] Feature info query failed, using INT64 fallback for " + featureName);
+        }
       }
       // Float/Double parameters
       else if (featureName == "Gain" || featureName == "GainRaw") {

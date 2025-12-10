@@ -131,6 +131,12 @@ public sealed partial class CapturePage : Page
                 OpenFolderButton.IsEnabled = true;
             }
         }
+
+        // Update current angle display in manual mode
+        if (_isManualMode)
+        {
+            UpdateCurrentAngleDisplay();
+        }
     }
 
     private void UpdateTimingDisplay()
@@ -218,7 +224,7 @@ public sealed partial class CapturePage : Page
                     // In automated mode, show completion panel with options
                     ProgressText.Text = "Capture complete!";
                     SessionCompletePanel.Visibility = Visibility.Visible;
-                    SessionNamePanel.Visibility = Visibility.Collapsed;
+                    SessionNameTextBox.IsEnabled = false;  // Keep visible but disabled
                     CaptureButton.IsEnabled = false;
 
                     int totalImages = _totalPositions * CaptureService.ConnectedCameraCount;
@@ -250,7 +256,7 @@ public sealed partial class CapturePage : Page
             UpdateButtonState();
             ProgressText.Text = "Capture stopped";
             TimingPanel.Visibility = Visibility.Collapsed;
-            SessionNamePanel.Visibility = Visibility.Visible;
+            SessionNameTextBox.IsEnabled = true;  // Re-enable editing
         }
         else
         {
@@ -264,7 +270,7 @@ public sealed partial class CapturePage : Page
             ProgressText.Text = "Starting capture...";
             SessionCompletePanel.Visibility = Visibility.Collapsed;
             TimingPanel.Visibility = Visibility.Visible;
-            SessionNamePanel.Visibility = Visibility.Collapsed;
+            SessionNameTextBox.IsEnabled = false;  // Keep visible but disable editing
 
             // Reset timing display
             StateText.Text = "Starting...";
@@ -318,7 +324,7 @@ public sealed partial class CapturePage : Page
         // Prepare for a new capture session
         SessionCompletePanel.Visibility = Visibility.Collapsed;
         CaptureButton.IsEnabled = true;
-        SessionNamePanel.Visibility = Visibility.Visible;
+        SessionNameTextBox.IsEnabled = true;  // Re-enable editing
 
         // Clear session name for new input
         SessionNameTextBox.Text = "";
@@ -414,4 +420,104 @@ public sealed partial class CapturePage : Page
         // For now, just store the value
         _sessionName = SessionNameTextBox.Text?.Trim() ?? "";
     }
+
+    #region Turntable Controls
+
+    private float GetSelectedRotationStep()
+    {
+        if (RotationStepComboBox.SelectedItem is ComboBoxItem item &&
+            float.TryParse(item.Tag?.ToString(), out float step))
+        {
+            return step;
+        }
+        return 10f; // Default 10°
+    }
+
+    private void RotateLeftButton_Click(object sender, RoutedEventArgs e)
+    {
+        float step = GetSelectedRotationStep();
+        SetTurntableButtonsEnabled(false);
+        ManualStatusText.Text = $"Rotating -{step}°...";
+
+        // Rotate counter-clockwise (negative angle)
+        bool success = CaptureService.RotateTurntable(-step);
+
+        if (!success)
+        {
+            ManualStatusText.Text = "Rotation failed - check turntable connection";
+            SetTurntableButtonsEnabled(true);
+            return;
+        }
+
+        // Re-enable after delay (estimate based on rotation)
+        _ = ReenableTurntableButtonsAfterDelay((int)(step * 100)); // ~100ms per degree
+    }
+
+    private void RotateRightButton_Click(object sender, RoutedEventArgs e)
+    {
+        float step = GetSelectedRotationStep();
+        SetTurntableButtonsEnabled(false);
+        ManualStatusText.Text = $"Rotating +{step}°...";
+
+        // Rotate clockwise (positive angle)
+        bool success = CaptureService.RotateTurntable(step);
+
+        if (!success)
+        {
+            ManualStatusText.Text = "Rotation failed - check turntable connection";
+            SetTurntableButtonsEnabled(true);
+            return;
+        }
+
+        // Re-enable after delay
+        _ = ReenableTurntableButtonsAfterDelay((int)(step * 100));
+    }
+
+    private void ReturnToZeroButton_Click(object sender, RoutedEventArgs e)
+    {
+        SetTurntableButtonsEnabled(false);
+        ManualStatusText.Text = "Returning to zero...";
+
+        bool success = CaptureService.ReturnToZero();
+
+        if (!success)
+        {
+            ManualStatusText.Text = "Return to zero failed - check turntable connection";
+            SetTurntableButtonsEnabled(true);
+            return;
+        }
+
+        // Re-enable after delay (allow time for full rotation back)
+        _ = ReenableTurntableButtonsAfterDelay(5000);
+    }
+
+    private void SetTurntableButtonsEnabled(bool enabled)
+    {
+        RotateLeftButton.IsEnabled = enabled;
+        RotateRightButton.IsEnabled = enabled;
+        ReturnToZeroButton.IsEnabled = enabled;
+    }
+
+    private async System.Threading.Tasks.Task ReenableTurntableButtonsAfterDelay(int delayMs)
+    {
+        await System.Threading.Tasks.Task.Delay(delayMs);
+
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            SetTurntableButtonsEnabled(true);
+            ManualStatusText.Text = "Ready - Click to capture";
+            UpdateCurrentAngleDisplay();
+        });
+    }
+
+    private void UpdateCurrentAngleDisplay()
+    {
+        float angle = CaptureService.CurrentAngle;
+        if (angle >= 0)
+        {
+            CurrentAngleText.Text = $"Current: {angle:F1}°";
+        }
+    }
+
+    #endregion
 }
