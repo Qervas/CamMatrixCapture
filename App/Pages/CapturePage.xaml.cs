@@ -76,6 +76,9 @@ public sealed partial class CapturePage : Page
         SessionCompletePanel.Visibility = Visibility.Collapsed;
         UpdateStats();
 
+        // Initialize camera selection
+        PopulateCameraCheckboxes();
+
         // Show output folder path from settings
         string outputPath = SetupPage.CurrentOutputPath;
         if (!string.IsNullOrEmpty(outputPath))
@@ -421,6 +424,11 @@ public sealed partial class CapturePage : Page
         _sessionName = SessionNameTextBox.Text?.Trim() ?? "";
     }
 
+    private void ManualSessionNameTextBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        _sessionName = ManualSessionNameTextBox.Text?.Trim() ?? "";
+    }
+
     #region Turntable Controls
 
     private float GetSelectedRotationStep()
@@ -517,6 +525,116 @@ public sealed partial class CapturePage : Page
         {
             CurrentAngleText.Text = $"Current: {angle:F1}°";
         }
+    }
+
+    #endregion
+
+    #region Camera Selection
+
+    private void PopulateCameraCheckboxes()
+    {
+        CameraCheckboxGrid.Children.Clear();
+        CameraCheckboxGrid.RowDefinitions.Clear();
+
+        int cameraCount = CaptureService.ConnectedCameraCount;
+
+        if (cameraCount == 0)
+        {
+            CameraSelectionText.Text = " (no cameras)";
+            return;
+        }
+
+        // Calculate rows needed (3 columns)
+        int columns = 3;
+        int rows = (cameraCount + columns - 1) / columns;
+
+        // Add row definitions
+        for (int r = 0; r < rows; r++)
+        {
+            CameraCheckboxGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        }
+
+        for (int i = 0; i < cameraCount; i++)
+        {
+            string cameraName = CaptureService.GetCameraName(i);
+            if (string.IsNullOrEmpty(cameraName))
+                cameraName = $"Cam {i + 1}";
+
+            var checkBox = new CheckBox
+            {
+                Content = cameraName,
+                Tag = i,
+                IsChecked = CaptureService.IsCameraEnabled(i),
+                FontSize = 11,
+                MinWidth = 0,
+                Padding = new Thickness(2, 1, 2, 1),
+                Margin = new Thickness(0, 2, 4, 2)
+            };
+
+            checkBox.Checked += CameraCheckbox_Changed;
+            checkBox.Unchecked += CameraCheckbox_Changed;
+
+            // Calculate row and column
+            int row = i / columns;
+            int col = i % columns;
+
+            Grid.SetRow(checkBox, row);
+            Grid.SetColumn(checkBox, col);
+
+            CameraCheckboxGrid.Children.Add(checkBox);
+        }
+
+        UpdateCameraSelectionText();
+    }
+
+    private void CameraCheckbox_Changed(object sender, RoutedEventArgs e)
+    {
+        if (sender is CheckBox checkBox && checkBox.Tag is int index)
+        {
+            CaptureService.SetCameraEnabled(index, checkBox.IsChecked == true);
+            UpdateCameraSelectionText();
+        }
+    }
+
+    private void SelectAllCamerasButton_Click(object sender, RoutedEventArgs e)
+    {
+        CaptureService.EnableAllCameras();
+
+        foreach (var child in CameraCheckboxGrid.Children)
+        {
+            if (child is CheckBox checkBox)
+            {
+                checkBox.IsChecked = true;
+            }
+        }
+
+        UpdateCameraSelectionText();
+    }
+
+    private void SelectNoneCamerasButton_Click(object sender, RoutedEventArgs e)
+    {
+        int cameraCount = CaptureService.ConnectedCameraCount;
+        for (int i = 0; i < cameraCount; i++)
+        {
+            CaptureService.SetCameraEnabled(i, false);
+        }
+
+        foreach (var child in CameraCheckboxGrid.Children)
+        {
+            if (child is CheckBox checkBox)
+            {
+                checkBox.IsChecked = false;
+            }
+        }
+
+        UpdateCameraSelectionText();
+    }
+
+    private void UpdateCameraSelectionText()
+    {
+        int total = CaptureService.ConnectedCameraCount;
+        int enabled = CaptureService.EnabledCameraCount;
+        CameraSelectionText.Text = $" ({enabled}/{total})";
     }
 
     #endregion

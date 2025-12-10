@@ -68,6 +68,13 @@
 
                 <!-- Manual Mode UI -->
                 <StackPanel x:Name="ManualModePanel" Visibility="Collapsed">
+                    <!-- Session Name Input for Manual Mode -->
+                    <StackPanel Margin="0,0,0,20">
+                        <TextBlock Text="Session Name" FontSize="14" Margin="0,0,0,6"/>
+                        <TextBox x:Name="ManualSessionNameTextBox" PlaceholderText="my_object_001" MaxLength="100"
+                                 HorizontalAlignment="Stretch" TextChanged="ManualSessionNameTextBox_TextChanged"/>
+                    </StackPanel>
+
                     <!-- Big Capture Button -->
                     <Button x:Name="ManualCaptureButton"
                             HorizontalAlignment="Center"
@@ -153,10 +160,42 @@
                 </Border>
             </StackPanel>
 
-            <!-- Right Side Panel - Stats and Timing -->
-            <StackPanel Grid.Column="2" VerticalAlignment="Center" Margin="40,0,0,0" MinWidth="200">
-                <!-- Stats Panel -->
+            <!-- Right Side Panel - Stats, Cameras, and Timing -->
+            <StackPanel Grid.Column="2" VerticalAlignment="Center" Margin="40,0,0,0" MinWidth="220">
+                <!-- Camera Selection Panel -->
                 <Border CornerRadius="8" Padding="16"
+                        Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}">
+                    <StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                            <TextBlock Text="Cameras" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                            <TextBlock x:Name="CameraSelectionText" Text=" (0/0)" FontSize="12"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center"/>
+                        </StackPanel>
+
+                        <!-- Select All / None buttons -->
+                        <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,0,0,8">
+                            <Button x:Name="SelectAllCamerasButton" Content="All" Click="SelectAllCamerasButton_Click"
+                                    Padding="8,4" FontSize="12"/>
+                            <Button x:Name="SelectNoneCamerasButton" Content="None" Click="SelectNoneCamerasButton_Click"
+                                    Padding="8,4" FontSize="12"/>
+                        </StackPanel>
+
+                        <!-- Camera list with checkboxes (grid layout) -->
+                        <ScrollViewer MaxHeight="150" VerticalScrollBarVisibility="Auto">
+                            <Grid x:Name="CameraCheckboxGrid">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <!-- Camera checkboxes will be added dynamically -->
+                            </Grid>
+                        </ScrollViewer>
+                    </StackPanel>
+                </Border>
+
+                <!-- Stats Panel -->
+                <Border CornerRadius="8" Padding="16" Margin="0,12,0,0"
                         Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}">
                     <StackPanel>
                         <TextBlock Text="Statistics" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,12"/>

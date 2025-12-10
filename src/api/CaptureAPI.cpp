@@ -17,6 +17,7 @@
 #include <atomic>
 #include <thread>
 #include <vector>
+#include <set>
 #include <filesystem>
 
 // Windows API for getting module path
@@ -314,6 +315,23 @@ CAPTURE_API void CamMatrix_SetCameraOrder(int fromIndex, int toIndex) {
 
 CAPTURE_API void CamMatrix_ApplySavedCameraOrder() {
     ApplySavedCameraOrder();
+}
+
+// Camera enable/disable for selective capture
+CAPTURE_API void CamMatrix_SetCameraEnabled(int index, int enabled) {
+    CameraManager::GetInstance().SetCameraEnabled(index, enabled != 0);
+}
+
+CAPTURE_API int CamMatrix_IsCameraEnabled(int index) {
+    return CameraManager::GetInstance().IsCameraEnabled(index) ? 1 : 0;
+}
+
+CAPTURE_API void CamMatrix_EnableAllCameras() {
+    CameraManager::GetInstance().EnableAllCameras();
+}
+
+CAPTURE_API int CamMatrix_GetEnabledCameraCount() {
+    return CameraManager::GetInstance().GetEnabledCameraCount();
 }
 
 // ============================================================================

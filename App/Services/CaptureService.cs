@@ -79,6 +79,19 @@ public static class CaptureService
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
     private static extern void CamMatrix_ApplySavedCameraOrder();
 
+    // Camera enable/disable for selective capture
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    private static extern void CamMatrix_SetCameraEnabled(int index, int enabled);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    private static extern int CamMatrix_IsCameraEnabled(int index);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    private static extern void CamMatrix_EnableAllCameras();
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    private static extern int CamMatrix_GetEnabledCameraCount();
+
     #endregion
 
     #region Native Imports - Capture Operations
@@ -335,6 +348,12 @@ public static class CaptureService
     }
 
     public static bool IsCameraConnected(int index) => CamMatrix_IsCameraConnected(index) != 0;
+
+    // Camera enable/disable for selective capture
+    public static void SetCameraEnabled(int index, bool enabled) => CamMatrix_SetCameraEnabled(index, enabled ? 1 : 0);
+    public static bool IsCameraEnabled(int index) => CamMatrix_IsCameraEnabled(index) != 0;
+    public static void EnableAllCameras() => CamMatrix_EnableAllCameras();
+    public static int EnabledCameraCount => CamMatrix_GetEnabledCameraCount();
 
     public static void SetCameraOrder(int fromIndex, int toIndex) => CamMatrix_SetCameraOrder(fromIndex, toIndex);
 

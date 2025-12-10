@@ -393,11 +393,21 @@ bool CameraManager::CaptureAllCameras(const std::string& session_path, const Cap
   int successCount = 0;
   int totalCameras = static_cast<int>(connected_devices_.size());
 
-  // Get list of connected cameras in order
+  // Get list of connected and enabled cameras in order
   std::vector<CameraInfo> cameras_to_capture;
-  for (const auto& camera : discovered_cameras_) {
-    if (connected_devices_.find(camera.id) != connected_devices_.end()) {
-      cameras_to_capture.push_back(camera);
+  {
+    std::lock_guard<std::mutex> lock(disabled_cameras_mutex_);
+    int cameraIndex = 0;
+    for (const auto& camera : discovered_cameras_) {
+      if (connected_devices_.find(camera.id) != connected_devices_.end()) {
+        // Only include if camera is enabled
+        if (disabled_cameras_.find(cameraIndex) == disabled_cameras_.end()) {
+          cameras_to_capture.push_back(camera);
+        } else {
+          Log("[REC] Skipping disabled camera " + std::to_string(cameraIndex) + " (" + camera.name + ")");
+        }
+      }
+      cameraIndex++;
     }
   }
 
@@ -1271,6 +1281,37 @@ void CameraManager::ReorderCamera(int fromIndex, int toIndex) {
   }
 
   Log("[ORDER] Reordered cameras: moved " + std::to_string(fromIndex) + " to " + std::to_string(toIndex));
+}
+
+void CameraManager::SetCameraEnabled(int index, bool enabled) {
+  std::lock_guard<std::mutex> lock(disabled_cameras_mutex_);
+  if (enabled) {
+    disabled_cameras_.erase(index);
+  } else {
+    disabled_cameras_.insert(index);
+  }
+  Log("[CAM] Camera " + std::to_string(index) + " " + (enabled ? "enabled" : "disabled") + " for capture");
+}
+
+bool CameraManager::IsCameraEnabled(int index) const {
+  std::lock_guard<std::mutex> lock(disabled_cameras_mutex_);
+  return disabled_cameras_.find(index) == disabled_cameras_.end();
+}
+
+void CameraManager::EnableAllCameras() {
+  std::lock_guard<std::mutex> lock(disabled_cameras_mutex_);
+  disabled_cameras_.clear();
+  Log("[CAM] All cameras enabled for capture");
+}
+
+int CameraManager::GetEnabledCameraCount() const {
+  std::lock_guard<std::mutex> lock(disabled_cameras_mutex_);
+  int totalCameras = static_cast<int>(connected_devices_.size());
+  int disabledCount = 0;
+  for (int idx : disabled_cameras_) {
+    if (idx < totalCameras) disabledCount++;
+  }
+  return totalCameras - disabledCount;
 }
 
 std::vector<CameraInfo> CameraManager::GetOrderedCameras() const {

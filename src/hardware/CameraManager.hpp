@@ -2,6 +2,7 @@
 
 #include <vector>
 #include <map>
+#include <set>
 #include <string>
 #include <memory>
 #include <functional>
@@ -87,6 +88,12 @@ class CameraManager {
   int GetExposureTime() const { return exposure_time_; }
   void SetCaptureFormat(bool raw) { capture_format_raw_ = raw; }
   bool GetCaptureFormat() const { return capture_format_raw_; }
+
+  // Camera enable/disable for selective capture
+  void SetCameraEnabled(int index, bool enabled);
+  bool IsCameraEnabled(int index) const;
+  void EnableAllCameras();
+  int GetEnabledCameraCount() const;
   
   // Camera parameters
   struct Parameters {
@@ -131,6 +138,10 @@ class CameraManager {
   bool capture_format_raw_ = false;
   Parameters params_;
   ColorConfig color_config_;
+
+  // Camera enable/disable state (disabled indices; empty = all enabled)
+  std::set<int> disabled_cameras_;
+  mutable std::mutex disabled_cameras_mutex_;
 
   std::function<void(const std::string&)> log_callback_;
 

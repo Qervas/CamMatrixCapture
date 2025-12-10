@@ -58,6 +58,12 @@ CAPTURE_API int  CamMatrix_IsCameraConnected(int index);
 CAPTURE_API void CamMatrix_SetCameraOrder(int fromIndex, int toIndex);
 CAPTURE_API void CamMatrix_ApplySavedCameraOrder();
 
+// Camera enable/disable for selective capture
+CAPTURE_API void CamMatrix_SetCameraEnabled(int index, int enabled);
+CAPTURE_API int  CamMatrix_IsCameraEnabled(int index);
+CAPTURE_API void CamMatrix_EnableAllCameras();
+CAPTURE_API int  CamMatrix_GetEnabledCameraCount();
+
 // ============================================================================
 // Capture Operations
 // ============================================================================
