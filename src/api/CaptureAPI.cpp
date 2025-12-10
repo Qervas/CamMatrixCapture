@@ -320,7 +320,7 @@ CAPTURE_API void CamMatrix_ApplySavedCameraOrder() {
 // Capture Operations
 // ============================================================================
 
-CAPTURE_API void CamMatrix_StartCapture(const char* sessionName, int totalPositions, float angleStep) {
+CAPTURE_API void CamMatrix_StartCapture(const char* sessionName, int totalPositions, float angleStep, float turntableSpeed) {
     if (!g_sessionManager) return;
     if (g_isCapturing) return;  // Already capturing
 
@@ -328,7 +328,7 @@ CAPTURE_API void CamMatrix_StartCapture(const char* sessionName, int totalPositi
     g_captureProgress = 0;
     g_isCapturing = true;
 
-    SafeLog("StartCapture: positions=" + std::to_string(totalPositions) + " angleStep=" + std::to_string(angleStep));
+    SafeLog("StartCapture: positions=" + std::to_string(totalPositions) + " angleStep=" + std::to_string(angleStep) + " speed=" + std::to_string(turntableSpeed));
 
     // Ensure session manager uses the current output path from settings
     if (g_settingsManager) {
@@ -361,11 +361,18 @@ CAPTURE_API void CamMatrix_StartCapture(const char* sessionName, int totalPositi
     g_stateMachine.SetLogCallback([](const std::string& msg) { SafeLog(msg); });
 
     // Start capture thread with turntable rotation
-    std::thread captureThread([params, angleStep]() {
+    std::thread captureThread([params, angleStep, turntableSpeed]() {
         auto& camMgr = CameraManager::GetInstance();
         auto& btMgr = BluetoothManager::GetInstance();
 
         SafeLog("Capture thread started, totalPositions=" + std::to_string(g_totalPositions.load()));
+
+        // Set turntable speed before starting capture
+        if (!g_connectedTurntableId.empty()) {
+            SafeLog("[TURNTABLE] Setting rotation speed to " + std::to_string(turntableSpeed));
+            btMgr.SetRotationSpeed(g_connectedTurntableId, turntableSpeed);
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));  // Brief delay for speed command
+        }
 
         for (int pos = 0; pos < g_totalPositions.load(); ++pos) {
             // Check stop flag
@@ -418,8 +425,8 @@ CAPTURE_API void CamMatrix_StartCapture(const char* sessionName, int totalPositi
 
                 SafeLog("[ROTATE] Rotating " + std::to_string(angleStep) + "°...");
 
-                // Simple delta rotation - just rotate by the step angle
-                bool rotateSuccess = btMgr.RotateTurntableAndWait(g_connectedTurntableId, angleStep, 30000);
+                // Simple delta rotation - just rotate by the step angle with calculated timing
+                bool rotateSuccess = btMgr.RotateTurntableAndWait(g_connectedTurntableId, angleStep, turntableSpeed, 30000);
 
                 // Record rotation time
                 auto rotateEnd = std::chrono::steady_clock::now();

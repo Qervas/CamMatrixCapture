@@ -62,7 +62,7 @@ CAPTURE_API void CamMatrix_ApplySavedCameraOrder();
 // Capture Operations
 // ============================================================================
 
-CAPTURE_API void CamMatrix_StartCapture(const char* sessionName, int totalPositions, float angleStep);
+CAPTURE_API void CamMatrix_StartCapture(const char* sessionName, int totalPositions, float angleStep, float turntableSpeed);
 CAPTURE_API void CamMatrix_StopCapture();
 CAPTURE_API void CamMatrix_CreateSession(const char* sessionName);
 CAPTURE_API void CamMatrix_CaptureOnce();

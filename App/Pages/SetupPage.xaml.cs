@@ -16,14 +16,12 @@ public sealed partial class SetupPage : Page
     public int TotalPositions { get; private set; } = 36;
     public float AngleStep { get; private set; } = 10f;
     public float TotalRotation { get; private set; } = 360f;
-    public string SessionName => SessionNameTextBox?.Text ?? "";
     public bool IsManualMode => ManualMode?.IsChecked == true;
 
     // Static properties to pass settings between pages
     public static int CurrentTotalPositions { get; private set; } = 36;
     public static float CurrentAngleStep { get; private set; } = 10f;
     public static float CurrentTotalRotation { get; private set; } = 360f;
-    public static string CurrentSessionName { get; private set; } = "";
     public static bool CurrentIsManualMode { get; private set; } = false;
     public static string CurrentOutputPath { get; private set; } = "";
 
@@ -245,7 +243,6 @@ public sealed partial class SetupPage : Page
         CurrentTotalPositions = TotalPositions;
         CurrentAngleStep = AngleStep;
         CurrentTotalRotation = TotalRotation;
-        CurrentSessionName = SessionName;
         CurrentIsManualMode = isManual;
     }
 }

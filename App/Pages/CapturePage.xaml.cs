@@ -4,11 +4,19 @@ using Microsoft.UI.Xaml.Navigation;
 using CameraMatrixCapture.Services;
 using System;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 
 namespace CameraMatrixCapture.Pages;
 
 public sealed partial class CapturePage : Page
 {
+    // P/Invoke for system sound notification
+    [DllImport("winmm.dll", SetLastError = true)]
+    private static extern bool PlaySound(string pszSound, IntPtr hmod, uint fdwSound);
+
+    private const uint SND_ALIAS = 0x00010000;
+    private const uint SND_ASYNC = 0x0001;
+
     private readonly DispatcherTimer _refreshTimer;
     private bool _isCapturing = false;
     private bool _isManualMode = false;
@@ -41,7 +49,6 @@ public sealed partial class CapturePage : Page
         // Get settings from SetupPage
         _totalPositions = SetupPage.CurrentTotalPositions;
         _angleStep = SetupPage.CurrentAngleStep;
-        _sessionName = SetupPage.CurrentSessionName;
         _isManualMode = SetupPage.CurrentIsManualMode;
 
         // Setup UI based on mode
@@ -66,6 +73,19 @@ public sealed partial class CapturePage : Page
         _sessionStarted = false;
         SessionCompletePanel.Visibility = Visibility.Collapsed;
         UpdateStats();
+
+        // Show output folder path from settings
+        string outputPath = SetupPage.CurrentOutputPath;
+        if (!string.IsNullOrEmpty(outputPath))
+        {
+            SessionPathText.Text = $"Output: {outputPath}";
+            OpenFolderButton.IsEnabled = true;
+        }
+        else
+        {
+            SessionPathText.Text = "Output folder not set";
+            OpenFolderButton.IsEnabled = false;
+        }
     }
 
     private void RefreshStatus(object? sender, object e)
@@ -164,6 +184,14 @@ public sealed partial class CapturePage : Page
             _isCapturing = false;
             UpdateButtonState();
 
+            // Play notification sound
+            try
+            {
+                // Play system notification sound (SystemAsterisk for success, SystemHand for error)
+                PlaySound(success ? "SystemAsterisk" : "SystemHand", IntPtr.Zero, SND_ALIAS | SND_ASYNC);
+            }
+            catch { /* Ignore sound errors */ }
+
             // Update final timing
             int totalCaptureMs = CaptureService.TotalCaptureTimeMs;
             int totalRotateMs = CaptureService.TotalRotateTimeMs;
@@ -188,6 +216,7 @@ public sealed partial class CapturePage : Page
                     // In automated mode, show completion panel with options
                     ProgressText.Text = "Capture complete!";
                     SessionCompletePanel.Visibility = Visibility.Visible;
+                    SessionNamePanel.Visibility = Visibility.Collapsed;
                     CaptureButton.IsEnabled = false;
 
                     int totalImages = _totalPositions * CaptureService.ConnectedCameraCount;
@@ -219,9 +248,13 @@ public sealed partial class CapturePage : Page
             UpdateButtonState();
             ProgressText.Text = "Capture stopped";
             TimingPanel.Visibility = Visibility.Collapsed;
+            SessionNamePanel.Visibility = Visibility.Visible;
         }
         else
         {
+            // Get session name from textbox
+            _sessionName = SessionNameTextBox.Text?.Trim() ?? "";
+
             // Start automated capture
             _isCapturing = true;
             _sessionStarted = true;
@@ -229,6 +262,7 @@ public sealed partial class CapturePage : Page
             ProgressText.Text = "Starting capture...";
             SessionCompletePanel.Visibility = Visibility.Collapsed;
             TimingPanel.Visibility = Visibility.Visible;
+            SessionNamePanel.Visibility = Visibility.Collapsed;
 
             // Reset timing display
             StateText.Text = "Starting...";
@@ -279,14 +313,29 @@ public sealed partial class CapturePage : Page
 
     private void ContinueCaptureButton_Click(object sender, RoutedEventArgs e)
     {
-        // Allow user to continue capturing in the same session
+        // Prepare for a new capture session
         SessionCompletePanel.Visibility = Visibility.Collapsed;
         CaptureButton.IsEnabled = true;
+        SessionNamePanel.Visibility = Visibility.Visible;
 
-        // Reset for another round but keep session
+        // Clear session name for new input
+        SessionNameTextBox.Text = "";
+
+        // Reset for another round
         CaptureProgressBar.Value = 0;
         ProgressDetailText.Text = $"0 / {_totalPositions} positions";
-        ProgressText.Text = "Ready to continue";
+        ProgressText.Text = "Enter session name and click Start";
+        TimingPanel.Visibility = Visibility.Collapsed;
+
+        // Reset session state
+        _sessionStarted = false;
+        _sessionPath = "";
+
+        // Show output folder path
+        string outputPath = SetupPage.CurrentOutputPath;
+        SessionPathText.Text = !string.IsNullOrEmpty(outputPath)
+            ? $"Output: {outputPath}"
+            : "Output folder not set";
     }
 
     private void NewSessionButton_Click(object sender, RoutedEventArgs e)
@@ -355,5 +404,12 @@ public sealed partial class CapturePage : Page
     {
         CaptureCountText.Text = _captureCount.ToString();
         ImagesText.Text = _totalImages.ToString();
+    }
+
+    private void SessionNameTextBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        // Optional: Update UI based on session name input
+        // For now, just store the value
+        _sessionName = SessionNameTextBox.Text?.Trim() ?? "";
     }
 }
